@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Framework](https://img.shields.io/badge/PyTorch-2.12+-EE4C2C.svg)](https://pytorch.org/)
 [![Transformers](https://img.shields.io/badge/HuggingFace-Transformers-yellow.svg)](https://huggingface.co/)
-[![Tests](https://img.shields.io/badge/Unit%20Tests-41%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Unit%20Tests-46%20Passed-brightgreen.svg)]()
 [![Model Weights](https://img.shields.io/badge/Model%20Weights-SafeTensors%20633MB-success.svg)]()
 
 ---
@@ -232,7 +232,7 @@ cdm-1/
 ├── sdk/                     # Installable Python SDK (cdm_sdk) with explicit mode validation
 ├── docs/                    # Model Card, Benchmark report, Dataset Provenance & API docs
 ├── scripts/                 # Packaging & deployment utilities
-├── tests/                   # 41 comprehensive unit, gradient, constraint, and integration tests
+├── tests/                   # 46 comprehensive unit, gradient, constraint, and integration tests
 ├── Dockerfile               # Production container definition
 ├── docker-compose.yml       # API + Pgvector deployment configuration
 ├── requirements.txt         # Core dependencies

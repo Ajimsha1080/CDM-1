@@ -208,13 +208,14 @@ class CDMModel(nn.Module):
                 total_loss = total_loss + lw.lambda_binary * loss_bin
                 loss_dict["loss_binary"] = loss_bin.item()
 
-        # 2. Priority Decision Loss (CrossEntropy)
+        # 2. Priority Decision Loss (CrossEntropy with balanced class weighting for P2)
         if "priority_target" in targets and targets["priority_target"] is not None:
             prio_target = targets["priority_target"].long().to(device)
             prio_mask = targets.get("priority_mask", torch.ones_like(prio_target, dtype=torch.float32)).to(device)
             if prio_mask.sum() > 0:
                 prio_logits = outputs["decision"]["priority_logits"]
-                raw_loss_prio = F.cross_entropy(prio_logits, prio_target, reduction="none")
+                prio_class_weights = torch.tensor([1.0, 1.0, 2.0, 1.0], device=device)
+                raw_loss_prio = F.cross_entropy(prio_logits, prio_target, weight=prio_class_weights, reduction="none")
                 loss_prio = (raw_loss_prio * prio_mask).sum() / torch.clamp(prio_mask.sum(), min=1.0)
                 total_loss = total_loss + lw.lambda_priority * loss_prio
                 loss_dict["loss_priority"] = loss_prio.item()

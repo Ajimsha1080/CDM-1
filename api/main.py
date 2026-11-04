@@ -112,6 +112,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         model_load_error = str(e)
         logger.critical(f"FATAL: Failed to load CDM-1 model: {e}", exc_info=True)
+        if os.environ.get("CDM_ENV", "development").lower() == "production":
+            raise RuntimeError(f"CRITICAL PRODUCTION FAILURE: CDM-1 model failed to load at startup: {e}")
     yield
 
 
@@ -121,6 +123,16 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Production exception filter: masks internal exception details from HTTP clients."""
+    logger.error(f"Internal unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "An internal server error occurred. Diagnostic event has been securely logged."},
+    )
 
 
 def authenticate_and_rate_limit(
@@ -242,7 +254,7 @@ def create_decision(
         logger.error(f"Inference execution failure: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Model inference failure: {str(e)}",
+            detail="An error occurred during decision processing. Diagnostic event logged.",
         )
 
     latency = round((time.time() - start_t) * 1000, 2)

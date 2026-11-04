@@ -20,6 +20,7 @@ import sys
 import time
 import json
 import random
+import hashlib
 from typing import Dict, List, Any, Optional, Tuple
 from collections import defaultdict, Counter
 
@@ -641,10 +642,35 @@ class CDMBenchmarkSuite:
         print("6. Evaluating out-of-distribution (OOD) constraint safety...", flush=True)
         ood_eval = self.evaluate_ood_constraints()
 
+        ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        def get_file_sha256(p):
+            abs_p = os.path.join(ROOT_DIR, p) if not os.path.isabs(p) else p
+            if not os.path.exists(abs_p):
+                return None
+            h = hashlib.sha256()
+            with open(abs_p, "rb") as f:
+                while chunk := f.read(65536):
+                    h.update(chunk)
+            return h.hexdigest()
+
+        weights_file = os.path.join(self.checkpoint_dir, "model.safetensors")
+
         report = {
             "benchmark_suite_version": "4.0.0",
             "model_tested": "CDM-1 (Hybrid Cognitive Architecture)",
             "test_sample_count": len(self.test_examples),
+            "reproducibility_provenance": {
+                "checkpoint_evaluated": os.path.relpath(self.checkpoint_dir, ROOT_DIR).replace("\\", "/"),
+                "checkpoint_sha256": get_file_sha256(weights_file),
+                "seeds_evaluated": [42, 123, 999],
+                "dataset_hashes": {
+                    "train.jsonl": get_file_sha256("datasets/train.jsonl"),
+                    "val.jsonl": get_file_sha256("datasets/val.jsonl"),
+                    "test.jsonl": get_file_sha256("datasets/test.jsonl"),
+                    "heldout_domain_test.jsonl": get_file_sha256("datasets/heldout_domain_test.jsonl"),
+                    "ood_test.jsonl": get_file_sha256("datasets/ood_test.jsonl"),
+                },
+            },
             "baselines_multi_seed": baselines,
             "cdm_1_multitask": cdm_multitask,
             "heldout_domains_evaluation": heldout_results,

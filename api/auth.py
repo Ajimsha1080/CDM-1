@@ -90,11 +90,31 @@ class PersistentApiKeyManager:
         k_hash = self.register_key(raw_token, tenant_id, tier, rate_limit_rpm, label)
         return raw_token, k_hash
 
+    PROHIBITED_DEMO_KEYS = {
+        "sk_live_cdm_demo_key",
+        "sk_test_developer_key",
+        "demo",
+        "test",
+        "default",
+        "admin",
+        "secret",
+    }
+
     def validate_key(self, raw_key: str) -> Optional[Dict[str, Any]]:
-        """Validates key token, checking for revocation and returning tenant record."""
+        """Validates key token, checking for revocation and returning tenant record.
+        Strictly requires registered credentials in the persistent database.
+        """
         if not raw_key:
             return None
-        target_hash = self.hash_key(raw_key)
+
+        clean_key = raw_key.strip()
+        env = os.environ.get("CDM_ENV", "development").lower()
+
+        # In production, immediately reject all demo / default credentials
+        if env == "production" and clean_key in self.PROHIBITED_DEMO_KEYS:
+            return None
+
+        target_hash = self.hash_key(clean_key)
 
         with self._lock:
             conn = self._get_connection()
@@ -124,7 +144,7 @@ class PersistentApiKeyManager:
 
     def revoke_key(self, raw_key: str) -> bool:
         """Revokes an active key."""
-        target_hash = self.hash_key(raw_key)
+        target_hash = self.hash_key(raw_key.strip())
         with self._lock:
             conn = self._get_connection()
             try:
@@ -139,23 +159,31 @@ class PersistentApiKeyManager:
                 conn.close()
 
     def check_production_safety(self) -> None:
-        """Enforces Priority 6: Fail startup in production if secrets are missing or using demo values."""
+        """Enforces P1: Production requires registered credentials in the persistent store.
+        Prohibits satisfying auth checks via arbitrary environment variables or demo keys.
+        """
         env = os.environ.get("CDM_ENV", "development").lower()
         if env == "production":
-            # Check for prohibited demo keys in environment
-            demo_keys = {"sk_live_cdm_demo_key", "sk_test_developer_key", "demo", "test"}
-            env_key = os.environ.get("CDM_API_KEY", "")
-            if env_key in demo_keys or (not env_key and not os.environ.get("CDM_API_KEYS")):
-                with self._lock:
-                    conn = self._get_connection()
-                    try:
-                        cur = conn.cursor()
-                        cur.execute("SELECT COUNT(*) FROM api_keys WHERE revoked = 0;")
-                        active_count = cur.fetchone()[0]
-                    finally:
-                        conn.close()
-                if active_count == 0:
+            with self._lock:
+                conn = self._get_connection()
+                try:
+                    cur = conn.cursor()
+                    cur.execute("SELECT key_hash, tenant_id FROM api_keys WHERE revoked = 0;")
+                    active_keys = cur.fetchall()
+                finally:
+                    conn.close()
+
+            if not active_keys:
+                raise RuntimeError(
+                    "CRITICAL SECURITY FAILURE: Production environment (CDM_ENV=production) cannot start "
+                    "without pre-registered credentials in the persistent store. Configure registered keys."
+                )
+
+            # Ensure no active production key matches any prohibited demo credential
+            prohibited_hashes = {self.hash_key(k) for k in self.PROHIBITED_DEMO_KEYS}
+            for k_hash, tenant_id in active_keys:
+                if k_hash in prohibited_hashes:
                     raise RuntimeError(
-                        "CRITICAL SECURITY FAILURE: Production environment (CDM_ENV=production) cannot start "
-                        "with missing or default credentials. Configure valid non-default CDM_API_KEYS."
+                        f"CRITICAL SECURITY FAILURE: Prohibited demo credential registered for tenant '{tenant_id}' "
+                        "in production database. Demo credentials must be revoked before production deployment."
                     )

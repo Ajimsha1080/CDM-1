@@ -88,11 +88,11 @@
 
 ## 5. Domain-Held-Out Cross-Domain Generalization
 
-Evaluated on unseen domains (`healthcare_triage`, `compliance_legal`):
-- **Samples Evaluated**: 4
-- **Binary Decision Accuracy**: **75.00%**
-- **Prohibited Selection Rate**: **0.0000%**
-- **Zero-Shot Policy Adherence**: **Verified True**
+Evaluated on unseen domains (`healthcare_triage`, `compliance_legal`) across 8 independent clinical and regulatory cases:
+- **Samples Evaluated**: **8** (4 Emergency Severity Index clinical triage cases + 4 FinCEN / OFAC AML compliance cases)
+- **Binary Decision Accuracy**: **62.50%** (zero-shot transfer without fine-tuning)
+- **Prohibited Selection Rate**: **0.0000%** (zero hard constraint violations)
+- **Zero-Shot Policy Adherence**: **Verified True** (100% adherence to clinical discharge prohibitions on STEMI/peritoneal emergencies and asset freezes on OFAC sanctions matches)
 
 ---
 
@@ -102,20 +102,20 @@ Evaluated end-to-end forward inference latency across variable candidate action 
 
 | Candidate Count ($K$) | Latency (ms) | Masking & Selection Support |
 |---|---|---|
-| **$K = 2$** | 20.85 ms | Verified |
-| **$K = 5$** | 19.07 ms | Verified |
-| **$K = 10$** | 21.58 ms | Verified |
-| **$K = 20$** | 22.71 ms | Verified |
-| **$K = 32$** | 31.65 ms | Verified |
+| **$K = 2$** | 19.22 ms | Verified |
+| **$K = 5$** | 19.08 ms | Verified |
+| **$K = 10$** | 21.36 ms | Verified |
+| **$K = 20$** | 23.36 ms | Verified |
+| **$K = 32$** | 26.00 ms | Verified |
 
-*Finding*: Inference latency scales sub-linearly with candidate counts up to 32 candidates, maintaining sub-35ms turnaround on standard CPU hardware.
+*Finding*: Inference latency scales sub-linearly with candidate counts up to 32 candidates, maintaining sub-30ms turnaround on standard CPU hardware.
 
 ---
 
 ## 7. Candidate Permutation Invariance
 
 - **Permutation Tested**: Arbitrary non-identity order re-indexing `[3, 1, 2, 4, 0]`.
-- **Vector L2 Difference ($\Delta_{L2}$)**: **0.0000**
+- **Vector L2 Difference ($\Delta_{L2}$)**: **$1.0 \times 10^{-6}$** (within numerical floating point epsilon)
 - **Permutation Invariance**: **Verified True** — The candidate scoring mechanism evaluates candidate embeddings with shared projections and permutation-invariant logit normalization, preventing presentation bias.
 
 ---
@@ -128,7 +128,22 @@ Evaluated end-to-end forward inference latency across variable candidate action 
 
 ---
 
-## 9. Comparative Disclosure: Proprietary Systems (Jev & Laya)
+## 9. Cryptographic Reproducibility Provenance
+
+- **Model Checkpoint Evaluated**: `experiments/release/cdm-1-general`
+- **Checkpoint SHA-256 Digest**: `518e69baef83361cafb34cd79637950ade4df9bd9dea765e24ba764cd91e7a89`
+- **Total Parameters Verified**: **158,360,004** (Exact state_dict verification)
+- **Dataset Partition Hashes**:
+  - `datasets/train.jsonl`: `4b74b481599b63f4f6a22073695110c98e92cb227f63ee682178c66a260bbc37`
+  - `datasets/val.jsonl`: `edb19a210bc537d3b1a66b2504a76c86f9d70b7fdfbb32eaa2a22afbe1bc0aac`
+  - `datasets/test.jsonl`: `68a963fc4f8b4fbc5ec79b7f426a662bae3a81f642d3dbb6bcb1c936361b6938`
+  - `datasets/heldout_domain_test.jsonl`: `6c2cd78cf0a354e5b86a1bb25079e616e12b923e4b7aa7e0c2428821d01af01f`
+  - `datasets/ood_test.jsonl`: `389f33ed927fb4572d14463e0000fad17da8fe68f1be3fad28faff103c94474f`
+- **Clean Extraction & Offline Portability**: Extracted from `dist/CDM-1-Complete-With-Weights.zip` into a clean temporary directory; offline inference verified with `local_files_only=True` (Decision: `YES`, Confidence: 0.9409).
+
+---
+
+## 10. Comparative Disclosure: Proprietary Systems (Jev & Laya)
 
 | Feature / Dimension | CDM-1 (Ours) | Jev (Closed / Proprietary) | Laya (Closed / Proprietary) |
 |---|---|---|---|

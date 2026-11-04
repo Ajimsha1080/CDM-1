@@ -2,6 +2,22 @@
   "benchmark_suite_version": "4.0.0",
   "model_tested": "CDM-1 (Hybrid Cognitive Architecture)",
   "test_sample_count": 58,
+  "reproducibility_provenance": {
+    "checkpoint_evaluated": "experiments/release/cdm-1-general",
+    "checkpoint_sha256": "518e69baef83361cafb34cd79637950ade4df9bd9dea765e24ba764cd91e7a89",
+    "seeds_evaluated": [
+      42,
+      123,
+      999
+    ],
+    "dataset_hashes": {
+      "train.jsonl": "4b74b481599b63f4f6a22073695110c98e92cb227f63ee682178c66a260bbc37",
+      "val.jsonl": "edb19a210bc537d3b1a66b2504a76c86f9d70b7fdfbb32eaa2a22afbe1bc0aac",
+      "test.jsonl": "68a963fc4f8b4fbc5ec79b7f426a662bae3a81f642d3dbb6bcb1c936361b6938",
+      "heldout_domain_test.jsonl": "6c2cd78cf0a354e5b86a1bb25079e616e12b923e4b7aa7e0c2428821d01af01f",
+      "ood_test.jsonl": "389f33ed927fb4572d14463e0000fad17da8fe68f1be3fad28faff103c94474f"
+    }
+  },
   "baselines_multi_seed": {
     "logistic_regression": {
       "prediction_probability_consistency": 1.0,
@@ -350,36 +366,36 @@
       "healthcare_triage",
       "compliance_legal"
     ],
-    "samples_evaluated": 4,
-    "binary_accuracy": 0.75,
+    "samples_evaluated": 8,
+    "binary_accuracy": 0.625,
     "prohibited_selection_rate": 0.0,
     "policy_adherence_verified": true
   },
   "candidate_scalability": {
     "2_candidates": {
-      "latency_ms": 20.854,
+      "latency_ms": 19.219,
       "supported": true
     },
     "5_candidates": {
-      "latency_ms": 19.074,
+      "latency_ms": 19.085,
       "supported": true
     },
     "10_candidates": {
-      "latency_ms": 21.585,
+      "latency_ms": 21.361,
       "supported": true
     },
     "20_candidates": {
-      "latency_ms": 22.71,
+      "latency_ms": 23.357,
       "supported": true
     },
     "32_candidates": {
-      "latency_ms": 31.653,
+      "latency_ms": 25.999,
       "supported": true
     }
   },
   "candidate_permutation_invariance": {
     "permutation_invariant": true,
-    "vector_l2_difference": 0.0,
+    "vector_l2_difference": 1e-06,
     "permutation_tested": [
       3,
       1,

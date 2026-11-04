@@ -27,6 +27,7 @@ class DecisionResult:
         self.risk = data.get("risk")
         self.predicted_outcome = data.get("predicted_outcome")
         self.abstain = data.get("abstain", False)
+        self.abstention_reason = data.get("abstention_reason")
         self.selected_candidate = data.get("selected_candidate")
         self.candidate_scores = data.get("candidate_scores")
 

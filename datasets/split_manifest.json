@@ -1,44 +1,102 @@
 {
-  "dataset_version": "1.0.0",
-  "total_examples": 259,
+  "dataset_version": "2.0.0",
+  "total_in_domain_examples": 308,
+  "total_heldout_domain_examples": 4,
   "split_counts": {
-    "train": 159,
-    "validation": 50,
-    "test": 50
+    "train": 210,
+    "validation": 40,
+    "test": 58,
+    "heldout_domain_test": 4
   },
   "file_checksums": {
-    "train.jsonl": "fa66191c13182f882f382373eb9924150662282ca7f825806be5fac10b7324c0",
-    "val.jsonl": "60ceb535cad850ffbd468e5906bf11d3cf14ba95cad7977f172d0408be1cf3fe",
-    "test.jsonl": "1f5a6e338d5fa0b08fe3cb0c236992e6f2a9febf23779b4bff0d7567f96fe8dc"
+    "train.jsonl": "0a3fee4dfa6892b841fffebab3bd9bf39f743ee7768a31aa4f9bd292eba5a459",
+    "val.jsonl": "edb19a210bc537d3b1a66b2504a76c86f9d70b7fdfbb32eaa2a22afbe1bc0aac",
+    "test.jsonl": "68a963fc4f8b4fbc5ec79b7f426a662bae3a81f642d3dbb6bcb1c936361b6938",
+    "heldout_domain_test.jsonl": "784f3923ed4c33ffd56a370cee0a739b110586be0e7a91ae3ec4d527c3a64b92"
   },
   "provenance_breakdown": {
-    "verified_real_expert": 259,
-    "curated_synthetic": 0
+    "externally_sourced_real": 8,
+    "curated_synthetic": 300
   },
-  "domain_distribution": {
-    "customer_support": 52,
-    "communication": 51,
-    "retail": 51,
-    "business_operations": 51,
-    "finance_and_credit": 52,
-    "healthcare_triage": 1,
-    "compliance_legal": 1
-  },
-  "binary_label_distribution": {
-    "1": 182,
-    "0": 77
-  },
-  "priority_label_distribution": {
-    "1": 126,
-    "0": 52,
-    "3": 54,
-    "2": 27
-  },
-  "risk_label_distribution": {
-    "0": 77,
-    "1": 77,
-    "3": 55,
-    "2": 50
+  "split_audit": {
+    "train": {
+      "count": 210,
+      "domains": {
+        "customer_support": 42,
+        "communication": 42,
+        "retail": 42,
+        "business_operations": 42,
+        "finance_and_credit": 42
+      },
+      "binary_distribution": {
+        "1": 105,
+        "0": 105
+      },
+      "priority_distribution": {
+        "1": 72,
+        "0": 62,
+        "3": 44,
+        "2": 32
+      },
+      "risk_distribution": {
+        "0": 73,
+        "1": 52,
+        "3": 55,
+        "2": 30
+      }
+    },
+    "validation": {
+      "count": 40,
+      "domains": {
+        "customer_support": 8,
+        "communication": 8,
+        "retail": 8,
+        "business_operations": 8,
+        "finance_and_credit": 8
+      },
+      "binary_distribution": {
+        "1": 20,
+        "0": 20
+      },
+      "priority_distribution": {
+        "1": 14,
+        "0": 12,
+        "3": 8,
+        "2": 6
+      },
+      "risk_distribution": {
+        "0": 14,
+        "1": 10,
+        "3": 10,
+        "2": 6
+      }
+    },
+    "test": {
+      "count": 58,
+      "domains": {
+        "customer_support": 12,
+        "communication": 11,
+        "retail": 12,
+        "business_operations": 11,
+        "finance_and_credit": 12
+      },
+      "binary_distribution": {
+        "1": 30,
+        "0": 28
+      },
+      "priority_distribution": {
+        "1": 21,
+        "0": 18,
+        "3": 10,
+        "2": 9
+      },
+      "risk_distribution": {
+        "0": 21,
+        "1": 15,
+        "3": 13,
+        "2": 9
+      }
+    }
   },
   "leakage_audit_passed": true
 }

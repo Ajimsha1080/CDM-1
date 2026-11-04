@@ -159,21 +159,23 @@ curl -X POST http://localhost:8000/v1/decisions \
 
 ## 5. Benchmark Performance & Empirical Validation
 
-CDM-1 was benchmarked against classical tabular algorithms and fine-tuned transformers on identical holdout partitions (N=50) across seeds `[42, 123, 999]`:
+CDM-1 was benchmarked against classical tabular algorithms and fine-tuned transformers on identical holdout partitions (N=58) across seeds `[42, 123, 999]`:
 
 | Evaluation Metric | Logistic Regression | Random Forest | XGBoost (v3.4.1) | **CDM-1 (Neural Architecture)** |
 |---|---|---|---|---|
-| **Binary AUROC** | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
-| **Brier Score** | 0.9831 | 0.8455 | 0.9750 | **0.9689** |
-| **Candidate Choice NDCG** | N/A | N/A | N/A | **0.7500** |
-| **Top-1 Choice Accuracy** | N/A | N/A | N/A | **0.5000** |
-| **Operational Priority (Macro F1)** | N/A | N/A | N/A | **1.0000** |
+| **Binary Accuracy** | 0.9310 | 1.0000 | 1.0000 | **0.9483** |
+| **Binary AUROC** | 0.9905 | 1.0000 | 1.0000 | **0.9821** |
+| **Brier Score** | 0.0628 | 0.0002 | 0.0002 | **0.0449** |
+| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | **0.8966** |
+| **Candidate Choice NDCG** | N/A | N/A | N/A | **0.9618** |
+| **Operational Priority (Macro F1)** | N/A | N/A | N/A | **0.8538** |
+| **Risk Classification Accuracy** | N/A | N/A | N/A | **0.9483** |
 | **Prohibited Selection Rate** | N/A | N/A | N/A | **0.0000%** (Zero Violations) |
 | **Permutation Invariance ($\Delta_{L2}$)** | N/A | N/A | N/A | **0.0000** (Strictly Invariant) |
-| **Candidate Scalability ($K=32$)** | N/A | N/A | N/A | **28.37 ms** CPU Latency |
+| **Candidate Scalability ($K=32$)** | N/A | N/A | N/A | **31.65 ms** CPU Latency |
 | **Out-of-Distribution (OOD) Safety** | N/A | N/A | N/A | **100% Policy Adherence** |
 
-See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for full statistical tables, confidence intervals, and research disclosures.
+See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for full statistical tables, confusion matrices, and research disclosures.
 
 ---
 

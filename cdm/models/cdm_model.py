@@ -225,7 +225,8 @@ class CDMModel(nn.Module):
             score_mask = targets.get("score_mask", torch.ones_like(score_target, dtype=torch.float32)).to(device)
             if score_mask.sum() > 0:
                 pred_score = outputs["decision"]["decision_score"]
-                raw_loss_score = F.smooth_l1_loss(pred_score, score_target, reduction="none")
+                # Target normalization: scale 0-100 range to [0, 1] to prevent gradient scale mismatch
+                raw_loss_score = F.smooth_l1_loss(pred_score / 100.0, score_target / 100.0, reduction="none")
                 loss_score = (raw_loss_score * score_mask).sum() / torch.clamp(score_mask.sum(), min=1.0)
                 total_loss = total_loss + lw.lambda_score * loss_score
                 loss_dict["loss_score"] = loss_score.item()
@@ -303,7 +304,8 @@ class CDMModel(nn.Module):
             out_num_mask = targets.get("outcome_numeric_mask", torch.ones(out_num_target.shape[0], device=device)).unsqueeze(-1)
             if out_num_mask.sum() > 0:
                 pred_num = outputs["predictive"]["numeric_outcome"]
-                raw_loss_out_num = F.smooth_l1_loss(pred_num, out_num_target, reduction="none")
+                # Target normalization: scale resolution hours to smooth loss scale
+                raw_loss_out_num = F.smooth_l1_loss(pred_num / 10.0, out_num_target / 10.0, reduction="none")
                 loss_out_num = (raw_loss_out_num * out_num_mask).sum() / torch.clamp(out_num_mask.sum(), min=1.0)
                 total_loss = total_loss + lw.lambda_outcome_numeric * loss_out_num
                 loss_dict["loss_outcome_numeric"] = loss_out_num.item()

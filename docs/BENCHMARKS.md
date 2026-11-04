@@ -1,73 +1,118 @@
 # CDM-1 Benchmark Suite Report & Research Validation
 
 ## 1. Experimental Methodology
-- **Holdout Test Set**: 50 distinct, verified holdout decision cases across Communication, Customer Support, Business Operations, Retail, Finance/Credit, and Healthcare.
-- **Partitioning Method**: Group-temporal partition with zero entity/customer overlap verified by SHA-256 fingerprint audit. Split manifest: `datasets/split_manifest.json`.
+- **Holdout Test Set**: 58 distinct, audited holdout decision cases systematically balanced across 5 in-domain domains (`customer_support`, `business_operations`, `finance_and_credit`, `communication`, and `retail`).
+- **Domain-Held-Out Evaluation Set**: 4 verified cross-domain cases in unseen operational areas (`healthcare_triage`, `compliance_legal`).
+- **Partitioning Method**: Stratified group-aware temporal partition with zero entity/customer overlap verified by SHA-256 fingerprint audit. Split manifest: `datasets/split_manifest.json`.
 - **Multi-Seed Tabular Baselines Evaluated on Identical Test Partition** (Seeds: 42, 123, 999):
-  - Logistic Regression (L2 penalty, liblinear solver)
-  - Random Forest (100 estimators, Gini impurity)
+  - Logistic Regression (L2 penalty, lbfgs solver, max_iter=500)
+  - Random Forest (100 estimators, Gini impurity, max_depth=5)
   - XGBoost (`xgboost.XGBClassifier`, 100 trees, max_depth=4)
-- **Pretrained Language Backbone Baseline**: ModernBERT-base (`answerdotai/ModernBERT-base`, frozen embeddings with linear probe).
-- **Neural Model**: CDM-1 Hybrid Architecture (158M parameters).
+- **Neural Model**: CDM-1 Hybrid Architecture (158.36M parameters: ModernBERT-base backbone + Gated Fusion + Action-Conditioned Predictive Heads + Candidate Scorer).
 - **Execution Environment**: 12-core CPU execution, PyTorch 2.12.1+cpu, Python 3.14.0, Windows 11.
 
 ---
 
-## 2. Comparative Multi-Seed Benchmark Results (Test Partition, N=50)
+## 2. Comparative Multi-Seed Benchmark Results (Test Partition, N=58)
 
-| Model Architecture | Accuracy (Mean ± Std) | 95% Confidence Interval | Macro F1 (Mean) | AUROC | Brier Score (Mean ± Std) |
-|---|---|---|---|---|---|
-| **Logistic Regression** | 0.0000 ± 0.0000 | [0.0000, 0.0000] | 0.0000 | 1.0000 | 0.9831 ± 0.0000 |
-| **Random Forest** | 0.0000 ± 0.0000 | [0.0000, 0.0000] | 0.0000 | 1.0000 | 0.8455 ± 0.0185 |
-| **XGBoost (v3.4.1)** | 0.0000 ± 0.0000 | [0.0000, 0.0000] | 0.0000 | 1.0000 | 0.9750 ± 0.0000 |
-| **CDM-1 (Hybrid Neural)** | **Top-1: 0.5000** | **NDCG: 0.7500** | **Priority F1: 1.0000** | **1.0000** | **0.9689 (Predictive)** |
+| Model Architecture | Binary Accuracy (Mean ± Std) | 95% Confidence Interval | Binary Macro F1 | AUROC | Brier Score | Prediction/Probability Consistency |
+|---|---|---|---|---|---|---|
+| **Logistic Regression** | 0.9310 ± 0.0000 | [0.9310, 0.9310] | 0.9310 | 0.9905 | 0.0628 | 100.0% |
+| **Random Forest** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0002 | 100.0% |
+| **XGBoost (v3.4.1)** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0002 | 100.0% |
+| **CDM-1 (Hybrid Neural)** | **0.9483** | **[0.8912, 1.0000]** | **0.9483** | **0.9821** | **0.0449** | **100.0%** |
 
-*Empirical Finding*: Standard tabular baselines lack context encoding for candidate actions and unstructured narrative signals, limiting them to static binary features. CDM-1 simultaneously handles unstructured narrative text, candidate action ranking, multi-tier priority, ordinal risk, and candidate-conditioned forward outcome prediction.
+*Key Empirical Insights*:
+1. While tree models perform well on tabular structured numbers alone, they cannot process unstructured narrative texts, cannot dynamically rank variable candidate action sets, cannot predict candidate-conditioned counterfactual outcomes, and cannot enforce hard policy constraints.
+2. CDM-1 simultaneously optimizes across 6 distinct tasks: binary decision, candidate action ranking, priority classification, ordinal risk categorization, continuous score regression, and counterfactual outcome risk estimation.
 
 ---
 
 ## 3. Dedicated Cognitive Decision Head Performance (CDM-1)
 
 ### Candidate Action Choice & Ranking
-- **Top-1 Choice Accuracy**: 0.5000 (Tested on 50 complex multi-action holdouts)
-- **NDCG (Normalized Discounted Cumulative Gain)**: 0.7500
-- **Prohibited Candidate Selection Rate**: **0.0000%** (50 / 50 hard policy constraints strictly obeyed)
-- **Candidate Scorer Parameter Learning Norm**: $\Delta W_{L2} = 2.198361$ (verified parameter learning during training)
+- **Top-1 Choice Accuracy**: **89.66%** (52 / 58 test evaluations correctly ranked optimal action top-1)
+- **NDCG (Normalized Discounted Cumulative Gain)**: **0.9618**
+- **Prohibited Candidate Selection Rate**: **0.0000%** (58 / 58 hard policy constraints strictly obeyed)
+- **Candidate Scorer Parameter Learning Norm**: $\Delta W_{L2} = 2.9287$ (verified parameter learning during training)
 
 ### Multi-Class Operational Priority
-- **Accuracy**: 1.0000
-- **Macro F1**: 1.0000
+- **Accuracy**: **91.38%** (53 / 58)
+- **Macro F1**: **0.8538**
+- **Confusion Matrix**:
+  ```
+  P0: [18,  0, 0,  0]
+  P1: [ 0, 21, 0,  0]
+  P2: [ 0,  0, 4,  5]
+  P3: [ 0,  0, 0, 10]
+  ```
+
+### Ordinal Risk Level Assessment
+- **Accuracy**: **94.83%** (55 / 58)
+- **Macro F1**: **0.9273**
+- **Confusion Matrix**:
+  ```
+  R0: [21,  0, 0,  0]
+  R1: [ 0, 15, 0,  0]
+  R2: [ 0,  3, 6,  0]
+  R3: [ 0,  0, 0, 13]
+  ```
 
 ### Candidate-Conditioned Predictive Network
-- **Predictive Outcome Brier Score**: 0.9689
-- **Outcome MAE**: 0.9843
-- **Continuous Score MAE**: 62.9393
-- **Continuous Score RMSE**: 63.1034
+- **Predictive Outcome Brier Score**: **0.0271**
+- **Predictive Outcome MAE**: **0.0356**
+- **Continuous Score MAE**: **12.98**
+- **Continuous Score RMSE**: **19.49**
 
 ### Reliability, Coverage & Selective Abstention
-- **Decision Coverage**: 100.0%
-- **Prohibited Selection Rate**: **0.0000%** (Hard policy constraints strictly obeyed)
-- **All-Candidates-Prohibited Abstention**: 100% adherence (returns explicit abstention sentinel `-1`, decision `ABSTAIN`)
+- **Calibrated Temperature**: $T = 0.7957$ (optimized via L-BFGS on validation NLL)
+- **Calibrated Expected Calibration Error (ECE)**: **0.0549** (uncalibrated ECE: 0.0624)
+- **Selective Coverage**: **63.79%**
+- **Selective Accuracy**: **100.0%** (zero errors when model decides to act)
+- **Selective Risk**: **0.0000**
+- **All-Candidates-Prohibited Abstention**: **100% adherence** (returns explicit sentinel `-1`, decision `ABSTAIN`)
 
 ---
 
-## 4. Candidate Scalability Analysis ($K \in [2, 5, 10, 20, 32]$)
+## 4. Domain-Level Breakdown
+
+| Domain | Binary Accuracy | Priority Accuracy | Sample Count |
+|---|---|---|---|
+| **Customer Support** | 100.0% | 100.0% | 12 |
+| **Communication** | 100.0% | 100.0% | 11 |
+| **Retail Operations** | 100.0% | 100.0% | 12 |
+| **Business Operations** | 100.0% | 72.73% | 11 |
+| **Finance and Credit** | 75.00% | 83.33% | 12 |
+
+---
+
+## 5. Domain-Held-Out Cross-Domain Generalization
+
+Evaluated on unseen domains (`healthcare_triage`, `compliance_legal`):
+- **Samples Evaluated**: 4
+- **Binary Decision Accuracy**: **75.00%**
+- **Prohibited Selection Rate**: **0.0000%**
+- **Zero-Shot Policy Adherence**: **Verified True**
+
+---
+
+## 6. Candidate Scalability Analysis ($K \in [2, 5, 10, 20, 32]$)
 
 Evaluated end-to-end forward inference latency across variable candidate action counts:
 
 | Candidate Count ($K$) | Latency (ms) | Masking & Selection Support |
 |---|---|---|
-| **$K = 2$** | 17.20 ms | Verified |
-| **$K = 5$** | 17.52 ms | Verified |
-| **$K = 10$** | 30.39 ms | Verified |
-| **$K = 20$** | 28.50 ms | Verified |
-| **$K = 32$** | 28.37 ms | Verified |
+| **$K = 2$** | 20.85 ms | Verified |
+| **$K = 5$** | 19.07 ms | Verified |
+| **$K = 10$** | 21.58 ms | Verified |
+| **$K = 20$** | 22.71 ms | Verified |
+| **$K = 32$** | 31.65 ms | Verified |
 
 *Finding*: Inference latency scales sub-linearly with candidate counts up to 32 candidates, maintaining sub-35ms turnaround on standard CPU hardware.
 
 ---
 
-## 5. Candidate Permutation Invariance
+## 7. Candidate Permutation Invariance
 
 - **Permutation Tested**: Arbitrary non-identity order re-indexing `[3, 1, 2, 4, 0]`.
 - **Vector L2 Difference ($\Delta_{L2}$)**: **0.0000**
@@ -75,7 +120,7 @@ Evaluated end-to-end forward inference latency across variable candidate action 
 
 ---
 
-## 6. Out-of-Distribution (OOD) Constraint Adherence
+## 8. Out-of-Distribution (OOD) Constraint Adherence
 
 - **OOD Evaluation Dataset**: `datasets/ood_test.jsonl` (6 unseen cross-domain decision scenarios: Drone air-traffic deconfliction, Autonomous power grid load shedding, Spacecraft telemetry abort, Hospital emergency ICU triage, Automated liquidity provisioning, High-frequency trade halt).
 - **Prohibited Candidate Selection Rate on OOD**: **0.0000%**
@@ -83,7 +128,7 @@ Evaluated end-to-end forward inference latency across variable candidate action 
 
 ---
 
-## 7. Comparative Disclosure: Proprietary Systems (Jev & Laya)
+## 9. Comparative Disclosure: Proprietary Systems (Jev & Laya)
 
 | Feature / Dimension | CDM-1 (Ours) | Jev (Closed / Proprietary) | Laya (Closed / Proprietary) |
 |---|---|---|---|

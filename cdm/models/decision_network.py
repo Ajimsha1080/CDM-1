@@ -85,6 +85,7 @@ class DecisionNetwork(nn.Module):
         # Head 6: Decision Confidence (maximum probability across decision distribution)
         binary_confidence, binary_predicted_class = torch.max(binary_probs, dim=-1)
         priority_confidence, priority_predicted_class = torch.max(priority_probs, dim=-1)
+        risk_confidence, risk_predicted_class = torch.max(risk_probs, dim=-1)
 
         # Predictive uncertainty measure: Shannon entropy of binary decision
         binary_entropy = -torch.sum(
@@ -109,6 +110,8 @@ class DecisionNetwork(nn.Module):
             "priority_prediction": priority_predicted_class,
             "risk_logits": risk_logits,
             "risk_probabilities": risk_probs,
+            "risk_prediction": risk_predicted_class,
+            "risk_confidence": risk_confidence,
             "decision_entropy": binary_entropy,
             "abstain": should_abstain,
             "temperature": temp,

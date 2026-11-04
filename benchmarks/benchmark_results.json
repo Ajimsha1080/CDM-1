@@ -1,58 +1,86 @@
 {
-  "benchmark_suite_version": "3.0.0",
+  "benchmark_suite_version": "4.0.0",
   "model_tested": "CDM-1 (Hybrid Cognitive Architecture)",
-  "test_sample_count": 50,
+  "test_sample_count": 58,
   "baselines_multi_seed": {
     "logistic_regression": {
+      "prediction_probability_consistency": 1.0,
+      "confusion_matrix": [
+        [
+          27,
+          1
+        ],
+        [
+          3,
+          27
+        ]
+      ],
       "accuracy": {
-        "mean": 0.0,
+        "mean": 0.931,
         "std": 0.0,
         "ci_95": [
-          0.0,
-          0.0
-        ]
+          0.931,
+          0.931
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "macro_f1": {
-        "mean": 0.0,
+        "mean": 0.931,
         "std": 0.0,
         "ci_95": [
-          0.0,
-          0.0
-        ]
+          0.931,
+          0.931
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "auroc": {
-        "mean": 1.0,
+        "mean": 0.9905,
         "std": 0.0,
         "ci_95": [
-          1.0,
-          1.0
-        ]
+          0.9905,
+          0.9905
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "brier_score": {
-        "mean": 0.9831,
+        "mean": 0.0628,
         "std": 0.0,
         "ci_95": [
-          0.9831,
-          0.9831
-        ]
+          0.0628,
+          0.0628
+        ],
+        "ci_status": "deterministic_across_seeds"
       }
     },
     "random_forest": {
+      "prediction_probability_consistency": 1.0,
+      "confusion_matrix": [
+        [
+          28,
+          0
+        ],
+        [
+          0,
+          30
+        ]
+      ],
       "accuracy": {
-        "mean": 0.0,
+        "mean": 1.0,
         "std": 0.0,
         "ci_95": [
-          0.0,
-          0.0
-        ]
+          1.0,
+          1.0
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "macro_f1": {
-        "mean": 0.0,
+        "mean": 1.0,
         "std": 0.0,
         "ci_95": [
-          0.0,
-          0.0
-        ]
+          1.0,
+          1.0
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "auroc": {
         "mean": 1.0,
@@ -60,33 +88,48 @@
         "ci_95": [
           1.0,
           1.0
-        ]
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "brier_score": {
-        "mean": 0.8455,
-        "std": 0.0185,
+        "mean": 0.0002,
+        "std": 0.0,
         "ci_95": [
-          0.8091,
-          0.8818
-        ]
+          0.0002,
+          0.0002
+        ],
+        "ci_status": "deterministic_across_seeds"
       }
     },
     "xgboost": {
+      "prediction_probability_consistency": 1.0,
+      "confusion_matrix": [
+        [
+          28,
+          0
+        ],
+        [
+          0,
+          30
+        ]
+      ],
       "accuracy": {
-        "mean": 0.0,
+        "mean": 1.0,
         "std": 0.0,
         "ci_95": [
-          0.0,
-          0.0
-        ]
+          1.0,
+          1.0
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "macro_f1": {
-        "mean": 0.0,
+        "mean": 1.0,
         "std": 0.0,
         "ci_95": [
-          0.0,
-          0.0
-        ]
+          1.0,
+          1.0
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "auroc": {
         "mean": 1.0,
@@ -94,80 +137,243 @@
         "ci_95": [
           1.0,
           1.0
-        ]
+        ],
+        "ci_status": "deterministic_across_seeds"
       },
       "brier_score": {
-        "mean": 0.975,
+        "mean": 0.0002,
         "std": 0.0,
         "ci_95": [
-          0.975,
-          0.975
-        ]
+          0.0002,
+          0.0002
+        ],
+        "ci_status": "deterministic_across_seeds"
       }
     }
   },
   "cdm_1_multitask": {
     "binary_decision": {
-      "accuracy": 0.0,
-      "macro_f1": 0.0,
-      "auroc": 1.0,
-      "auprc": 0.0,
-      "brier_score": 0.9868,
-      "expected_calibration_error": 0.9934
+      "accuracy": 0.9483,
+      "macro_f1": 0.9483,
+      "auroc": 0.9821,
+      "auroc_status": "valid",
+      "auprc": 0.9853,
+      "auprc_status": "valid",
+      "brier_score": 0.0449,
+      "expected_calibration_error": 0.0826,
+      "confusion_matrix": [
+        [
+          28,
+          0
+        ],
+        [
+          3,
+          27
+        ]
+      ],
+      "classification_report": {
+        "0": {
+          "precision": 0.9032258064516129,
+          "recall": 1.0,
+          "f1-score": 0.9491525423728814,
+          "support": 28.0
+        },
+        "1": {
+          "precision": 1.0,
+          "recall": 0.9,
+          "f1-score": 0.9473684210526315,
+          "support": 30.0
+        },
+        "accuracy": 0.9482758620689655,
+        "macro avg": {
+          "precision": 0.9516129032258065,
+          "recall": 0.95,
+          "f1-score": 0.9482604817127565,
+          "support": 58.0
+        },
+        "weighted avg": {
+          "precision": 0.9532814238042269,
+          "recall": 0.9482758620689655,
+          "f1-score": 0.9482297210003383,
+          "support": 58.0
+        }
+      }
     },
     "candidate_choice_and_ranking": {
-      "top_1_accuracy": 0.5,
-      "ndcg": 0.75,
+      "top_1_accuracy": 0.8966,
+      "ndcg": 0.9618,
       "prohibited_selection_rate": 0.0,
-      "total_constrained_evaluations": 50
+      "total_constrained_evaluations": 58
     },
     "priority_classification": {
-      "accuracy": 1.0,
-      "macro_f1": 1.0
+      "accuracy": 0.9138,
+      "macro_f1": 0.8538,
+      "confusion_matrix": [
+        [
+          18,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          21,
+          0,
+          0
+        ],
+        [
+          0,
+          0,
+          4,
+          5
+        ],
+        [
+          0,
+          0,
+          0,
+          10
+        ]
+      ],
+      "classification_report": {
+        "0": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1-score": 1.0,
+          "support": 18.0
+        },
+        "1": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1-score": 1.0,
+          "support": 21.0
+        },
+        "2": {
+          "precision": 1.0,
+          "recall": 0.4444444444444444,
+          "f1-score": 0.6153846153846154,
+          "support": 9.0
+        },
+        "3": {
+          "precision": 0.6666666666666666,
+          "recall": 1.0,
+          "f1-score": 0.8,
+          "support": 10.0
+        },
+        "accuracy": 0.9137931034482759,
+        "macro avg": {
+          "precision": 0.9166666666666666,
+          "recall": 0.8611111111111112,
+          "f1-score": 0.8538461538461539,
+          "support": 58.0
+        },
+        "weighted avg": {
+          "precision": 0.9425287356321839,
+          "recall": 0.9137931034482759,
+          "f1-score": 0.9058355437665783,
+          "support": 58.0
+        }
+      }
     },
     "risk_classification": {
-      "accuracy": 0.0,
-      "macro_f1": 0.0
+      "accuracy": 0.9483,
+      "macro_f1": 0.9273,
+      "confusion_matrix": [
+        [
+          21,
+          0,
+          0,
+          0
+        ],
+        [
+          0,
+          15,
+          0,
+          0
+        ],
+        [
+          0,
+          3,
+          6,
+          0
+        ],
+        [
+          0,
+          0,
+          0,
+          13
+        ]
+      ]
     },
     "continuous_scoring": {
-      "mae": 62.9393,
-      "rmse": 63.1034
+      "mae": 12.9842,
+      "rmse": 19.4949
     },
     "predictive_outcome": {
-      "brier_score": 0.9689,
-      "mae": 0.9843
+      "brier_score": 0.0271,
+      "mae": 0.0356
     },
     "selective_prediction": {
-      "coverage": 1.0,
-      "selective_accuracy": 0.0,
-      "selective_risk": 1.0
+      "coverage": 0.6379,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
     },
     "domain_breakdown": {
-      "RET": {
-        "accuracy": 0.0,
-        "samples": 50
+      "customer_support": {
+        "binary_accuracy": 1.0,
+        "priority_accuracy": 1.0,
+        "samples": 12
+      },
+      "communication": {
+        "binary_accuracy": 1.0,
+        "priority_accuracy": 1.0,
+        "samples": 11
+      },
+      "retail": {
+        "binary_accuracy": 1.0,
+        "priority_accuracy": 1.0,
+        "samples": 12
+      },
+      "business_operations": {
+        "binary_accuracy": 1.0,
+        "priority_accuracy": 0.7273,
+        "samples": 11
+      },
+      "finance_and_credit": {
+        "binary_accuracy": 0.75,
+        "priority_accuracy": 0.8333,
+        "samples": 12
       }
     }
   },
+  "heldout_domains_evaluation": {
+    "heldout_domains_evaluated": [
+      "healthcare_triage",
+      "compliance_legal"
+    ],
+    "samples_evaluated": 4,
+    "binary_accuracy": 0.75,
+    "prohibited_selection_rate": 0.0,
+    "policy_adherence_verified": true
+  },
   "candidate_scalability": {
     "2_candidates": {
-      "latency_ms": 17.199,
+      "latency_ms": 20.854,
       "supported": true
     },
     "5_candidates": {
-      "latency_ms": 17.52,
+      "latency_ms": 19.074,
       "supported": true
     },
     "10_candidates": {
-      "latency_ms": 30.392,
+      "latency_ms": 21.585,
       "supported": true
     },
     "20_candidates": {
-      "latency_ms": 28.495,
+      "latency_ms": 22.71,
       "supported": true
     },
     "32_candidates": {
-      "latency_ms": 28.365,
+      "latency_ms": 31.653,
       "supported": true
     }
   },

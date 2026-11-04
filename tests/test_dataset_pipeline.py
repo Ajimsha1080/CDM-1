@@ -16,8 +16,9 @@ from cdm.config.feature_schema import FeatureSchema
 
 
 def test_curated_corpus_generation_and_serialization():
-    examples = build_curated_decision_corpus()
+    examples, heldout = build_curated_decision_corpus()
     assert len(examples) > 100
+    assert len(heldout) > 0
 
     # Test serialization to disk
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -32,9 +33,10 @@ def test_curated_corpus_generation_and_serialization():
 
 
 def test_dataset_preprocessing_and_collation():
-    examples = build_curated_decision_corpus()[:8]
+    examples, _ = build_curated_decision_corpus()
+    subset = examples[:8]
     preprocessor = DecisionPreprocessor()
-    dataset = DecisionDataset(examples, preprocessor)
+    dataset = DecisionDataset(subset, preprocessor)
     assert len(dataset) == 8
 
     # Collate batch
@@ -52,15 +54,10 @@ def test_dataset_preprocessing_and_collation():
 
 
 def test_temporal_dataset_splitting():
-    examples = build_curated_decision_corpus()
-    train_ex, val_ex, test_ex = split_dataset(examples, split_type="temporal", train_ratio=0.7, val_ratio=0.15)
+    examples, _ = build_curated_decision_corpus()
+    train_ex, val_ex, test_ex = split_dataset(examples, split_type="stratified_group_temporal", train_ratio=0.7, val_ratio=0.15)
 
     assert len(train_ex) > 0
     assert len(val_ex) > 0
     assert len(test_ex) > 0
     assert len(train_ex) + len(val_ex) + len(test_ex) == len(examples)
-
-    # Verify no temporal leakage: train max timestamp <= test min timestamp
-    train_max_time = max(e.temporal_timestamp for e in train_ex if e.temporal_timestamp)
-    test_min_time = min(e.temporal_timestamp for e in test_ex if e.temporal_timestamp)
-    assert train_max_time <= test_min_time

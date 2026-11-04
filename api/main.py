@@ -326,14 +326,11 @@ def batch_decisions(
 
 @app.get("/v1/metering")
 def get_metering(tenant: Dict[str, str] = Depends(authenticate_and_rate_limit)):
+    summary = USAGE_METER.get_tenant_summary(tenant["tenant_id"])
     return {
         "tenant_id": tenant["tenant_id"],
         "tier": tenant["tier"],
-        "usage": {
-            "total_requests": USAGE_METER.get("total_requests", 0),
-            "tenant_requests": USAGE_METER.get("decisions_by_tenant", {}).get(tenant["tenant_id"], 0),
-            "last_updated": USAGE_METER.get("last_updated", 0.0),
-        },
+        "usage": summary,
     }
 
 

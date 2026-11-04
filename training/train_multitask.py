@@ -8,6 +8,8 @@ import os
 import sys
 import json
 import time
+import numpy as np
+from collections import defaultdict
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import torch
@@ -113,6 +115,7 @@ def train_multitask(
         model.train()
         train_loss = 0.0
         epoch_task_losses = {}
+        epoch_grad_norms = []
 
         for batch in cached_train:
             text_emb = batch["text_emb"]
@@ -161,26 +164,30 @@ def train_multitask(
 
             loss, loss_dict = model.compute_multitask_loss(outputs, targets)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0).item()
             optimizer.step()
 
             train_loss += loss.item()
+            epoch_grad_norms.append(grad_norm)
             for k, v in loss_dict.items():
                 epoch_task_losses[k] = epoch_task_losses.get(k, 0.0) + (v / len(cached_train))
 
         scheduler.step()
         avg_train_loss = train_loss / len(cached_train)
+        avg_grad_norm = float(np.mean(epoch_grad_norms))
 
-        # Validation step
+        # Validation step across all modalities and domains
         model.eval()
         val_loss = 0.0
-        val_correct_bin = 0
-        val_total_bin = 0
-        val_correct_choice = 0
-        val_total_choice = 0
+        val_correct_bin, val_total_bin = 0, 0
+        val_correct_choice, val_total_choice = 0, 0
+        val_correct_prio, val_total_prio = 0, 0
+        val_correct_risk, val_total_risk = 0, 0
+        val_score_diffs = []
+        val_domain_correct = defaultdict(lambda: {"correct": 0, "total": 0})
 
         with torch.no_grad():
-            for batch in cached_val:
+            for b_idx, batch in enumerate(cached_val):
                 text_emb = batch["text_emb"]
                 num_vals = batch["numeric_values"]
                 missing = batch["missing_indicators"]
@@ -229,6 +236,21 @@ def train_multitask(
                 val_correct_bin += ((bin_preds == targets["binary_target"]) * bin_mask).sum().item()
                 val_total_bin += bin_mask.sum().item()
 
+                prio_preds = decision_out["priority_prediction"]
+                prio_mask = targets["priority_mask"]
+                val_correct_prio += ((prio_preds == targets["priority_target"]) * prio_mask).sum().item()
+                val_total_prio += prio_mask.sum().item()
+
+                risk_preds = decision_out["risk_prediction"]
+                risk_mask = targets["risk_mask"]
+                val_correct_risk += ((risk_preds == targets["risk_target"]) * risk_mask).sum().item()
+                val_total_risk += risk_mask.sum().item()
+
+                score_preds = decision_out["decision_score"]
+                score_mask = targets["score_mask"]
+                diffs = torch.abs(score_preds - targets["score_target"]) * score_mask
+                val_score_diffs.extend(diffs[score_mask.bool()].cpu().tolist())
+
                 if candidate_out is not None:
                     choice_preds = candidate_out["selected_candidate_idx"]
                     choice_mask = targets["choice_mask"]
@@ -238,13 +260,22 @@ def train_multitask(
         avg_val_loss = val_loss / len(cached_val)
         val_bin_acc = val_correct_bin / max(val_total_bin, 1)
         val_choice_acc = val_correct_choice / max(val_total_choice, 1)
+        val_prio_acc = val_correct_prio / max(val_total_prio, 1)
+        val_risk_acc = val_correct_risk / max(val_total_risk, 1)
+        val_score_mae = float(np.mean(val_score_diffs)) if val_score_diffs else 0.0
+
+        gen_gap = round(avg_val_loss - avg_train_loss, 4)
+        overfitting_flag = "STABLE" if gen_gap < 1.0 else ("MODERATE_GAP" if gen_gap < 3.0 else "OVERFITTING")
 
         print(
             f"Epoch {epoch+1:02d}/{epochs:02d} | "
-            f"Train Loss: {avg_train_loss:.4f} | "
-            f"Val Loss: {avg_val_loss:.4f} | "
-            f"Val Bin Acc: {val_bin_acc:.4f} | "
-            f"Val Choice Acc: {val_choice_acc:.4f}",
+            f"Train: {avg_train_loss:.4f} | "
+            f"Val: {avg_val_loss:.4f} | "
+            f"GradNorm: {avg_grad_norm:.3f} | "
+            f"BinAcc: {val_bin_acc:.4f} | "
+            f"ChoiceAcc: {val_choice_acc:.4f} | "
+            f"PrioAcc: {val_prio_acc:.4f} | "
+            f"Diag: {overfitting_flag}",
             flush=True,
         )
 
@@ -252,9 +283,17 @@ def train_multitask(
             "epoch": epoch + 1,
             "train_loss": round(avg_train_loss, 4),
             "val_loss": round(avg_val_loss, 4),
-            "val_binary_accuracy": round(val_bin_acc, 4),
-            "val_choice_accuracy": round(val_choice_acc, 4),
-            "individual_losses": {k: round(v, 4) for k, v in epoch_task_losses.items()},
+            "generalization_gap": gen_gap,
+            "overfitting_diagnostic": overfitting_flag,
+            "average_grad_norm": round(avg_grad_norm, 4),
+            "validation_metrics": {
+                "binary_accuracy": round(val_bin_acc, 4),
+                "choice_top1_accuracy": round(val_choice_acc, 4),
+                "priority_accuracy": round(val_prio_acc, 4),
+                "risk_accuracy": round(val_risk_acc, 4),
+                "score_mae": round(val_score_mae, 4),
+            },
+            "individual_task_losses": {k: round(v, 4) for k, v in epoch_task_losses.items()},
         }
         history.append(history_entry)
 

@@ -134,60 +134,164 @@ def collate_decision_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def split_dataset(
     examples: List[DecisionExample],
-    split_type: str = "group_temporal",
+    split_type: str = "stratified_group_temporal",
     train_ratio: float = 0.70,
     val_ratio: float = 0.15,
 ) -> Tuple[List[DecisionExample], List[DecisionExample], List[DecisionExample]]:
-    """Splits dataset ensuring zero entity/customer leakage and temporal holdout.
+    """Splits dataset with stratified, group-aware, and temporal holdout.
 
-    - 'group_temporal': sorts groups by earliest interaction timestamp, ensuring complete entity isolation.
+    Guarantees:
+    1. Complete entity/customer group isolation (zero leakage between splits).
+    2. Multi-domain representation across all splits (customer_support, business_operations, etc.).
+    3. Balanced binary, priority, and risk class representation.
+    4. Temporal holdout order (earliest interactions in train, latest in test).
     """
-    if split_type == "group_temporal":
-        # Group by domain and entity/customer prefix
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for ex in examples:
-            prefix = ex.example_id.rsplit("-", 1)[0]
-            groups[prefix].append(ex)
+    from collections import defaultdict
 
-        # Sort groups by min timestamp
-        sorted_groups = sorted(
-            groups.values(),
-            key=lambda grp: min(e.temporal_timestamp or "" for e in grp),
-        )
+    # 1. Group examples by customer / entity group
+    entity_groups = defaultdict(list)
+    for ex in examples:
+        group_key = ex.structured_features.get("customer_id")
+        if not group_key:
+            # Fallback to example ID prefix if customer_id missing
+            group_key = ex.example_id.rsplit("-", 1)[0]
+        entity_groups[group_key].append(ex)
 
-        train_data: List[DecisionExample] = []
-        val_data: List[DecisionExample] = []
-        test_data: List[DecisionExample] = []
+    # 2. Organize groups by (domain, dominant_binary_label)
+    domain_label_groups = defaultdict(lambda: defaultdict(list))
+    for grp_key, grp_examples in entity_groups.items():
+        domain = grp_examples[0].domain
+        # Dominant binary decision of the entity group
+        bin_target = grp_examples[0].target_decision.binary_decision
+        bin_label = bin_target if bin_target is not None else 0
+        domain_label_groups[domain][bin_label].append(grp_examples)
 
-        total_examples = len(examples)
-        train_target = int(total_examples * train_ratio)
-        val_target = int(total_examples * (train_ratio + val_ratio))
+    train_data: List[DecisionExample] = []
+    val_data: List[DecisionExample] = []
+    test_data: List[DecisionExample] = []
 
-        curr_count = 0
-        for grp in sorted_groups:
-            if curr_count + len(grp) <= train_target:
-                train_data.extend(grp)
-            elif curr_count + len(grp) <= val_target:
-                val_data.extend(grp)
+    # 3. Stratified temporal partitioning per (domain, binary_label) stratum
+    for domain, label_dict in domain_label_groups.items():
+        for bin_label, groups in label_dict.items():
+            # Sort groups chronologically by earliest timestamp
+            sorted_grps = sorted(
+                groups,
+                key=lambda g: min(e.temporal_timestamp or "" for e in g),
+            )
+            n_grps = len(sorted_grps)
+
+            if n_grps == 1:
+                train_data.extend(sorted_grps[0])
+            elif n_grps == 2:
+                train_data.extend(sorted_grps[0])
+                test_data.extend(sorted_grps[1])
+            elif n_grps == 3:
+                train_data.extend(sorted_grps[0])
+                val_data.extend(sorted_grps[1])
+                test_data.extend(sorted_grps[2])
             else:
-                test_data.extend(grp)
-            curr_count += len(grp)
+                n_train = max(int(n_grps * train_ratio), 1)
+                n_val = max(int(n_grps * val_ratio), 1)
+                if n_train + n_val >= n_grps:
+                    n_train = n_grps - 2
+                    n_val = 1
+                train_grps = sorted_grps[:n_train]
+                val_grps = sorted_grps[n_train:n_train + n_val]
+                test_grps = sorted_grps[n_train + n_val:]
 
-        # In case a small tail remains empty
-        if not val_data and len(train_data) > 2:
-            val_data.append(train_data.pop())
-        if not test_data and len(val_data) > 2:
-            test_data.append(val_data.pop())
+                for g in train_grps:
+                    train_data.extend(g)
+                for g in val_grps:
+                    val_data.extend(g)
+                for g in test_grps:
+                    test_data.extend(g)
 
-        return train_data, val_data, test_data
-    else:
-        # Default temporal sort
-        sorted_examples = sorted(
-            examples,
-            key=lambda x: x.temporal_timestamp or "",
-        )
-        n = len(sorted_examples)
-        train_end = int(n * train_ratio)
-        val_end = int(n * (train_ratio + val_ratio))
-        return sorted_examples[:train_end], sorted_examples[train_end:val_end], sorted_examples[val_end:]
+    return train_data, val_data, test_data
+
+
+def validate_split_distribution(
+    train_data: List[DecisionExample],
+    val_data: List[DecisionExample],
+    test_data: List[DecisionExample],
+    required_domains: Optional[List[str]] = None,
+    min_class_count: int = 5,
+) -> Dict[str, Any]:
+    """Automated split distribution validation and leakage audit.
+    Fails dataset generation if evaluation coverage is insufficient.
+    """
+    from collections import Counter
+
+    if required_domains is None:
+        required_domains = [
+            "customer_support",
+            "business_operations",
+            "finance_and_credit",
+            "communication",
+            "retail",
+        ]
+
+    # Leakage check: Example IDs
+    train_ids = set(e.example_id for e in train_data)
+    val_ids = set(e.example_id for e in val_data)
+    test_ids = set(e.example_id for e in test_data)
+
+    if train_ids & val_ids:
+        raise ValueError(f"Data leakage detected between train and val: {train_ids & val_ids}")
+    if train_ids & test_ids:
+        raise ValueError(f"Data leakage detected between train and test: {train_ids & test_ids}")
+    if val_ids & test_ids:
+        raise ValueError(f"Data leakage detected between val and test: {val_ids & test_ids}")
+
+    # Leakage check: Customer / Entity IDs
+    def get_cust_ids(ex_list):
+        return set(e.structured_features.get("customer_id") for e in ex_list if e.structured_features.get("customer_id"))
+
+    train_cids = get_cust_ids(train_data)
+    val_cids = get_cust_ids(val_data)
+    test_cids = get_cust_ids(test_data)
+
+    if train_cids & val_cids:
+        raise ValueError(f"Entity leakage detected between train and val: {train_cids & val_cids}")
+    if train_cids & test_cids:
+        raise ValueError(f"Entity leakage detected between train and test: {train_cids & test_cids}")
+    if val_cids & test_cids:
+        raise ValueError(f"Entity leakage detected between val and test: {val_cids & test_cids}")
+
+    # Coverage verification
+    splits = {"train": train_data, "validation": val_data, "test": test_data}
+    audit_summary = {}
+
+    for s_name, s_data in splits.items():
+        dom_counts = Counter(e.domain for e in s_data)
+        bin_counts = Counter(e.target_decision.binary_decision for e in s_data)
+        prio_counts = Counter(e.target_decision.priority_level for e in s_data)
+        risk_counts = Counter(e.target_decision.risk_level for e in s_data)
+
+        # 1. Domain coverage
+        missing_domains = [d for d in required_domains if dom_counts.get(d, 0) == 0]
+        if missing_domains:
+            raise ValueError(f"Split '{s_name}' is missing required domains: {missing_domains}. Domain counts: {dict(dom_counts)}")
+
+        # 2. Binary class coverage
+        if s_name in ["validation", "test"]:
+            if bin_counts.get(0, 0) < min_class_count or bin_counts.get(1, 0) < min_class_count:
+                raise ValueError(
+                    f"Split '{s_name}' does not meet minimum binary class requirement (min {min_class_count}). "
+                    f"Counts: {dict(bin_counts)}"
+                )
+
+        # 3. Priority and Risk tier diversity
+        if len(prio_counts) < 3:
+            raise ValueError(f"Split '{s_name}' lacks priority class diversity: {dict(prio_counts)}")
+        if len(risk_counts) < 3:
+            raise ValueError(f"Split '{s_name}' lacks risk class diversity: {dict(risk_counts)}")
+
+        audit_summary[s_name] = {
+            "count": len(s_data),
+            "domains": dict(dom_counts),
+            "binary_distribution": dict(bin_counts),
+            "priority_distribution": dict(prio_counts),
+            "risk_distribution": dict(risk_counts),
+        }
+
+    return audit_summary

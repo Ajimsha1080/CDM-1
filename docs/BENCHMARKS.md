@@ -20,8 +20,8 @@
 | **Logistic Regression** | 0.9310 ± 0.0000 | [0.9310, 0.9310] | 0.9310 | 0.9905 | 0.0628 | 100.0% |
 | **Random Forest** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0002 | 100.0% |
 | **XGBoost (v3.4.1)** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0002 | 100.0% |
-| **ModernBERT Baseline (Text-Only)** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0113 | 100.0% |
-| **CDM-1 (Hybrid Multi-Task)** | **0.9483** | **[0.8912, 1.0000]** | **0.9482** | **0.9857** | **0.0463** | **100.0%** |
+| **ModernBERT Baseline (Text-Only)** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0015 | 100.0% |
+| **CDM-1 (Hybrid Multi-Task)** | **0.9483** | **[0.8912, 1.0000]** | **0.9483** | **0.9857** | **0.0400** | **100.0%** |
 
 *Key Empirical Insights*:
 1. While tree models perform well on tabular structured numbers alone, and pure ModernBERT baseline evaluates text alone, they cannot simultaneously process multimodal narrative + structured context, cannot dynamically score variable candidate action sets, cannot predict candidate-conditioned counterfactual outcomes, and cannot enforce hard zero-tolerance policy constraints.
@@ -30,9 +30,9 @@
 ---
 
 ### Runtime Latency & Memory Footprint
-- **Average Inference Latency**: **1,019.27 ms / sample** (on 12-core CPU with full 149M ModernBERT backbone forward pass)
-- **Candidate-Only Scorer Latency**: **13.47 ms** ($K=5$) to **19.07 ms** ($K=32$)
-- **Process RSS Memory**: **637.96 MB**
+- **Average Inference Latency**: **1,160.25 ms / sample** (on 12-core CPU with full 149M ModernBERT backbone forward pass)
+- **Candidate-Only Scorer Latency**: **18.41 ms** ($K=5$) to **26.15 ms** ($K=32$)
+- **Process RSS Memory**: **639.19 MB**
 - **Hardware Profile**: 12-core CPU, Windows 11, PyTorch 2.12.1+cpu
 
 ---
@@ -40,21 +40,22 @@
 ## 3. Dedicated Cognitive Decision Head Performance (CDM-1)
 
 ### Candidate Action Choice & Ranking
-- **Top-1 Choice Accuracy**: **89.66%** (52 / 58 test evaluations correctly ranked optimal action top-1)
-- **NDCG (Normalized Discounted Cumulative Gain)**: **0.9618**
+- **Top-1 Choice Accuracy**: **94.83%** (55 / 58 test evaluations correctly ranked optimal action top-1)
+- **NDCG (Normalized Discounted Cumulative Gain)**: **0.9809**
 - **Prohibited Candidate Selection Rate**: **0.0000%** (58 / 58 hard policy constraints strictly obeyed)
-- **Candidate Scorer Parameter Learning Norm**: $\Delta W_{L2} = 2.9287$ (verified parameter learning during training)
+- **Candidate Scorer Parameter Learning Norm**: $\Delta W_{L2} = 2.7208$ (verified parameter learning during training)
 
 ### Multi-Class Operational Priority
-- **Accuracy**: **91.38%** (53 / 58)
-- **Macro F1**: **0.8538**
+- **Accuracy**: **96.55%** (56 / 58)
+- **Macro F1**: **0.9625**
 - **Confusion Matrix**:
   ```
-  P0: [18,  0, 0,  0]
-  P1: [ 0, 21, 0,  0]
-  P2: [ 0,  0, 4,  5]
-  P3: [ 0,  0, 0, 10]
+  P0 (Low):      [18,  0, 0,  0]
+  P1 (Medium):   [ 0, 19, 2,  0]
+  P2 (High):     [ 0,  0, 9,  0]
+  P3 (Critical): [ 0,  0, 0, 10]
   ```
+- **Priority Class-2 (High) Performance**: Precision: **0.8182**, Recall: **1.0000** (9/9 captured), F1: **0.9000** (resolved prior under-recall).
 
 ### Ordinal Risk Level Assessment
 - **Accuracy**: **94.83%** (55 / 58)
@@ -68,15 +69,15 @@
   ```
 
 ### Candidate-Conditioned Predictive Network
-- **Predictive Outcome Brier Score**: **0.0271**
-- **Predictive Outcome MAE**: **0.0356**
-- **Continuous Score MAE**: **12.98**
-- **Continuous Score RMSE**: **19.49**
+- **Predictive Outcome Brier Score**: **0.0244**
+- **Predictive Outcome MAE**: **0.0295**
+- **Continuous Score MAE**: **10.7904**
+- **Continuous Score RMSE**: **17.3830**
 
 ### Reliability, Coverage & Selective Abstention
 - **Calibrated Temperature**: $T = 0.7957$ (optimized via L-BFGS on validation NLL)
-- **Calibrated Expected Calibration Error (ECE)**: **0.0549** (uncalibrated ECE: 0.0624)
-- **Selective Coverage**: **63.79%**
+- **Calibrated Expected Calibration Error (ECE)**: **0.0710**
+- **Selective Coverage**: **72.41%**
 - **Selective Accuracy**: **100.0%** (zero errors when model decides to act)
 - **Selective Risk**: **0.0000**
 - **All-Candidates-Prohibited Abstention**: **100% adherence** (returns explicit sentinel `-1`, decision `ABSTAIN`)
@@ -90,7 +91,7 @@
 | **Customer Support** | 100.0% | 100.0% | 12 |
 | **Communication** | 100.0% | 100.0% | 11 |
 | **Retail Operations** | 100.0% | 100.0% | 12 |
-| **Business Operations** | 100.0% | 72.73% | 11 |
+| **Business Operations** | 100.0% | 100.0% | 11 |
 | **Finance and Credit** | 75.00% | 83.33% | 12 |
 
 ---

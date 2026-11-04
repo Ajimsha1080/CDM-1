@@ -165,15 +165,15 @@ CDM-1 was benchmarked against classical tabular algorithms and fine-tuned transf
 |---|---|---|---|---|---|
 | **Binary Accuracy** | 0.9310 | 1.0000 | 1.0000 | 1.0000 | **0.9483** |
 | **Binary AUROC** | 0.9905 | 1.0000 | 1.0000 | 1.0000 | **0.9857** |
-| **Brier Score** | 0.0628 | 0.0002 | 0.0002 | 0.0113 | **0.0463** |
-| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | N/A | **0.8966** |
-| **Candidate Choice NDCG** | N/A | N/A | N/A | N/A | **0.9618** |
-| **Operational Priority (Macro F1)** | N/A | N/A | N/A | N/A | **0.8538** |
+| **Brier Score** | 0.0628 | 0.0002 | 0.0002 | 0.0015 | **0.0400** |
+| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | N/A | **0.9483** |
+| **Candidate Choice NDCG** | N/A | N/A | N/A | N/A | **0.9809** |
+| **Operational Priority (Macro F1)** | N/A | N/A | N/A | N/A | **0.9625** |
 | **Risk Classification Accuracy** | N/A | N/A | N/A | N/A | **0.9483** |
 | **Prohibited Selection Rate** | N/A | N/A | N/A | N/A | **0.0000%** (Zero Violations) |
 | **Permutation Invariance ($\Delta_{L2}$)** | N/A | N/A | N/A | N/A | **0.0000** (Strictly Invariant) |
-| **Candidate Scalability ($K=32$)** | N/A | N/A | N/A | N/A | **19.07 ms** CPU Latency |
-| **Out-of-Distribution (OOD) Safety** | N/A | N/A | N/A | **100% Policy Adherence** |
+| **Candidate Scalability ($K=32$)** | N/A | N/A | N/A | N/A | **26.15 ms** CPU Latency |
+| **Out-of-Distribution (OOD) Safety** | N/A | N/A | N/A | N/A | **100% Policy Adherence** |
 
 See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for full statistical tables, confusion matrices, and research disclosures.
 
@@ -232,7 +232,7 @@ cdm-1/
 ├── sdk/                     # Installable Python SDK (cdm_sdk) with explicit mode validation
 ├── docs/                    # Model Card, Benchmark report, Dataset Provenance & API docs
 ├── scripts/                 # Packaging & deployment utilities
-├── tests/                   # 46 comprehensive unit, gradient, constraint, and integration tests
+├── tests/                   # 51 comprehensive unit, gradient, constraint, and integration tests
 ├── Dockerfile               # Production container definition
 ├── docker-compose.yml       # API + Pgvector deployment configuration
 ├── requirements.txt         # Core dependencies

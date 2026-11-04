@@ -24,10 +24,9 @@ from cdm.utils.training_utils import set_seed, EarlyStopping
 
 
 def cache_multitask_batches(model: CDMModel, loader: DataLoader, device: torch.device):
-    """Pre-computes text representations for both context narrative and candidate actions
-
-    through the frozen transformer backbone to optimize CPU training throughput while
-    ensuring candidate projection and scorer remain fully trainable.
+    """Pre-computes sequence token pooling through the frozen transformer backbone,
+    allowing the language projection layer, structured encoder, fusion, predictive network,
+    decision heads, and candidate scorer to be trained end-to-end with live backpropagation.
     """
     model.eval()
     cached_batches = []
@@ -37,24 +36,27 @@ def cache_multitask_batches(model: CDMModel, loader: DataLoader, device: torch.d
         for batch in loader:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
-            text_emb = model.language_encoder(input_ids, attention_mask)
 
-            # Pre-extract candidate embeddings through language encoder
+            # Extract sequence output from transformer backbone and pool
+            seq_out = model.language_encoder.transformer(input_ids=input_ids, attention_mask=attention_mask)[0]
+            pooled_text = model.language_encoder.pool_tokens(seq_out, attention_mask)
+
+            # Pre-extract candidate embeddings through transformer backbone
             c_input_ids = batch["candidate_input_ids"]
             c_attention_mask = batch["candidate_attention_mask"]
-            candidate_raw_embs = None
+            candidate_pooled = None
 
             if c_input_ids is not None and c_attention_mask is not None:
                 b_size, n_cands, seq_len = c_input_ids.shape
                 flat_ids = c_input_ids.to(device).reshape(-1, seq_len)
                 flat_mask = c_attention_mask.to(device).reshape(-1, seq_len)
-                # Raw text embedding from language encoder [B * K, proj_dim]
-                raw_cand_emb = model.language_encoder(flat_ids, flat_mask)
-                candidate_raw_embs = raw_cand_emb.reshape(b_size, n_cands, -1)
+                flat_out = model.language_encoder.transformer(input_ids=flat_ids, attention_mask=flat_mask)[0]
+                flat_pooled = model.language_encoder.pool_tokens(flat_out, flat_mask)
+                candidate_pooled = flat_pooled.reshape(b_size, n_cands, -1)
 
             cached_batches.append({
-                "text_emb": text_emb.detach(),
-                "candidate_raw_embs": candidate_raw_embs.detach() if candidate_raw_embs is not None else None,
+                "pooled_text": pooled_text.detach(),
+                "candidate_pooled": candidate_pooled.detach() if candidate_pooled is not None else None,
                 "numeric_values": batch["numeric_values"].to(device),
                 "missing_indicators": batch["missing_indicators"].to(device),
                 "categorical_indices": {k: v.to(device) for k, v in batch["categorical_indices"].items()},
@@ -94,7 +96,8 @@ def train_multitask(
     print(f"Frozen Parameters:    {param_stats['frozen_parameters']:,}", flush=True)
     print(f"Total Parameters:     {param_stats['total_parameters']:,}", flush=True)
 
-    # Record initial candidate scorer weight snapshot to prove parameters update
+    # Record initial weight snapshots to prove parameters update
+    initial_proj_weight = model.language_encoder.projection[0].weight.clone().detach()
     initial_scorer_weight = model.candidate_scorer.scorer_mlp[0].weight.clone().detach()
 
     # Pre-compute representations
@@ -118,12 +121,17 @@ def train_multitask(
         epoch_grad_norms = []
 
         for batch in cached_train:
-            text_emb = batch["text_emb"]
+            text_emb = model.language_encoder.projection(batch["pooled_text"])
+            cand_pooled = batch["candidate_pooled"]
+            cand_raw = (
+                model.language_encoder.projection(cand_pooled)
+                if cand_pooled is not None
+                else None
+            )
             num_vals = batch["numeric_values"]
             missing = batch["missing_indicators"]
             cat_idx = batch["categorical_indices"]
             targets = batch["targets"]
-            cand_raw = batch["candidate_raw_embs"]
             constraint_mask = batch["constraint_mask"]
             existence_mask = batch["existence_mask"]
 
@@ -188,12 +196,17 @@ def train_multitask(
 
         with torch.no_grad():
             for b_idx, batch in enumerate(cached_val):
-                text_emb = batch["text_emb"]
+                text_emb = model.language_encoder.projection(batch["pooled_text"])
+                cand_pooled = batch["candidate_pooled"]
+                cand_raw = (
+                    model.language_encoder.projection(cand_pooled)
+                    if cand_pooled is not None
+                    else None
+                )
                 num_vals = batch["numeric_values"]
                 missing = batch["missing_indicators"]
                 cat_idx = batch["categorical_indices"]
                 targets = batch["targets"]
-                cand_raw = batch["candidate_raw_embs"]
                 constraint_mask = batch["constraint_mask"]
                 existence_mask = batch["existence_mask"]
 
@@ -312,7 +325,12 @@ def train_multitask(
     elapsed = time.time() - start_time
     print(f"Training completed in {elapsed:.1f} seconds. Best Val Loss: {best_val_loss:.4f}", flush=True)
 
-    # Prove candidate scorer parameters actually changed
+    # Prove all custom trainable parameters actually updated during training
+    final_proj_weight = model.language_encoder.projection[0].weight.clone().detach()
+    proj_diff = torch.norm(final_proj_weight - initial_proj_weight).item()
+    print(f"Language Projection Weight Delta L2 Norm: {proj_diff:.6f} (>0 verifies parameter learning)", flush=True)
+    assert proj_diff > 1e-5, "Language encoder projection parameters failed to update during training!"
+
     final_scorer_weight = model.candidate_scorer.scorer_mlp[0].weight.clone().detach()
     weight_diff = torch.norm(final_scorer_weight - initial_scorer_weight).item()
     print(f"Candidate Scorer Weight Delta L2 Norm: {weight_diff:.6f} (>0 verifies parameter learning)", flush=True)
@@ -323,7 +341,8 @@ def train_multitask(
         json.dump({
             "model": "CDM-1",
             "parameters": param_stats,
-            "candidate_scorer_parameter_delta_norm": weight_diff,
+            "language_projection_delta_norm": round(proj_diff, 6),
+            "candidate_scorer_parameter_delta_norm": round(weight_diff, 6),
             "history": history,
             "best_val_loss": round(best_val_loss, 4),
             "duration_seconds": round(elapsed, 2),

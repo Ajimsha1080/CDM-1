@@ -34,19 +34,19 @@ model-index:
       value: 0.9483
     - name: Binary AUROC
       type: auroc
-      value: 0.9821
+      value: 0.9857
     - name: Expected Calibration Error (ECE)
       type: expected_calibration_error
-      value: 0.0549
+      value: 0.0710
     - name: Candidate Choice Top-1
       type: accuracy
-      value: 0.8966
+      value: 0.9483
     - name: Candidate Choice NDCG
       type: ndcg
-      value: 0.9618
+      value: 0.9809
     - name: Priority Macro F1
       type: f1
-      value: 0.8538
+      value: 0.9625
     - name: Risk Classification Accuracy
       type: accuracy
       value: 0.9483
@@ -68,31 +68,31 @@ Unlike generative conversational chatbots or LLM API wrappers, CDM-1 is purpose-
 - **Total Parameters**: 158,360,004 (~158.36M parameters, fulfilling the 150–200M design target)
 
 ## Architecture Components
-1. **Component A (Language Encoder)**: ModernBERT-base with attention-mask-aware pooling, sequence projection, and configurable gradual unfreezing.
+1. **Component A (Language Encoder)**: ModernBERT-base with attention-mask-aware pooling, sequence projection (learning norm $\Delta = 4.6201$), and configurable gradual unfreezing.
 2. **Component B (Structured Feature Encoder)**: Continuous feature normalizer, categorical entity embeddings, and missing-value indicator tracking with MLP projection.
 3. **Component C (Cognitive Representation Fusion)**: Dynamic Gated Fusion with cross-attention support, forming a shared latent cognitive state.
 4. **Component D (Action-Conditioned Predictive Network)**: Multi-target forward outcome estimation conditioned on candidate actions (binary outcome, multi-class category, resolution time regression, risk score, predictive entropy, and Monte Carlo dropout variance).
 5. **Component E (Decision Network)**: Independent output heads:
-   - Binary Decision (`YES` / `NO`, Accuracy 94.83%, AUROC 0.9821)
-   - Candidate Choice & Ranking (Top-1 89.66%, NDCG 0.9618, with hard policy constraint logit masking)
-   - Continuous Scoring (0–100 operational score, MAE 12.98)
-   - Priority Tiering (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`, Accuracy 91.38%)
+   - Binary Decision (`YES` / `NO`, Accuracy 94.83%, AUROC 0.9857)
+   - Candidate Choice & Ranking (Top-1 94.83%, NDCG 0.9809, with hard policy constraint logit masking)
+   - Continuous Scoring (0–100 operational score, MAE 10.79)
+   - Priority Tiering (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`, Accuracy 96.55%, Macro F1 0.9625)
    - Risk Assessment (`LOW`, `MODERATE`, `HIGH`, `SEVERE`, Accuracy 94.83%)
-   - Calibrated Confidence & Selective Abstention (Calibrated $ECE = 0.0549$, Coverage 63.79%, Selective Accuracy 100.0%)
+   - Calibrated Confidence & Selective Abstention (Calibrated $ECE = 0.0710$, Coverage 72.41%, Selective Accuracy 100.0%)
 
 ## Verified Benchmark Results (Holdout Test Partition, N=58)
-| Benchmark Metric | Logistic Reg. | Random Forest | XGBoost (v3.4.1) | **CDM-1 (Ours)** |
-|---|---|---|---|---|
-| **Binary Accuracy** | 0.9310 | 1.0000 | 1.0000 | **0.9483** |
-| **Binary AUROC** | 0.9905 | 1.0000 | 1.0000 | **0.9821** |
-| **Brier Score** | 0.0628 | 0.0002 | 0.0002 | **0.0449** |
-| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | **0.8966** |
-| **Candidate Choice NDCG** | N/A | N/A | N/A | **0.9618** |
-| **Priority Classification (Macro F1)** | N/A | N/A | N/A | **0.8538** |
-| **Risk Classification Accuracy** | N/A | N/A | N/A | **0.9483** |
-| **Prohibited Constraint Violations** | N/A | N/A | N/A | **0.00%** |
-| **Permutation Invariance ($\Delta_{L2}$)** | N/A | N/A | N/A | **0.0000** |
-| **Scalability (32 candidates latency)** | N/A | N/A | N/A | **31.65 ms** |
+| Benchmark Metric | Logistic Reg. | Random Forest | XGBoost (v3.4.1) | ModernBERT Baseline | **CDM-1 (Ours)** |
+|---|---|---|---|---|---|
+| **Binary Accuracy** | 0.9310 | 1.0000 | 1.0000 | 1.0000 | **0.9483** |
+| **Binary AUROC** | 0.9905 | 1.0000 | 1.0000 | 1.0000 | **0.9857** |
+| **Brier Score** | 0.0628 | 0.0002 | 0.0002 | 0.0015 | **0.0400** |
+| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | N/A | **0.9483** |
+| **Candidate Choice NDCG** | N/A | N/A | N/A | N/A | **0.9809** |
+| **Priority Classification (Macro F1)** | N/A | N/A | N/A | N/A | **0.9625** |
+| **Risk Classification Accuracy** | N/A | N/A | N/A | N/A | **0.9483** |
+| **Prohibited Constraint Violations** | N/A | N/A | N/A | N/A | **0.00%** |
+| **Permutation Invariance ($\Delta_{L2}$)** | N/A | N/A | N/A | N/A | **0.0000** |
+| **Scalability (32 candidates latency)** | N/A | N/A | N/A | N/A | **26.15 ms** |
 
 ## Quickstart Usage
 

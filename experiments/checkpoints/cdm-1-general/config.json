@@ -45,7 +45,7 @@
       0.0,
       100.0
     ],
-    "abstention_threshold": 0.9000000000000004,
+    "abstention_threshold": 0.55,
     "uncertainty_threshold": 0.45,
     "dropout": 0.1
   },

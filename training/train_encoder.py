@@ -38,7 +38,7 @@ def train_language_encoder(epochs: int = 5, lr: float = 1e-3, batch_size: int = 
     # Classification probe for baseline evaluation
     classifier = nn.Linear(config.projection_dim, 2).to(device)
     optimizer = torch.optim.AdamW(list(encoder.projection.parameters()) + list(classifier.parameters()), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(ignore_index=-1)
 
     for epoch in range(epochs):
         encoder.train()

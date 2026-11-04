@@ -47,7 +47,7 @@ def train_fusion(epochs: int = 8, lr: float = 1e-3, batch_size: int = 16):
         list(struct_enc.parameters()) + list(fusion.parameters()) + list(probe.parameters()),
         lr=lr,
     )
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(ignore_index=-1)
 
     for epoch in range(epochs):
         fusion.train()

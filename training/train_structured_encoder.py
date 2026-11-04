@@ -37,7 +37,7 @@ def train_structured_encoder(epochs: int = 10, lr: float = 1e-3, batch_size: int
     probe = nn.Linear(cfg.projection_dim, 4).to(device)  # probe priority classes
 
     optimizer = torch.optim.AdamW(list(encoder.parameters()) + list(probe.parameters()), lr=lr)
-    criterion = nn.CrossEntropyLoss()
+    criterion = nn.CrossEntropyLoss(ignore_index=-1)
 
     for epoch in range(epochs):
         encoder.train()

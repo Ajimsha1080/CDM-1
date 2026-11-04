@@ -55,6 +55,16 @@ def train_decision_heads(epochs: int = 10, lr: float = 1e-3, batch_size: int = 1
             cat_idx = {k: v.to(device) for k, v in batch["categorical_indices"].items()}
             targets = {k: v.to(device) for k, v in batch["targets"].items()}
 
+            cand_ids = batch.get("candidate_input_ids")
+            cand_att = batch.get("candidate_attention_mask")
+            cand_masks = batch.get("candidate_masks")
+            if cand_ids is not None:
+                cand_ids = cand_ids.to(device)
+            if cand_att is not None:
+                cand_att = cand_att.to(device)
+            if cand_masks is not None:
+                cand_masks = cand_masks.to(device)
+
             optimizer.zero_grad()
             outputs = model(
                 input_ids=input_ids,
@@ -62,6 +72,9 @@ def train_decision_heads(epochs: int = 10, lr: float = 1e-3, batch_size: int = 1
                 numeric_values=num_vals,
                 missing_indicators=missing,
                 categorical_indices=cat_idx,
+                candidate_input_ids=cand_ids,
+                candidate_attention_mask=cand_att,
+                candidate_masks=cand_masks,
             )
             loss, _ = model.compute_multitask_loss(outputs, targets)
             loss.backward()

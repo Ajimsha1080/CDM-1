@@ -68,8 +68,8 @@ CDM-1 is **not** a chatbot, **not** a conventional RAG application, and **not** 
 
 ### Installation
 ```bash
-git clone https://github.com/organization/cdm-1.git
-cd cdm-1
+git clone https://github.com/Ajimsha1080/CDM-1.git
+cd CDM-1
 pip install -r requirements.txt
 ```
 

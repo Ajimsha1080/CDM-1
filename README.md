@@ -21,12 +21,12 @@ CDM-1 is **not** a chatbot, **not** a conventional RAG application, and **not** 
 
 | Component | Architecture Role | Parameters | Status |
 |---|---|---|---|
-| **Component A: Language Encoder** | `answerdotai/ModernBERT-base` (22 layers, hidden 768) | 149,014,272 | Contextual backbone (gradual unfreezing supported) |
+| **Component A: Language Encoder** | `answerdotai/ModernBERT-base` + Trainable Projection | 149,210,624 | Contextual backbone (Projection learning $\Delta = 4.620$) |
 | **Component B: Structured Encoder** | Tabular embeddings + missingness flags + MLP | 173,312 | Trainable |
 | **Component C: Gated Fusion** | Dynamic Gated & Cross-Attention Latent Fusion | 394,496 | Trainable |
 | **Component D: Predictive Network** | Multi-outcome regression, candidate-conditioned outcomes, & risk | 69,509 | Trainable |
 | **Component E: Decision Network** | Binary, Scoring, Priority, Risk & Abstention heads | 134,663 | Trainable |
-| **Candidate Scorer & Projector** | Candidate conditioning, bilinear interaction & hard constraint masking | 8,573,752 | Trainable ($\Delta W_{L2} = 2.929 > 0$) |
+| **Candidate Scorer & Projector** | Candidate conditioning, bilinear interaction & hard constraint masking | 8,377,400 | Trainable (Scorer learning $\Delta W_{L2} = 2.721$) |
 | **TOTAL CDM-1 MODEL** | **Hybrid Cognitive Decision Architecture** | **158,360,004** | **Target Met (150–200M)** |
 
 ---
@@ -74,6 +74,14 @@ CDM-1 is **not** a chatbot, **not** a conventional RAG application, and **not** 
 ---
 
 ## 4. Quickstart Guide
+
+### Pretrained Weights & Release Distribution
+
+Portable release packages are available in the repository `dist/` folder and verified against clean offline inference:
+- **Complete Release Archive (With Model Weights)**: `dist/CDM-1-Complete-With-Weights.zip` (1,120.86 MB, SHA-256: `7c0893b4ab96eb07835edbba33c700a9356167ff899437294e8213df828765bd`)
+- **Source-Only Archive**: `dist/CDM-1-Project.zip` (0.81 MB, SHA-256: `eab071a9c40401a650c0bdddf3cf535af42a06cab3e79394d436107e2244cee9`)
+- **Release Verification Manifest**: [`dist/release_manifest.json`](dist/release_manifest.json)
+- **SafeTensors Model File**: `experiments/release/cdm-1-general/model.safetensors` (633 MB, SHA-256: `9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a`)
 
 ### Installation
 ```bash

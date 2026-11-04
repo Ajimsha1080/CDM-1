@@ -21,6 +21,12 @@ env/
 venv/
 ENV/
 
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+experiments/api_usage_meter.json
+
 # IDE / Editor
 .vscode/
 .idea/

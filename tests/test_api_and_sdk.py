@@ -1,10 +1,9 @@
-"""Integration tests for CDM-1 FastAPI endpoints and Python SDK.
-"""
+"""Integration tests for CDM-1 Production-Hardened FastAPI endpoints and Python SDK."""
 
 import pytest
 from fastapi.testclient import TestClient
 from api.main import app
-from sdk.cdm_sdk import CDM
+from sdk.cdm_sdk import CDM, CDMAuthenticationError, CDMError
 
 
 @pytest.fixture(scope="module")
@@ -13,23 +12,28 @@ def client():
         yield test_client
 
 
-def test_health_and_version(client):
+def test_health_and_readiness(client):
     r_health = client.get("/v1/health")
     assert r_health.status_code == 200
     assert r_health.json()["status"] == "healthy"
 
-    r_ver = client.get("/v1/version")
-    assert r_ver.status_code == 200
-    assert "version" in r_ver.json()
+    r_ready = client.get("/v1/ready")
+    assert r_ready.status_code == 200
+    assert r_ready.json()["status"] == "ready"
 
 
-def test_auth_rejection(client):
-    headers = {"Authorization": "Bearer invalid_key_12345"}
-    r = client.get("/v1/models", headers=headers)
-    assert r.status_code == 401
+def test_auth_rejection_missing_and_invalid(client):
+    # Missing authorization header
+    r_missing = client.get("/v1/models")
+    assert r_missing.status_code == 401
+
+    # Invalid authorization token
+    headers = {"Authorization": "Bearer invalid_secret_key"}
+    r_invalid = client.get("/v1/models", headers=headers)
+    assert r_invalid.status_code == 401
 
 
-def test_post_decision(client):
+def test_post_decision_authenticated(client):
     headers = {"Authorization": "Bearer sk_test_developer_key"}
     payload = {
         "text": "Production server memory leak detected on payment cluster.",
@@ -51,7 +55,7 @@ def test_post_decision(client):
     assert "confidence" in data
     assert "priority" in data
     assert "risk" in data
-    assert "latency_ms" in data
+    assert data["tenant_id"] == "tenant_dev_default"
 
 
 def test_candidate_choice_with_constraint(client):
@@ -60,7 +64,7 @@ def test_candidate_choice_with_constraint(client):
         "text": "Customer requests full refund on order delivered 80 days ago.",
         "task": "choice",
         "candidates": ["auto_resolve", "issue_refund", "escalate_to_tier2"],
-        "prohibited_actions": ["issue_refund"],  # Hard policy constraint
+        "prohibited_actions": ["issue_refund"],
     }
     r = client.post("/v1/choice", json=payload, headers=headers)
     assert r.status_code == 200
@@ -69,13 +73,28 @@ def test_candidate_choice_with_constraint(client):
     assert data["candidate_scores"]["issue_refund"] == 0.0
 
 
-def test_sdk_local_execution():
-    client_local = CDM(local_model_path="experiments/release/cdm-1-general")
-    res = client_local.decide(
-        text="Customer asks for order status update.",
-        structured_features={"urgency_level": "low"},
-        task="binary",
-    )
+def test_payload_limits_validation(client):
+    headers = {"Authorization": "Bearer sk_test_developer_key"}
+    # Exceed candidate count (max 32)
+    too_many_cands = [f"cand_{i}" for i in range(35)]
+    payload = {
+        "text": "Testing limits",
+        "task": "choice",
+        "candidates": too_many_cands,
+    }
+    r = client.post("/v1/choice", json=payload, headers=headers)
+    assert r.status_code == 422
+
+
+def test_sdk_explicit_mode_enforcement():
+    # Local mode succeeds offline
+    client_local = CDM(mode="local", local_model_path="experiments/release/cdm-1-general")
+    assert client_local.mode == "local"
+    res = client_local.decide(text="Inquiry regarding billing invoice.", task="binary")
     assert res.decision in ["YES", "NO"]
-    assert res.confidence >= 0.0
-    assert not res.abstain
+
+    # Hosted mode with invalid base_url raises CDMError instead of silently switching to local!
+    client_hosted = CDM(mode="hosted", base_url="http://127.0.0.1:59999", api_key="sk_test", timeout=1.0)
+    assert client_hosted.mode == "hosted"
+    with pytest.raises(CDMError):
+        client_hosted.decide(text="Test inquiry", task="binary")

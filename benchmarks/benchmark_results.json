@@ -1,25 +1,35 @@
 {
-  "benchmark_suite_version": "1.0.0",
+  "benchmark_suite_version": "2.0.0",
   "model_tested": "CDM-1 (Hybrid Architecture)",
-  "test_sample_count": 21,
+  "test_sample_count": 24,
   "baselines": {
     "logistic_regression": {
       "accuracy": 1.0,
-      "f1": 1.0,
+      "macro_f1": 1.0,
       "auroc": 1.0,
-      "brier_score": 0.0011
+      "auprc": 1.0,
+      "brier_score": 0.0013
     },
     "random_forest": {
       "accuracy": 1.0,
-      "f1": 1.0,
+      "macro_f1": 1.0,
       "auroc": 1.0,
-      "brier_score": 0.0
+      "auprc": 1.0,
+      "brier_score": 0.0061
     },
-    "gradient_boosting": {
+    "gradient_boosting_hgb": {
       "accuracy": 1.0,
-      "f1": 1.0,
+      "macro_f1": 1.0,
       "auroc": 1.0,
-      "brier_score": 0.0
+      "auprc": 1.0,
+      "brier_score": 0.0033
+    },
+    "xgboost": {
+      "accuracy": 0.9583,
+      "macro_f1": 0.9515,
+      "auroc": 1.0,
+      "auprc": 1.0,
+      "brier_score": 0.0142
     }
   },
   "cdm_1": {
@@ -27,29 +37,40 @@
       "accuracy": 1.0,
       "precision": 1.0,
       "recall": 1.0,
-      "f1": 1.0,
+      "macro_f1": 1.0,
       "auroc": 1.0,
-      "brier_score": 0.002,
-      "expected_calibration_error": 0.0172
+      "auprc": 1.0,
+      "brier_score": 0.0025,
+      "expected_calibration_error": 0.0257
+    },
+    "candidate_choice_and_ranking": {
+      "top_1_accuracy": 1.0,
+      "ndcg": 1.0,
+      "evaluated_samples": 24
     },
     "priority_decision": {
       "macro_f1": 1.0,
       "weighted_f1": 1.0,
       "accuracy": 1.0
     },
+    "risk_classification": {
+      "macro_f1": 0.7143,
+      "accuracy": 0.9167
+    },
     "scoring_decision": {
-      "mae": 0.7463,
-      "rmse": 0.972
+      "mae": 1.2127,
+      "rmse": 1.7902
     },
     "predictive_outcome": {
-      "brier_score": 0.0014,
-      "mae": 0.0347
+      "brier_score": 0.0016,
+      "mae": 0.0365
     },
-    "abstention_and_reliability": {
-      "coverage": 0.9524,
+    "abstention_and_policy_adherence": {
+      "coverage": 0.9167,
       "selective_accuracy": 1.0,
       "selective_risk": 0.0,
-      "constraint_violation_rate": 0.0
+      "prohibited_candidate_selection_rate": 0.0,
+      "total_constrained_checks": 24
     }
   }
 }

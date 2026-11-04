@@ -5,98 +5,309 @@
     "frozen_parameters": 149014272,
     "total_parameters": 158360004
   },
+  "candidate_scorer_parameter_delta_norm": 1.7809921503067017,
   "history": [
     {
       "epoch": 1,
-      "train_loss": 12.254777908325195,
-      "val_loss": 9.122047424316406,
-      "val_binary_accuracy": 0.95
+      "train_loss": 16.4213,
+      "val_loss": 6.9845,
+      "val_binary_accuracy": 0.95,
+      "val_choice_accuracy": 0.95,
+      "individual_losses": {
+        "loss_binary": 0.4331,
+        "loss_priority": 1.2039,
+        "loss_score": 22.977,
+        "loss_risk_classification": 1.1905,
+        "loss_risk_probability": 0.5259,
+        "loss_choice": 1.0148,
+        "loss_ranking": 0.5925,
+        "loss_outcome_binary": 0.4675,
+        "loss_outcome_multiclass": 0.9756,
+        "loss_outcome_numeric": 0.492,
+        "loss_total": 16.4213
+      }
     },
     {
       "epoch": 2,
-      "train_loss": 8.256901582082113,
-      "val_loss": 6.65298318862915,
-      "val_binary_accuracy": 0.95
+      "train_loss": 8.2276,
+      "val_loss": 5.3227,
+      "val_binary_accuracy": 0.9,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.2478,
+        "loss_priority": 0.82,
+        "loss_score": 11.0969,
+        "loss_risk_classification": 0.7845,
+        "loss_risk_probability": 0.3917,
+        "loss_choice": 0.3654,
+        "loss_ranking": 0.118,
+        "loss_outcome_binary": 0.1908,
+        "loss_outcome_multiclass": 0.5917,
+        "loss_outcome_numeric": 0.2431,
+        "loss_total": 8.2276
+      }
     },
     {
       "epoch": 3,
-      "train_loss": 6.026279846827189,
-      "val_loss": 4.697949409484863,
-      "val_binary_accuracy": 0.8
+      "train_loss": 6.7755,
+      "val_loss": 3.6387,
+      "val_binary_accuracy": 0.9,
+      "val_choice_accuracy": 0.95,
+      "individual_losses": {
+        "loss_binary": 0.2271,
+        "loss_priority": 0.6022,
+        "loss_score": 9.6877,
+        "loss_risk_classification": 0.5583,
+        "loss_risk_probability": 0.3593,
+        "loss_choice": 0.1774,
+        "loss_ranking": 0.0617,
+        "loss_outcome_binary": 0.1247,
+        "loss_outcome_multiclass": 0.443,
+        "loss_outcome_numeric": 0.209,
+        "loss_total": 6.7755
+      }
     },
     {
       "epoch": 4,
-      "train_loss": 4.1649800936381025,
-      "val_loss": 3.0277878046035767,
-      "val_binary_accuracy": 1.0
+      "train_loss": 5.5456,
+      "val_loss": 3.284,
+      "val_binary_accuracy": 0.9,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.1937,
+        "loss_priority": 0.4104,
+        "loss_score": 7.8999,
+        "loss_risk_classification": 0.3807,
+        "loss_risk_probability": 0.3431,
+        "loss_choice": 0.27,
+        "loss_ranking": 0.1033,
+        "loss_outcome_binary": 0.0986,
+        "loss_outcome_multiclass": 0.3201,
+        "loss_outcome_numeric": 0.1475,
+        "loss_total": 5.5456
+      }
     },
     {
       "epoch": 5,
-      "train_loss": 3.0855738520622253,
-      "val_loss": 1.681689977645874,
-      "val_binary_accuracy": 0.95
+      "train_loss": 3.6906,
+      "val_loss": 3.5343,
+      "val_binary_accuracy": 0.95,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.1447,
+        "loss_priority": 0.2622,
+        "loss_score": 5.3555,
+        "loss_risk_classification": 0.3304,
+        "loss_risk_probability": 0.3298,
+        "loss_choice": 0.0508,
+        "loss_ranking": 0.0015,
+        "loss_outcome_binary": 0.0851,
+        "loss_outcome_multiclass": 0.1889,
+        "loss_outcome_numeric": 0.1156,
+        "loss_total": 3.6906
+      }
     },
     {
       "epoch": 6,
-      "train_loss": 3.7184362212816873,
-      "val_loss": 2.354065418243408,
-      "val_binary_accuracy": 0.9
+      "train_loss": 4.4022,
+      "val_loss": 2.5321,
+      "val_binary_accuracy": 0.95,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.1968,
+        "loss_priority": 0.2545,
+        "loss_score": 6.6072,
+        "loss_risk_classification": 0.391,
+        "loss_risk_probability": 0.3265,
+        "loss_choice": 0.0381,
+        "loss_ranking": 0.0079,
+        "loss_outcome_binary": 0.0851,
+        "loss_outcome_multiclass": 0.1881,
+        "loss_outcome_numeric": 0.122,
+        "loss_total": 4.4022
+      }
     },
     {
       "epoch": 7,
-      "train_loss": 2.7708766063054404,
-      "val_loss": 1.6400049924850464,
-      "val_binary_accuracy": 1.0
+      "train_loss": 3.3809,
+      "val_loss": 1.8065,
+      "val_binary_accuracy": 1.0,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.1064,
+        "loss_priority": 0.2013,
+        "loss_score": 5.0592,
+        "loss_risk_classification": 0.3291,
+        "loss_risk_probability": 0.3224,
+        "loss_choice": 0.0334,
+        "loss_ranking": 0.0056,
+        "loss_outcome_binary": 0.054,
+        "loss_outcome_multiclass": 0.1307,
+        "loss_outcome_numeric": 0.1115,
+        "loss_total": 3.3809
+      }
     },
     {
       "epoch": 8,
-      "train_loss": 1.8718067804972331,
-      "val_loss": 1.0890007019042969,
-      "val_binary_accuracy": 1.0
+      "train_loss": 4.1701,
+      "val_loss": 2.5623,
+      "val_binary_accuracy": 1.0,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.1279,
+        "loss_priority": 0.2265,
+        "loss_score": 6.4273,
+        "loss_risk_classification": 0.3887,
+        "loss_risk_probability": 0.3208,
+        "loss_choice": 0.0431,
+        "loss_ranking": 0.0066,
+        "loss_outcome_binary": 0.0577,
+        "loss_outcome_multiclass": 0.1433,
+        "loss_outcome_numeric": 0.1025,
+        "loss_total": 4.1701
+      }
     },
     {
       "epoch": 9,
-      "train_loss": 1.736647605895996,
-      "val_loss": 1.222653329372406,
-      "val_binary_accuracy": 1.0
+      "train_loss": 3.1184,
+      "val_loss": 1.1453,
+      "val_binary_accuracy": 0.95,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.1384,
+        "loss_priority": 0.1415,
+        "loss_score": 4.6436,
+        "loss_risk_classification": 0.275,
+        "loss_risk_probability": 0.3159,
+        "loss_choice": 0.0356,
+        "loss_ranking": 0.0116,
+        "loss_outcome_binary": 0.0525,
+        "loss_outcome_multiclass": 0.1152,
+        "loss_outcome_numeric": 0.1417,
+        "loss_total": 3.1184
+      }
     },
     {
       "epoch": 10,
-      "train_loss": 1.4327948888142903,
-      "val_loss": 0.7524617612361908,
-      "val_binary_accuracy": 1.0
+      "train_loss": 2.5656,
+      "val_loss": 1.4145,
+      "val_binary_accuracy": 1.0,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.1527,
+        "loss_priority": 0.1284,
+        "loss_score": 3.7116,
+        "loss_risk_classification": 0.2443,
+        "loss_risk_probability": 0.3213,
+        "loss_choice": 0.0143,
+        "loss_ranking": 0.0,
+        "loss_outcome_binary": 0.0413,
+        "loss_outcome_multiclass": 0.0926,
+        "loss_outcome_numeric": 0.0896,
+        "loss_total": 2.5656
+      }
     },
     {
       "epoch": 11,
-      "train_loss": 1.1506860951582591,
-      "val_loss": 0.4197906404733658,
-      "val_binary_accuracy": 1.0
+      "train_loss": 2.1184,
+      "val_loss": 0.9534,
+      "val_binary_accuracy": 1.0,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.1029,
+        "loss_priority": 0.1294,
+        "loss_score": 2.9261,
+        "loss_risk_classification": 0.235,
+        "loss_risk_probability": 0.3168,
+        "loss_choice": 0.0204,
+        "loss_ranking": 0.0024,
+        "loss_outcome_binary": 0.0417,
+        "loss_outcome_multiclass": 0.0776,
+        "loss_outcome_numeric": 0.1025,
+        "loss_total": 2.1184
+      }
     },
     {
       "epoch": 12,
-      "train_loss": 0.9844526449839274,
-      "val_loss": 0.49677301943302155,
-      "val_binary_accuracy": 1.0
+      "train_loss": 1.8501,
+      "val_loss": 0.9005,
+      "val_binary_accuracy": 1.0,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.0646,
+        "loss_priority": 0.0932,
+        "loss_score": 2.6036,
+        "loss_risk_classification": 0.224,
+        "loss_risk_probability": 0.312,
+        "loss_choice": 0.0104,
+        "loss_ranking": 0.0005,
+        "loss_outcome_binary": 0.045,
+        "loss_outcome_multiclass": 0.0531,
+        "loss_outcome_numeric": 0.0893,
+        "loss_total": 1.8501
+      }
     },
     {
       "epoch": 13,
-      "train_loss": 0.9655478696028391,
-      "val_loss": 0.40212517976760864,
-      "val_binary_accuracy": 1.0
+      "train_loss": 1.6954,
+      "val_loss": 0.7266,
+      "val_binary_accuracy": 1.0,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.0542,
+        "loss_priority": 0.0952,
+        "loss_score": 2.3279,
+        "loss_risk_classification": 0.2153,
+        "loss_risk_probability": 0.3126,
+        "loss_choice": 0.0075,
+        "loss_ranking": 0.0,
+        "loss_outcome_binary": 0.0439,
+        "loss_outcome_multiclass": 0.0693,
+        "loss_outcome_numeric": 0.0711,
+        "loss_total": 1.6954
+      }
     },
     {
       "epoch": 14,
-      "train_loss": 0.9380269944667816,
-      "val_loss": 0.23244159668684006,
-      "val_binary_accuracy": 1.0
+      "train_loss": 1.8292,
+      "val_loss": 0.6856,
+      "val_binary_accuracy": 1.0,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.071,
+        "loss_priority": 0.1084,
+        "loss_score": 2.5244,
+        "loss_risk_classification": 0.2191,
+        "loss_risk_probability": 0.3103,
+        "loss_choice": 0.0095,
+        "loss_ranking": 0.0002,
+        "loss_outcome_binary": 0.0446,
+        "loss_outcome_multiclass": 0.0689,
+        "loss_outcome_numeric": 0.0805,
+        "loss_total": 1.8292
+      }
     },
     {
       "epoch": 15,
-      "train_loss": 0.8034704228242239,
-      "val_loss": 0.2538447603583336,
-      "val_binary_accuracy": 1.0
+      "train_loss": 1.518,
+      "val_loss": 0.6592,
+      "val_binary_accuracy": 1.0,
+      "val_choice_accuracy": 1.0,
+      "individual_losses": {
+        "loss_binary": 0.0601,
+        "loss_priority": 0.0827,
+        "loss_score": 1.9525,
+        "loss_risk_classification": 0.2386,
+        "loss_risk_probability": 0.3097,
+        "loss_choice": 0.0054,
+        "loss_ranking": 0.0,
+        "loss_outcome_binary": 0.0417,
+        "loss_outcome_multiclass": 0.0608,
+        "loss_outcome_numeric": 0.0845,
+        "loss_total": 1.518
+      }
     }
   ],
-  "best_val_loss": 0.23244159668684006,
-  "duration_seconds": 43.18014860153198
+  "best_val_loss": 0.6592,
+  "duration_seconds": 175.45
 }

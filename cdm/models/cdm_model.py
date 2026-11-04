@@ -56,10 +56,11 @@ class CDMModel(nn.Module):
             candidate_dim=self.config.fusion.fusion_dim,
         )
 
-        # Candidate text encoder projection (for encoding textual candidate actions)
+        # Candidate text encoder projection (for projected candidate actions)
         self.candidate_text_proj = nn.Sequential(
             nn.Linear(self.config.language_encoder.projection_dim, self.config.fusion.fusion_dim),
             nn.LayerNorm(self.config.fusion.fusion_dim),
+            nn.GELU(),
         )
 
     def count_parameters(self) -> Dict[str, int]:
@@ -91,6 +92,26 @@ class CDMModel(nn.Module):
         cognitive_state = self.fusion(text_emb, struct_emb)
         return cognitive_state
 
+    def encode_candidates_from_tokens(
+        self,
+        candidate_input_ids: torch.Tensor,
+        candidate_attention_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """Encodes candidate text tokens [batch_size, num_cands, seq_len]
+
+        into candidate representations [batch_size, num_cands, dim].
+        """
+        batch_size, num_cands, seq_len = candidate_input_ids.shape
+        flat_ids = candidate_input_ids.reshape(-1, seq_len)
+        flat_mask = candidate_attention_mask.reshape(-1, seq_len)
+
+        # Encode via language encoder
+        flat_emb = self.language_encoder(flat_ids, flat_mask)
+        flat_proj = self.candidate_text_proj(flat_emb)
+
+        candidate_embeddings = flat_proj.reshape(batch_size, num_cands, -1)
+        return candidate_embeddings
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -99,7 +120,10 @@ class CDMModel(nn.Module):
         missing_indicators: Optional[torch.Tensor] = None,
         categorical_indices: Optional[Dict[str, torch.Tensor]] = None,
         candidate_embeddings: Optional[torch.Tensor] = None,
+        candidate_input_ids: Optional[torch.Tensor] = None,
+        candidate_attention_mask: Optional[torch.Tensor] = None,
         constraint_mask: Optional[torch.Tensor] = None,
+        existence_mask: Optional[torch.Tensor] = None,
         selected_action_embedding: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """Unified forward pass returning cognitive state, decision outputs,
@@ -124,13 +148,21 @@ class CDMModel(nn.Module):
         # 3. Decision Network Output
         decision_out = self.decision_network(cognitive_state=cognitive_state)
 
-        # 4. Candidate Scoring (if candidates provided)
+        # 4. Candidate Embeddings (either provided directly or encoded from candidate tokens)
+        if candidate_embeddings is None and candidate_input_ids is not None and candidate_attention_mask is not None:
+            candidate_embeddings = self.encode_candidates_from_tokens(
+                candidate_input_ids=candidate_input_ids,
+                candidate_attention_mask=candidate_attention_mask,
+            )
+
+        # 5. Candidate Scoring (if candidates provided)
         candidate_out: Optional[Dict[str, torch.Tensor]] = None
         if candidate_embeddings is not None:
             candidate_out = self.candidate_scorer(
                 cognitive_context=cognitive_state,
                 candidate_embeddings=candidate_embeddings,
                 constraint_mask=constraint_mask,
+                existence_mask=existence_mask,
             )
 
         return {
@@ -138,6 +170,7 @@ class CDMModel(nn.Module):
             "decision": decision_out,
             "predictive": predictive_out,
             "candidates": candidate_out,
+            "candidate_embeddings": candidate_embeddings,
         }
 
     def compute_multitask_loss(
@@ -145,71 +178,125 @@ class CDMModel(nn.Module):
         outputs: Dict[str, Any],
         targets: Dict[str, torch.Tensor],
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """Computes balanced multi-task decision loss with configurable task weights."""
-        total_loss = torch.tensor(0.0, device=outputs["cognitive_state"].device)
+        """Computes supervised multi-task decision losses with explicit masking
+
+        for missing targets. Never replaces missing labels with artificial zeros.
+        """
+        device = outputs["cognitive_state"].device
+        total_loss = torch.tensor(0.0, device=device)
         loss_dict: Dict[str, float] = {}
         lw = self.config.loss_weights
 
-        # 1. Binary Decision Loss (BCE / CrossEntropy)
+        # 1. Binary Decision Loss
         if "binary_target" in targets and targets["binary_target"] is not None:
-            bin_target = targets["binary_target"].long()
-            bin_logits = outputs["decision"]["binary_logits"]
-            loss_bin = F.cross_entropy(bin_logits, bin_target)
-            total_loss = total_loss + lw.lambda_binary * loss_bin
-            loss_dict["loss_binary"] = loss_bin.item()
+            bin_target = targets["binary_target"].long().to(device)
+            bin_mask = targets.get("binary_mask", torch.ones_like(bin_target, dtype=torch.float32)).to(device)
+            if bin_mask.sum() > 0:
+                bin_logits = outputs["decision"]["binary_logits"]
+                raw_loss_bin = F.cross_entropy(bin_logits, bin_target, reduction="none")
+                loss_bin = (raw_loss_bin * bin_mask).sum() / torch.clamp(bin_mask.sum(), min=1.0)
+                total_loss = total_loss + lw.lambda_binary * loss_bin
+                loss_dict["loss_binary"] = loss_bin.item()
 
         # 2. Priority Decision Loss (CrossEntropy)
         if "priority_target" in targets and targets["priority_target"] is not None:
-            prio_target = targets["priority_target"].long()
-            prio_logits = outputs["decision"]["priority_logits"]
-            loss_prio = F.cross_entropy(prio_logits, prio_target)
-            total_loss = total_loss + lw.lambda_priority * loss_prio
-            loss_dict["loss_priority"] = loss_prio.item()
+            prio_target = targets["priority_target"].long().to(device)
+            prio_mask = targets.get("priority_mask", torch.ones_like(prio_target, dtype=torch.float32)).to(device)
+            if prio_mask.sum() > 0:
+                prio_logits = outputs["decision"]["priority_logits"]
+                raw_loss_prio = F.cross_entropy(prio_logits, prio_target, reduction="none")
+                loss_prio = (raw_loss_prio * prio_mask).sum() / torch.clamp(prio_mask.sum(), min=1.0)
+                total_loss = total_loss + lw.lambda_priority * loss_prio
+                loss_dict["loss_priority"] = loss_prio.item()
 
-        # 3. Decision Score Loss (Smooth L1 / Huber)
+        # 3. Decision Score Loss (Smooth L1 regression)
         if "score_target" in targets and targets["score_target"] is not None:
-            score_target = targets["score_target"].float()
-            pred_score = outputs["decision"]["decision_score"]
-            loss_score = F.smooth_l1_loss(pred_score, score_target)
-            total_loss = total_loss + lw.lambda_score * loss_score
-            loss_dict["loss_score"] = loss_score.item()
+            score_target = targets["score_target"].float().to(device)
+            score_mask = targets.get("score_mask", torch.ones_like(score_target, dtype=torch.float32)).to(device)
+            if score_mask.sum() > 0:
+                pred_score = outputs["decision"]["decision_score"]
+                raw_loss_score = F.smooth_l1_loss(pred_score, score_target, reduction="none")
+                loss_score = (raw_loss_score * score_mask).sum() / torch.clamp(score_mask.sum(), min=1.0)
+                total_loss = total_loss + lw.lambda_score * loss_score
+                loss_dict["loss_score"] = loss_score.item()
 
-        # 4. Choice & Ranking Loss
+        # 4. Risk Classification Head Loss
+        if "risk_target" in targets and targets["risk_target"] is not None:
+            risk_target = targets["risk_target"].long().to(device)
+            risk_mask = targets.get("risk_mask", torch.ones_like(risk_target, dtype=torch.float32)).to(device)
+            if risk_mask.sum() > 0:
+                risk_logits = outputs["decision"]["risk_logits"]
+                raw_loss_risk = F.cross_entropy(risk_logits, risk_target, reduction="none")
+                loss_risk_cls = (raw_loss_risk * risk_mask).sum() / torch.clamp(risk_mask.sum(), min=1.0)
+                total_loss = total_loss + lw.lambda_risk * loss_risk_cls
+                loss_dict["loss_risk_classification"] = loss_risk_cls.item()
+
+        # 5. Risk Probability Estimation Loss (Continuous observed risk probability)
+        if "risk_prob_target" in targets and targets["risk_prob_target"] is not None:
+            risk_prob_target = targets["risk_prob_target"].float().unsqueeze(-1).to(device)
+            risk_prob_mask = targets.get("risk_prob_mask", torch.ones(risk_prob_target.shape[0], device=device)).unsqueeze(-1)
+            if risk_prob_mask.sum() > 0:
+                pred_risk = outputs["predictive"]["estimated_risk"]
+                raw_loss_risk_prob = F.binary_cross_entropy(pred_risk, risk_prob_target, reduction="none")
+                loss_risk_prob = (raw_loss_risk_prob * risk_prob_mask).sum() / torch.clamp(risk_prob_mask.sum(), min=1.0)
+                total_loss = total_loss + (lw.lambda_risk * 0.5) * loss_risk_prob
+                loss_dict["loss_risk_probability"] = loss_risk_prob.item()
+
+        # 6. Candidate Choice and Pairwise Ranking Loss
         if "choice_target" in targets and targets["choice_target"] is not None:
             if outputs.get("candidates") is not None:
-                choice_target = targets["choice_target"].long()
-                cand_scores = outputs["candidates"]["constrained_scores"]
-                loss_choice = F.cross_entropy(cand_scores, choice_target)
-                loss_rank = self.candidate_scorer.compute_ranking_loss(
-                    cand_scores, choice_target, margin=1.0
-                )
-                total_loss = total_loss + (lw.lambda_choice * loss_choice) + (lw.lambda_ranking * loss_rank)
-                loss_dict["loss_choice"] = loss_choice.item()
-                loss_dict["loss_ranking"] = loss_rank.item()
+                choice_target = targets["choice_target"].long().to(device)
+                choice_mask = targets.get("choice_mask", torch.ones_like(choice_target, dtype=torch.float32)).to(device)
+                if choice_mask.sum() > 0:
+                    cand_scores = outputs["candidates"]["constrained_scores"]
+                    raw_loss_choice = F.cross_entropy(cand_scores, choice_target, reduction="none")
+                    loss_choice = (raw_loss_choice * choice_mask).sum() / torch.clamp(choice_mask.sum(), min=1.0)
 
-        # 5. Outcome Binary Loss
+                    existence_mask = targets.get("candidate_existence_mask")
+                    loss_rank = self.candidate_scorer.compute_ranking_loss(
+                        scores=cand_scores,
+                        target_idx=choice_target,
+                        choice_mask=choice_mask,
+                        existence_mask=existence_mask,
+                        margin=1.0,
+                    )
+
+                    total_loss = total_loss + (lw.lambda_choice * loss_choice) + (lw.lambda_ranking * loss_rank)
+                    loss_dict["loss_choice"] = loss_choice.item()
+                    loss_dict["loss_ranking"] = loss_rank.item()
+
+        # 7. Outcome Binary Prediction Loss
         if "outcome_binary_target" in targets and targets["outcome_binary_target"] is not None:
-            out_bin_target = targets["outcome_binary_target"].float().unsqueeze(-1)
-            pred_out_logits = outputs["predictive"]["binary_outcome_logits"]
-            loss_out_bin = F.binary_cross_entropy_with_logits(pred_out_logits, out_bin_target)
-            total_loss = total_loss + lw.lambda_outcome_binary * loss_out_bin
-            loss_dict["loss_outcome_binary"] = loss_out_bin.item()
+            out_bin_target = targets["outcome_binary_target"].float().unsqueeze(-1).to(device)
+            out_bin_mask = targets.get("outcome_binary_mask", torch.ones(out_bin_target.shape[0], device=device)).unsqueeze(-1)
+            if out_bin_mask.sum() > 0:
+                pred_out_logits = outputs["predictive"]["binary_outcome_logits"]
+                raw_loss_out_bin = F.binary_cross_entropy_with_logits(pred_out_logits, out_bin_target, reduction="none")
+                loss_out_bin = (raw_loss_out_bin * out_bin_mask).sum() / torch.clamp(out_bin_mask.sum(), min=1.0)
+                total_loss = total_loss + lw.lambda_outcome_binary * loss_out_bin
+                loss_dict["loss_outcome_binary"] = loss_out_bin.item()
 
-        # 6. Outcome Multiclass Loss
+        # 8. Outcome Multiclass Prediction Loss
         if "outcome_multi_target" in targets and targets["outcome_multi_target"] is not None:
-            out_multi_target = targets["outcome_multi_target"].long()
-            pred_multi_logits = outputs["predictive"]["multiclass_outcome_logits"]
-            loss_out_multi = F.cross_entropy(pred_multi_logits, out_multi_target)
-            total_loss = total_loss + lw.lambda_outcome_multiclass * loss_out_multi
-            loss_dict["loss_outcome_multiclass"] = loss_out_multi.item()
+            out_multi_target = targets["outcome_multi_target"].long().to(device)
+            out_multi_mask = targets.get("outcome_multi_mask", torch.ones_like(out_multi_target, dtype=torch.float32)).to(device)
+            if out_multi_mask.sum() > 0:
+                pred_multi_logits = outputs["predictive"]["multiclass_outcome_logits"]
+                raw_loss_out_multi = F.cross_entropy(pred_multi_logits, out_multi_target, reduction="none")
+                loss_out_multi = (raw_loss_out_multi * out_multi_mask).sum() / torch.clamp(out_multi_mask.sum(), min=1.0)
+                total_loss = total_loss + lw.lambda_outcome_multiclass * loss_out_multi
+                loss_dict["loss_outcome_multiclass"] = loss_out_multi.item()
 
-        # 7. Outcome Numerical Loss
+        # 9. Outcome Numerical (Resolution Time) Loss
         if "outcome_numeric_target" in targets and targets["outcome_numeric_target"] is not None:
-            out_num_target = targets["outcome_numeric_target"].float().unsqueeze(-1)
-            pred_num = outputs["predictive"]["numeric_outcome"]
-            loss_out_num = F.smooth_l1_loss(pred_num, out_num_target)
-            total_loss = total_loss + lw.lambda_outcome_numeric * loss_out_num
-            loss_dict["loss_outcome_numeric"] = loss_out_num.item()
+            out_num_target = targets["outcome_numeric_target"].float().unsqueeze(-1).to(device)
+            out_num_mask = targets.get("outcome_numeric_mask", torch.ones(out_num_target.shape[0], device=device)).unsqueeze(-1)
+            if out_num_mask.sum() > 0:
+                pred_num = outputs["predictive"]["numeric_outcome"]
+                raw_loss_out_num = F.smooth_l1_loss(pred_num, out_num_target, reduction="none")
+                loss_out_num = (raw_loss_out_num * out_num_mask).sum() / torch.clamp(out_num_mask.sum(), min=1.0)
+                total_loss = total_loss + lw.lambda_outcome_numeric * loss_out_num
+                loss_dict["loss_outcome_numeric"] = loss_out_num.item()
 
         loss_dict["loss_total"] = total_loss.item()
         return total_loss, loss_dict
@@ -218,27 +305,57 @@ class CDMModel(nn.Module):
         """Export CDM-1 weights in SafeTensors format with full configuration."""
         os.makedirs(save_directory, exist_ok=True)
 
-        # 1. Save config JSON
         config_path = os.path.join(save_directory, "config.json")
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(self.config.to_dict(), f, indent=2)
 
-        # 2. Save model weights using safetensors
         weights_path = os.path.join(save_directory, "model.safetensors")
         state_dict = {k: v.contiguous() for k, v in self.state_dict().items()}
         save_file(state_dict, weights_path)
 
     @classmethod
-    def from_pretrained(cls, load_directory: str) -> "CDMModel":
-        """Instantiate and load CDM-1 from a directory with config.json and model.safetensors."""
+    def from_pretrained(cls, load_directory: str, strict: bool = True) -> "CDMModel":
+        """Instantiate and strictly load CDM-1 from a directory with config.json and model.safetensors.
+
+        Raises FileNotFoundError or ValueError if checkpoint files are missing, corrupt,
+        or state dictionaries fail verification.
+        """
+        if not os.path.exists(load_directory):
+            raise FileNotFoundError(f"Checkpoint directory does not exist: {load_directory}")
+
         config_path = os.path.join(load_directory, "config.json")
+        if not os.path.isfile(config_path):
+            raise FileNotFoundError(f"Missing config.json in checkpoint directory: {load_directory}")
+
+        weights_path = os.path.join(load_directory, "model.safetensors")
+        if not os.path.isfile(weights_path):
+            raise FileNotFoundError(
+                f"Missing model.safetensors in checkpoint directory: {load_directory}. "
+                "CDM-1 refuses to silently use random uninitialized weights."
+            )
+
+        if os.path.getsize(weights_path) == 0:
+            raise ValueError(f"Checkpoint file model.safetensors is empty (0 bytes): {weights_path}")
+
         with open(config_path, "r", encoding="utf-8") as f:
             config_dict = json.load(f)
         config = CDMModelConfig.from_dict(config_dict)
 
         model = cls(config)
-        weights_path = os.path.join(load_directory, "model.safetensors")
-        if os.path.exists(weights_path):
-            state_dict = load_file(weights_path)
-            model.load_state_dict(state_dict, strict=False)
+        state_dict = load_file(weights_path)
+
+        # Strict state dictionary validation
+        model_keys = set(model.state_dict().keys())
+        loaded_keys = set(state_dict.keys())
+
+        missing_keys = model_keys - loaded_keys
+        if strict and len(missing_keys) > 0:
+            # Check if any missing keys are critical custom neural components
+            critical_missing = [k for k in missing_keys if not k.startswith("language_encoder.transformer.")]
+            if len(critical_missing) > 0:
+                raise ValueError(
+                    f"Checkpoint verification failed! Critical keys missing from state_dict: {critical_missing[:5]}"
+                )
+
+        load_result = model.load_state_dict(state_dict, strict=False)
         return model

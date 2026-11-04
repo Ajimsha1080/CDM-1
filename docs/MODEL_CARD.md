@@ -17,6 +17,7 @@ metrics:
 - accuracy
 - f1
 - auroc
+- auprc
 - expected_calibration_error
 - brier_score
 - selective_risk
@@ -36,9 +37,12 @@ model-index:
       value: 1.0000
     - name: Expected Calibration Error (ECE)
       type: expected_calibration_error
-      value: 0.0172
+      value: 0.0195
     - name: Priority Macro F1
       type: f1
+      value: 1.0000
+    - name: Candidate Choice Top-1 Accuracy
+      type: accuracy
       value: 1.0000
     - name: Hard Constraint Violation Rate
       type: constraint_violation_rate
@@ -68,21 +72,25 @@ Unlike generative conversational chatbots or LLM API wrappers, CDM-1 is purpose-
    - Continuous Scoring (0–100 operational score)
    - Priority Tiering (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`)
    - Risk Assessment (`LOW`, `MODERATE`, `HIGH`, `SEVERE`)
-   - Calibrated Confidence & Selective Abstention ($ECE = 0.0172$)
+   - Calibrated Confidence & Selective Abstention ($ECE = 0.0195$)
 
-## Verified Benchmark Results (Test Partition)
-| Benchmark Metric | Logistic Reg. | Random Forest | Gradient Boosting | **CDM-1 (Ours)** |
-|---|---|---|---|---|
-| **Binary Decision Accuracy** | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
-| **Binary F1 Score** | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
-| **AUROC** | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
-| **Brier Score (Probabilistic Error)** | 0.0011 | 0.0000 | 0.0000 | **0.0020** |
-| **Expected Calibration Error (ECE)** | 0.0610 | 0.0480 | 0.0350 | **0.0172** |
-| **Priority Classification (Macro F1)** | N/A (Binary) | N/A | N/A | **1.0000** |
-| **Continuous Score MAE** | N/A | N/A | N/A | **0.7463** |
-| **Selective Coverage** | 100% | 100% | 100% | **95.24%** |
-| **Selective Accuracy (Under Abstention)** | 100% | 100% | 100% | **100.00%** |
-| **Policy Constraint Violations** | N/A | N/A | N/A | **0.00%** |
+## Verified Benchmark Results (Holdout Test Partition, N=24)
+| Benchmark Metric | Logistic Reg. | Random Forest | GBDT (HistGrad) | XGBoost (v3.4.1) | **CDM-1 (Ours)** |
+|---|---|---|---|---|---|
+| **Binary Decision Accuracy** | 1.0000 | 1.0000 | 1.0000 | 0.9583 | **1.0000** |
+| **Binary Macro F1** | 1.0000 | 1.0000 | 1.0000 | 0.9515 | **1.0000** |
+| **AUROC** | 1.0000 | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
+| **AUPRC** | 1.0000 | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
+| **Brier Score** | 0.0013 | 0.0061 | 0.0033 | 0.0142 | **0.0025** |
+| **Expected Calibration Error (ECE)** | 0.0520 | 0.0410 | 0.0380 | 0.0450 | **0.0195** |
+| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | N/A | **1.0000** |
+| **Candidate Choice NDCG** | N/A | N/A | N/A | N/A | **1.0000** |
+| **Priority Classification (Macro F1)** | N/A | N/A | N/A | N/A | **1.0000** |
+| **Risk Classification Accuracy** | N/A | N/A | N/A | N/A | **0.9167** |
+| **Continuous Score MAE** | N/A | N/A | N/A | N/A | **1.2127** |
+| **Selective Coverage** | 100% | 100% | 100% | 100% | **91.67%** |
+| **Selective Accuracy (Under Abstention)** | 100% | 100% | 100% | 95.8% | **100.00%** |
+| **Policy Constraint Violations** | N/A | N/A | N/A | N/A | **0.00%** |
 
 ## Quickstart Usage
 
@@ -90,7 +98,7 @@ Unlike generative conversational chatbots or LLM API wrappers, CDM-1 is purpose-
 ```python
 from cdm import CognitiveDecisionModel
 
-model = CognitiveDecisionModel.from_pretrained("experiments/release/cdm-1-general")
+model = CognitiveDecisionModel.from_pretrained("experiments/release/cdm-1-general", local_files_only=True)
 
 result = model.decide(
     text="Customer reports item arrived broken 12 days ago with photos.",
@@ -105,7 +113,7 @@ result = model.decide(
 )
 
 print(result.decision)            # issue_refund
-print(result.confidence)          # 0.9995
+print(result.confidence)          # 0.9992
 print(result.score)               # 92.45
 print(result.abstain)             # False
 ```

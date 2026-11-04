@@ -1,5 +1,5 @@
 """Dataset loader and PyTorch batch collation for CDM-1.
-Supports temporal splits, entity-isolated splits, and batch formatting.
+Supports candidate padding, explicit missing target masks, and leakage-free splits.
 """
 
 from typing import Dict, List, Optional, Any, Tuple
@@ -32,7 +32,7 @@ class DecisionDataset(Dataset):
 def collate_decision_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Collate function that batches examples, handles candidate padding,
 
-    and organizes multi-task training targets.
+    existence masks, and organizes multi-task targets with explicit missingness masks.
     """
     input_ids = torch.stack([item["input_ids"] for item in batch], dim=0)
     attention_mask = torch.stack([item["attention_mask"] for item in batch], dim=0)
@@ -46,54 +46,58 @@ def collate_decision_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         for k in cat_keys
     }
 
-    # Multi-task targets
-    targets: Dict[str, torch.Tensor] = {}
+    # Explicitly masked multi-task targets
+    targets: Dict[str, torch.Tensor] = {
+        "binary_target": torch.tensor([item["binary_target"] for item in batch], dtype=torch.long),
+        "binary_mask": torch.tensor([item["binary_mask"] for item in batch], dtype=torch.float32),
+        "priority_target": torch.tensor([item["priority_target"] for item in batch], dtype=torch.long),
+        "priority_mask": torch.tensor([item["priority_mask"] for item in batch], dtype=torch.float32),
+        "risk_target": torch.tensor([item["risk_target"] for item in batch], dtype=torch.long),
+        "risk_mask": torch.tensor([item["risk_mask"] for item in batch], dtype=torch.float32),
+        "score_target": torch.tensor([item["score_target"] for item in batch], dtype=torch.float32),
+        "score_mask": torch.tensor([item["score_mask"] for item in batch], dtype=torch.float32),
+        "choice_target": torch.tensor(
+            [item["choice_target"] if item["choice_target"] is not None else 0 for item in batch],
+            dtype=torch.long,
+        ),
+        "choice_mask": torch.tensor([item["choice_mask"] for item in batch], dtype=torch.float32),
+        "outcome_binary_target": torch.tensor([item["outcome_binary"] for item in batch], dtype=torch.float32),
+        "outcome_binary_mask": torch.tensor([item["outcome_binary_mask"] for item in batch], dtype=torch.float32),
+        "outcome_multi_target": torch.tensor([item["outcome_multi"] for item in batch], dtype=torch.long),
+        "outcome_multi_mask": torch.tensor([item["outcome_multi_mask"] for item in batch], dtype=torch.float32),
+        "outcome_numeric_target": torch.tensor([item["outcome_numeric"] for item in batch], dtype=torch.float32),
+        "outcome_numeric_mask": torch.tensor([item["outcome_numeric_mask"] for item in batch], dtype=torch.float32),
+        "risk_prob_target": torch.tensor([item["risk_prob"] for item in batch], dtype=torch.float32),
+        "risk_prob_mask": torch.tensor([item["risk_prob_mask"] for item in batch], dtype=torch.float32),
+    }
 
-    bin_targets = [item["binary_target"] for item in batch]
-    if all(t is not None for t in bin_targets):
-        targets["binary_target"] = torch.tensor(bin_targets, dtype=torch.long)
+    # Candidate collation: support variable candidate counts with padding
+    max_cands = max(item["num_candidates"] for item in batch)
+    candidate_input_ids = None
+    candidate_attention_mask = None
+    candidate_constraint_mask = None
+    candidate_existence_mask = None
 
-    prio_targets = [item["priority_target"] for item in batch]
-    if all(t is not None for t in prio_targets):
-        targets["priority_target"] = torch.tensor(prio_targets, dtype=torch.long)
+    if max_cands > 0:
+        cand_seq_len = 64
+        batch_size = len(batch)
+        candidate_input_ids = torch.zeros((batch_size, max_cands, cand_seq_len), dtype=torch.long)
+        candidate_attention_mask = torch.zeros((batch_size, max_cands, cand_seq_len), dtype=torch.long)
+        candidate_constraint_mask = torch.zeros((batch_size, max_cands), dtype=torch.float32)
+        candidate_existence_mask = torch.zeros((batch_size, max_cands), dtype=torch.float32)
 
-    score_targets = [item["score_target"] for item in batch]
-    if all(t is not None for t in score_targets):
-        targets["score_target"] = torch.tensor(score_targets, dtype=torch.float32)
+        for b_idx, item in enumerate(batch):
+            n_c = item["num_candidates"]
+            if n_c > 0 and item["cand_input_ids"] is not None:
+                candidate_input_ids[b_idx, :n_c, :] = item["cand_input_ids"]
+                candidate_attention_mask[b_idx, :n_c, :] = item["cand_attention_mask"]
+                candidate_existence_mask[b_idx, :n_c] = 1.0
+                if item["constraint_mask"] is not None:
+                    candidate_constraint_mask[b_idx, :n_c] = item["constraint_mask"]
+                else:
+                    candidate_constraint_mask[b_idx, :n_c] = 1.0
 
-    choice_targets = [item["choice_target"] for item in batch]
-    if all(t is not None for t in choice_targets):
-        targets["choice_target"] = torch.tensor(choice_targets, dtype=torch.long)
-
-    out_bin_targets = [item["outcome_binary"] for item in batch]
-    if any(t is not None for t in out_bin_targets):
-        clean_out_bin = [t if t is not None else 0 for t in out_bin_targets]
-        targets["outcome_binary_target"] = torch.tensor(clean_out_bin, dtype=torch.float32)
-
-    out_multi_targets = [item["outcome_multi"] for item in batch]
-    if any(t is not None for t in out_multi_targets):
-        clean_out_multi = [t if t is not None else 0 for t in out_multi_targets]
-        targets["outcome_multi_target"] = torch.tensor(clean_out_multi, dtype=torch.long)
-
-    out_num_targets = [item["outcome_numeric"] for item in batch]
-    if any(t is not None for t in out_num_targets):
-        clean_out_num = [t if t is not None else 0.0 for t in out_num_targets]
-        targets["outcome_numeric_target"] = torch.tensor(clean_out_num, dtype=torch.float32)
-
-    # Candidate collation (if all have candidates and same length)
-    has_cands = all(item["constraint_mask"] is not None for item in batch)
-    constraint_masks = None
-    if has_cands:
-        max_cands = max(len(item["constraint_mask"]) for item in batch)
-        # Pad constraint masks if needed
-        padded_masks = []
-        for item in batch:
-            mask = item["constraint_mask"]
-            if len(mask) < max_cands:
-                pad = torch.zeros(max_cands - len(mask))
-                mask = torch.cat([mask, pad], dim=0)
-            padded_masks.append(mask)
-        constraint_masks = torch.stack(padded_masks, dim=0)
+        targets["candidate_existence_mask"] = candidate_existence_mask
 
     return {
         "input_ids": input_ids,
@@ -101,7 +105,10 @@ def collate_decision_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "numeric_values": numeric_values,
         "missing_indicators": missing_indicators,
         "categorical_indices": categorical_indices,
-        "constraint_mask": constraint_masks,
+        "candidate_input_ids": candidate_input_ids,
+        "candidate_attention_mask": candidate_attention_mask,
+        "constraint_mask": candidate_constraint_mask,
+        "existence_mask": candidate_existence_mask,
         "targets": targets,
         "example_ids": [item["example_id"] for item in batch],
     }
@@ -109,32 +116,60 @@ def collate_decision_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 def split_dataset(
     examples: List[DecisionExample],
-    split_type: str = "temporal",
-    train_ratio: float = 0.7,
+    split_type: str = "group_temporal",
+    train_ratio: float = 0.70,
     val_ratio: float = 0.15,
 ) -> Tuple[List[DecisionExample], List[DecisionExample], List[DecisionExample]]:
-    """Splits examples into Train, Validation, and Test partitions.
+    """Splits dataset ensuring zero entity/customer leakage and temporal holdout.
 
-    - 'temporal': sorts by temporal_timestamp to prevent future leakage.
-    - 'random': deterministic seed-based shuffle.
+    - 'group_temporal': sorts groups by earliest interaction timestamp, ensuring complete entity isolation.
     """
-    if split_type == "temporal":
+    if split_type == "group_temporal":
+        # Group by domain and entity/customer prefix
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for ex in examples:
+            prefix = ex.example_id.rsplit("-", 1)[0]
+            groups[prefix].append(ex)
+
+        # Sort groups by min timestamp
+        sorted_groups = sorted(
+            groups.values(),
+            key=lambda grp: min(e.temporal_timestamp or "" for e in grp),
+        )
+
+        train_data: List[DecisionExample] = []
+        val_data: List[DecisionExample] = []
+        test_data: List[DecisionExample] = []
+
+        total_examples = len(examples)
+        train_target = int(total_examples * train_ratio)
+        val_target = int(total_examples * (train_ratio + val_ratio))
+
+        curr_count = 0
+        for grp in sorted_groups:
+            if curr_count + len(grp) <= train_target:
+                train_data.extend(grp)
+            elif curr_count + len(grp) <= val_target:
+                val_data.extend(grp)
+            else:
+                test_data.extend(grp)
+            curr_count += len(grp)
+
+        # In case a small tail remains empty
+        if not val_data and len(train_data) > 2:
+            val_data.append(train_data.pop())
+        if not test_data and len(val_data) > 2:
+            test_data.append(val_data.pop())
+
+        return train_data, val_data, test_data
+    else:
+        # Default temporal sort
         sorted_examples = sorted(
             examples,
             key=lambda x: x.temporal_timestamp or "",
         )
-    else:
-        import random
-        rnd = random.Random(42)
-        sorted_examples = list(examples)
-        rnd.shuffle(sorted_examples)
-
-    n = len(sorted_examples)
-    train_end = int(n * train_ratio)
-    val_end = int(n * (train_ratio + val_ratio))
-
-    train_data = sorted_examples[:train_end]
-    val_data = sorted_examples[train_end:val_end]
-    test_data = sorted_examples[val_end:]
-
-    return train_data, val_data, test_data
+        n = len(sorted_examples)
+        train_end = int(n * train_ratio)
+        val_end = int(n * (train_ratio + val_ratio))
+        return sorted_examples[:train_end], sorted_examples[train_end:val_end], sorted_examples[val_end:]

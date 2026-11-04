@@ -1,0 +1,41 @@
+{
+  "dataset_version": "1.0.0",
+  "total_examples": 134,
+  "split_counts": {
+    "train": 90,
+    "validation": 20,
+    "test": 24
+  },
+  "file_checksums": {
+    "train.jsonl": "6f0d9c5c78be9828e985f412eb025d9f1c726967056041c78a209b344962ecd4",
+    "val.jsonl": "2d591c303f11071afdbed0250eaebc94a0c3170286bdb42753991cc5234b89f5",
+    "test.jsonl": "8cfef5669893c74ac7eb90eb318cb379516c7cca2900e4dc8216fdc6d3784564"
+  },
+  "provenance_breakdown": {
+    "verified_real_expert": 6,
+    "curated_synthetic": 128
+  },
+  "domain_distribution": {
+    "customer_support": 34,
+    "communication": 34,
+    "retail": 33,
+    "business_operations": 33
+  },
+  "binary_label_distribution": {
+    "1": 92,
+    "0": 42
+  },
+  "priority_label_distribution": {
+    "1": 25,
+    "0": 50,
+    "3": 34,
+    "2": 25
+  },
+  "risk_label_distribution": {
+    "0": 50,
+    "1": 42,
+    "3": 34,
+    "2": 8
+  },
+  "leakage_audit_passed": true
+}

@@ -1,6 +1,6 @@
 """Component: Candidate Scorer & Selection Mechanism for CDM-1.
 Evaluates alternative candidate actions against context, predicted outcomes,
-risk, and hard external policy constraints.
+risk, and hard external policy constraints with vectorized ranking losses.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -37,7 +37,6 @@ class CandidateScorer(nn.Module):
         self.bilinear = nn.Bilinear(context_dim, context_dim, hidden_dim)
 
         # Deep scoring MLP
-        # Input: [context_dim, candidate_dim, bilinear_feat, outcome_feat(1), risk_feat(1)]
         in_features = context_dim + candidate_dim + hidden_dim + 2
         self.scorer_mlp = nn.Sequential(
             nn.Linear(in_features, hidden_dim),
@@ -54,6 +53,7 @@ class CandidateScorer(nn.Module):
         candidate_outcomes: Optional[torch.Tensor] = None,
         candidate_risks: Optional[torch.Tensor] = None,
         constraint_mask: Optional[torch.Tensor] = None,
+        existence_mask: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """Args:
 
@@ -62,6 +62,7 @@ class CandidateScorer(nn.Module):
             candidate_outcomes: [batch_size, num_candidates, 1] or None
             candidate_risks: [batch_size, num_candidates, 1] or None
             constraint_mask: [batch_size, num_candidates] (1=allowed, 0=prohibited)
+            existence_mask: [batch_size, num_candidates] (1=valid candidate, 0=padding)
 
         Returns:
             raw_scores: [batch_size, num_candidates]
@@ -81,9 +82,8 @@ class CandidateScorer(nn.Module):
         # Flatten batch and candidate dimensions for bilinear & mlp
         ctx_flat = ctx_expanded.reshape(-1, self.context_dim)
         c_flat = c_proj.reshape(-1, self.context_dim)
-        bilinear_feat = self.bilinear(ctx_flat, c_flat)  # [batch * num_cand, hidden_dim]
+        bilinear_feat = self.bilinear(ctx_flat, c_flat)
 
-        # Handle auxiliary outcome and risk features
         if candidate_outcomes is None:
             cand_outcomes_flat = torch.zeros(batch_size * num_candidates, 1, device=device)
         else:
@@ -101,18 +101,26 @@ class CandidateScorer(nn.Module):
             dim=-1,
         )
 
-        raw_scores_flat = self.scorer_mlp(combined)  # [batch * num_cand, 1]
-        raw_scores = raw_scores_flat.reshape(batch_size, num_candidates)  # [batch, num_candidates]
+        raw_scores_flat = self.scorer_mlp(combined)
+        raw_scores = raw_scores_flat.reshape(batch_size, num_candidates)
 
-        # Enforce external policy constraints:
-        # If a candidate violates a hard policy constraint, mask its logit with -1e9
+        # Effective mask combines allowed constraints and padding existence
+        effective_mask = torch.ones_like(raw_scores)
         if constraint_mask is not None:
-            mask_val = -1e9
-            constrained_scores = raw_scores.masked_fill(constraint_mask == 0, mask_val)
-        else:
-            constrained_scores = raw_scores
+            effective_mask = effective_mask * constraint_mask
+        if existence_mask is not None:
+            effective_mask = effective_mask * existence_mask
+
+        mask_val = -1e9
+        constrained_scores = raw_scores.masked_fill(effective_mask == 0, mask_val)
 
         choice_probs = F.softmax(constrained_scores, dim=-1)
+        # Ensure padded items strictly have 0 probability
+        if existence_mask is not None:
+            choice_probs = choice_probs * existence_mask
+            sum_p = torch.clamp(choice_probs.sum(dim=-1, keepdim=True), min=1e-9)
+            choice_probs = choice_probs / sum_p
+
         selected_idx = torch.argmax(constrained_scores, dim=-1)
 
         return {
@@ -126,20 +134,39 @@ class CandidateScorer(nn.Module):
     def compute_ranking_loss(
         scores: torch.Tensor,
         target_idx: torch.Tensor,
+        choice_mask: Optional[torch.Tensor] = None,
+        existence_mask: Optional[torch.Tensor] = None,
         margin: float = 1.0,
     ) -> torch.Tensor:
-        """Pairwise margin ranking loss ensuring target candidate score exceeds competitors."""
+        """Pairwise margin ranking loss ensuring target candidate score exceeds competitors,
+
+        vectorized and masked to skip padded candidates and examples without valid choice labels.
+        """
         batch_size, num_cand = scores.shape
         device = scores.device
-        loss = torch.tensor(0.0, device=device)
 
-        for b in range(batch_size):
-            t_idx = target_idx[b].item()
-            target_score = scores[b, t_idx]
-            for c in range(num_cand):
-                if c != t_idx:
-                    other_score = scores[b, c]
-                    diff = other_score - target_score + margin
-                    loss = loss + torch.clamp(diff, min=0.0)
+        if choice_mask is None:
+            choice_mask = torch.ones(batch_size, device=device)
+        if existence_mask is None:
+            existence_mask = torch.ones(batch_size, num_cand, device=device)
 
-        return loss / max(batch_size * (num_cand - 1), 1)
+        # Clamp target index to valid bounds for indexing
+        clamped_targets = torch.clamp(target_idx, 0, num_cand - 1)
+        target_scores = scores.gather(1, clamped_targets.unsqueeze(1))  # [batch_size, 1]
+
+        # Margin diff: other_score - target_score + margin
+        margin_matrix = scores - target_scores + margin  # [batch_size, num_cand]
+        hinge_loss = torch.clamp(margin_matrix, min=0.0)
+
+        # Zero out target candidate itself
+        target_one_hot = F.one_hot(clamped_targets, num_classes=num_cand).float()
+        valid_competitor_mask = existence_mask * (1.0 - target_one_hot)
+
+        masked_hinge = hinge_loss * valid_competitor_mask
+        per_sample_loss = masked_hinge.sum(dim=-1) / torch.clamp(
+            valid_competitor_mask.sum(dim=-1), min=1.0
+        )
+
+        # Apply choice_mask (only average over examples with valid choice labels)
+        total_valid_examples = torch.clamp(choice_mask.sum(), min=1.0)
+        return (per_sample_loss * choice_mask).sum() / total_valid_examples

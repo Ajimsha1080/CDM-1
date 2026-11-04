@@ -1,6 +1,7 @@
-"""STAGE 7: Multi-Task Joint Training Pipeline for CDM-1.
-Performs end-to-end multi-task optimization across language, structured features,
-predictive outcomes, and multi-head decisions with text embedding caching for high-speed CPU training.
+"""STAGE 7: Complete Multi-Task & Candidate-Conditioned Training Pipeline for CDM-1.
+Performs end-to-end multi-task optimization across text context, candidate actions,
+predictive forward outcomes, risk estimation, and multi-head decisions.
+Logs every individual loss and ensures candidate scorer receives gradient updates.
 """
 
 import os
@@ -20,23 +21,44 @@ from cdm.data.preprocessor import DecisionPreprocessor
 from cdm.utils.training_utils import set_seed, EarlyStopping
 
 
-def cache_text_embeddings(model: CDMModel, loader: DataLoader, device: torch.device):
-    """Pre-extracts text embeddings through frozen language encoder to eliminate repeated forward passes."""
+def cache_multitask_batches(model: CDMModel, loader: DataLoader, device: torch.device):
+    """Pre-computes text representations for both context narrative and candidate actions
+
+    through the frozen transformer backbone to optimize CPU training throughput while
+    ensuring candidate projection and scorer remain fully trainable.
+    """
     model.eval()
     cached_batches = []
-    print("Pre-computing text embeddings with frozen backbone...", flush=True)
+    print("Pre-computing context and candidate representations with frozen backbone...", flush=True)
+
     with torch.no_grad():
         for batch in loader:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
             text_emb = model.language_encoder(input_ids, attention_mask)
+
+            # Pre-extract candidate embeddings through language encoder
+            c_input_ids = batch["candidate_input_ids"]
+            c_attention_mask = batch["candidate_attention_mask"]
+            candidate_raw_embs = None
+
+            if c_input_ids is not None and c_attention_mask is not None:
+                b_size, n_cands, seq_len = c_input_ids.shape
+                flat_ids = c_input_ids.to(device).reshape(-1, seq_len)
+                flat_mask = c_attention_mask.to(device).reshape(-1, seq_len)
+                # Raw text embedding from language encoder [B * K, proj_dim]
+                raw_cand_emb = model.language_encoder(flat_ids, flat_mask)
+                candidate_raw_embs = raw_cand_emb.reshape(b_size, n_cands, -1)
+
             cached_batches.append({
                 "text_emb": text_emb.detach(),
+                "candidate_raw_embs": candidate_raw_embs.detach() if candidate_raw_embs is not None else None,
                 "numeric_values": batch["numeric_values"].to(device),
                 "missing_indicators": batch["missing_indicators"].to(device),
                 "categorical_indices": {k: v.to(device) for k, v in batch["categorical_indices"].items()},
                 "targets": {k: v.to(device) for k, v in batch["targets"].items()},
                 "constraint_mask": batch["constraint_mask"].to(device) if batch["constraint_mask"] is not None else None,
+                "existence_mask": batch["existence_mask"].to(device) if batch["existence_mask"] is not None else None,
             })
     return cached_batches
 
@@ -49,7 +71,7 @@ def train_multitask(
 ):
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"=== STAGE 7: Joint Multi-Task Optimization on {device} ===", flush=True)
+    print(f"=== STAGE 7: Multi-Task & Candidate-Conditioned Training on {device} ===", flush=True)
 
     train_data = load_dataset_from_disk("datasets/train.jsonl")
     val_data = load_dataset_from_disk("datasets/val.jsonl")
@@ -70,12 +92,14 @@ def train_multitask(
     print(f"Frozen Parameters:    {param_stats['frozen_parameters']:,}", flush=True)
     print(f"Total Parameters:     {param_stats['total_parameters']:,}", flush=True)
 
-    # Precompute frozen text embeddings
-    cached_train = cache_text_embeddings(model, train_loader, device)
-    cached_val = cache_text_embeddings(model, val_loader, device)
-    print(f"Cached {len(cached_train)} train batches and {len(cached_val)} val batches.", flush=True)
+    # Record initial candidate scorer weight snapshot to prove parameters update
+    initial_scorer_weight = model.candidate_scorer.scorer_mlp[0].weight.clone().detach()
 
-    # Train all custom neural components
+    # Pre-compute representations
+    cached_train = cache_multitask_batches(model, train_loader, device)
+    cached_val = cache_multitask_batches(model, val_loader, device)
+
+    # Train all custom neural components (including candidate scorer & projection)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.AdamW(trainable_params, lr=lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -88,6 +112,7 @@ def train_multitask(
     for epoch in range(epochs):
         model.train()
         train_loss = 0.0
+        epoch_task_losses = {}
 
         for batch in cached_train:
             text_emb = batch["text_emb"]
@@ -95,12 +120,29 @@ def train_multitask(
             missing = batch["missing_indicators"]
             cat_idx = batch["categorical_indices"]
             targets = batch["targets"]
+            cand_raw = batch["candidate_raw_embs"]
+            constraint_mask = batch["constraint_mask"]
+            existence_mask = batch["existence_mask"]
 
             optimizer.zero_grad()
 
-            # Fused representation & head forward passes
+            # 1. Structured & Fusion representation
             struct_emb = model.structured_encoder(num_vals, missing, cat_idx)
             cognitive_state = model.fusion(text_emb, struct_emb)
+
+            # 2. Candidate Projection & Scoring
+            candidate_out = None
+            if cand_raw is not None:
+                # Pass through trainable candidate text projector
+                cand_embs = model.candidate_text_proj(cand_raw)
+                candidate_out = model.candidate_scorer(
+                    cognitive_context=cognitive_state,
+                    candidate_embeddings=cand_embs,
+                    constraint_mask=constraint_mask,
+                    existence_mask=existence_mask,
+                )
+
+            # 3. Decision & Predictive outputs
             predictive_out = model.predictive_network(cognitive_state)
             decision_out = model.decision_network(cognitive_state)
 
@@ -108,14 +150,17 @@ def train_multitask(
                 "cognitive_state": cognitive_state,
                 "decision": decision_out,
                 "predictive": predictive_out,
-                "candidates": None,
+                "candidates": candidate_out,
             }
 
             loss, loss_dict = model.compute_multitask_loss(outputs, targets)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)
             optimizer.step()
+
             train_loss += loss.item()
+            for k, v in loss_dict.items():
+                epoch_task_losses[k] = epoch_task_losses.get(k, 0.0) + (v / len(cached_train))
 
         scheduler.step()
         avg_train_loss = train_loss / len(cached_train)
@@ -125,6 +170,8 @@ def train_multitask(
         val_loss = 0.0
         val_correct_bin = 0
         val_total_bin = 0
+        val_correct_choice = 0
+        val_total_choice = 0
 
         with torch.no_grad():
             for batch in cached_val:
@@ -133,9 +180,23 @@ def train_multitask(
                 missing = batch["missing_indicators"]
                 cat_idx = batch["categorical_indices"]
                 targets = batch["targets"]
+                cand_raw = batch["candidate_raw_embs"]
+                constraint_mask = batch["constraint_mask"]
+                existence_mask = batch["existence_mask"]
 
                 struct_emb = model.structured_encoder(num_vals, missing, cat_idx)
                 cognitive_state = model.fusion(text_emb, struct_emb)
+
+                candidate_out = None
+                if cand_raw is not None:
+                    cand_embs = model.candidate_text_proj(cand_raw)
+                    candidate_out = model.candidate_scorer(
+                        cognitive_context=cognitive_state,
+                        candidate_embeddings=cand_embs,
+                        constraint_mask=constraint_mask,
+                        existence_mask=existence_mask,
+                    )
+
                 predictive_out = model.predictive_network(cognitive_state)
                 decision_out = model.decision_network(cognitive_state)
 
@@ -143,33 +204,45 @@ def train_multitask(
                     "cognitive_state": cognitive_state,
                     "decision": decision_out,
                     "predictive": predictive_out,
-                    "candidates": None,
+                    "candidates": candidate_out,
                 }
 
                 v_loss, _ = model.compute_multitask_loss(outputs, targets)
                 val_loss += v_loss.item()
 
                 bin_preds = decision_out["binary_prediction"]
-                val_correct_bin += (bin_preds == targets["binary_target"]).sum().item()
-                val_total_bin += targets["binary_target"].size(0)
+                bin_mask = targets["binary_mask"]
+                val_correct_bin += ((bin_preds == targets["binary_target"]) * bin_mask).sum().item()
+                val_total_bin += bin_mask.sum().item()
+
+                if candidate_out is not None:
+                    choice_preds = candidate_out["selected_candidate_idx"]
+                    choice_mask = targets["choice_mask"]
+                    val_correct_choice += ((choice_preds == targets["choice_target"]) * choice_mask).sum().item()
+                    val_total_choice += choice_mask.sum().item()
 
         avg_val_loss = val_loss / len(cached_val)
-        val_acc = val_correct_bin / max(val_total_bin, 1)
+        val_bin_acc = val_correct_bin / max(val_total_bin, 1)
+        val_choice_acc = val_correct_choice / max(val_total_choice, 1)
 
         print(
             f"Epoch {epoch+1:02d}/{epochs:02d} | "
             f"Train Loss: {avg_train_loss:.4f} | "
             f"Val Loss: {avg_val_loss:.4f} | "
-            f"Val Bin Acc: {val_acc:.4f}",
+            f"Val Bin Acc: {val_bin_acc:.4f} | "
+            f"Val Choice Acc: {val_choice_acc:.4f}",
             flush=True,
         )
 
-        history.append({
+        history_entry = {
             "epoch": epoch + 1,
-            "train_loss": avg_train_loss,
-            "val_loss": avg_val_loss,
-            "val_binary_accuracy": val_acc,
-        })
+            "train_loss": round(avg_train_loss, 4),
+            "val_loss": round(avg_val_loss, 4),
+            "val_binary_accuracy": round(val_bin_acc, 4),
+            "val_choice_accuracy": round(val_choice_acc, 4),
+            "individual_losses": {k: round(v, 4) for k, v in epoch_task_losses.items()},
+        }
+        history.append(history_entry)
 
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
@@ -183,14 +256,21 @@ def train_multitask(
     elapsed = time.time() - start_time
     print(f"Training completed in {elapsed:.1f} seconds. Best Val Loss: {best_val_loss:.4f}", flush=True)
 
+    # Prove candidate scorer parameters actually changed
+    final_scorer_weight = model.candidate_scorer.scorer_mlp[0].weight.clone().detach()
+    weight_diff = torch.norm(final_scorer_weight - initial_scorer_weight).item()
+    print(f"Candidate Scorer Weight Delta L2 Norm: {weight_diff:.6f} (>0 verifies parameter learning)", flush=True)
+    assert weight_diff > 1e-5, "Candidate scorer parameters failed to update during training!"
+
     os.makedirs("experiments", exist_ok=True)
     with open("experiments/training_history.json", "w", encoding="utf-8") as f:
         json.dump({
             "model": "CDM-1",
             "parameters": param_stats,
+            "candidate_scorer_parameter_delta_norm": weight_diff,
             "history": history,
-            "best_val_loss": best_val_loss,
-            "duration_seconds": elapsed,
+            "best_val_loss": round(best_val_loss, 4),
+            "duration_seconds": round(elapsed, 2),
         }, f, indent=2)
 
     return model

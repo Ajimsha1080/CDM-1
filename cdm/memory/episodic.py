@@ -1,16 +1,18 @@
 """Episodic Memory Subsystem for CDM-1.
 Stores and retrieves historical interactions, context vectors, and verified outcomes
-with semantic relevance scoring, duplicate detection, provenance, and expiration.
+with semantic relevance scoring, duplicate detection, provenance, and TTL expiration
+backed by persistent storage.
 """
 
 from typing import Dict, List, Optional, Any
 import time
-import math
 from pydantic import BaseModel, Field
+from cdm.memory.storage import BaseMemoryStorage, SQLiteMemoryStorage
 
 
 class MemoryRecord(BaseModel):
     record_id: str
+    tenant_id: str = "default_tenant"
     timestamp: float = Field(default_factory=time.time)
     context_text: str
     features: Dict[str, Any] = Field(default_factory=dict)
@@ -22,48 +24,62 @@ class MemoryRecord(BaseModel):
 
 
 class EpisodicMemory:
-    """In-memory & PostgreSQL/pgvector interface for interaction history and verified outcomes."""
+    """Persistent storage-backed episodic memory with tenant isolation and cosine retrieval."""
 
-    def __init__(self):
-        self.records: Dict[str, MemoryRecord] = {}
+    def __init__(self, storage: Optional[BaseMemoryStorage] = None):
+        self.storage = storage or SQLiteMemoryStorage()
 
     def insert(self, record: MemoryRecord) -> None:
-        """Insert verified interaction record with deduplication."""
-        self.records[record.record_id] = record
+        """Insert verified interaction record into persistent memory."""
+        data = {
+            "context_text": record.context_text,
+            "features": record.features,
+            "decision_made": record.decision_made,
+            "provenance": record.provenance,
+        }
+        self.storage.insert_episodic(
+            record_id=record.record_id,
+            tenant_id=record.tenant_id,
+            data=data,
+            vector=record.vector,
+            ttl=record.ttl_seconds,
+        )
 
     def retrieve_similar(
         self,
         query_vector: List[float],
+        tenant_id: str = "default_tenant",
         top_k: int = 3,
         min_relevance: float = 0.5,
-    ) -> List[MemoryRecord]:
-        """Cosine similarity vector retrieval over episodic memory."""
-        results = []
-        now = time.time()
+        prohibited_actions: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Cosine similarity vector retrieval over episodic memory for a specific tenant.
 
-        for rec in self.records.values():
-            # Check expiration
-            if rec.ttl_seconds and (now - rec.timestamp > rec.ttl_seconds):
-                continue
-            if rec.vector is None or len(rec.vector) != len(query_vector):
-                continue
+        Guarantees memory retrieval does not surface recommendations that violate policy constraints.
+        """
+        raw_matches = self.storage.query_similar_episodic(
+            tenant_id=tenant_id,
+            query_vector=query_vector,
+            top_k=top_k * 2,
+            min_sim=min_relevance,
+        )
 
-            # Cosine similarity
-            dot = sum(a * b for a, b in zip(query_vector, rec.vector))
-            norm_a = math.sqrt(sum(a * a for a in query_vector))
-            norm_b = math.sqrt(sum(b * b for b in rec.vector))
-            if norm_a == 0 or norm_b == 0:
+        prohibited_set = set(prohibited_actions or [])
+        guarded_results = []
+        for m in raw_matches:
+            dec = m.get("decision_made", {})
+            action = dec.get("selected_candidate") or dec.get("decision")
+            # If the past decision is currently prohibited by policy, flag or skip
+            if action in prohibited_set:
+                m["policy_compliant"] = False
                 continue
-            sim = dot / (norm_a * norm_b)
-            if sim >= min_relevance:
-                results.append((sim, rec))
+            m["policy_compliant"] = True
+            guarded_results.append(m)
+            if len(guarded_results) >= top_k:
+                break
 
-        results.sort(key=lambda x: x[0], reverse=True)
-        return [rec for _, rec in results[:top_k]]
+        return guarded_results
 
     def update_verified_outcome(self, record_id: str, outcome: Dict[str, Any]) -> bool:
         """Update a historical record with verified ground-truth outcome once resolved."""
-        if record_id in self.records:
-            self.records[record_id].verified_outcome = outcome
-            return True
-        return False
+        return self.storage.update_verified_outcome(record_id, outcome)

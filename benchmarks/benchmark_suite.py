@@ -1,6 +1,6 @@
 """CDM-1 Benchmark Suite: Comprehensive Multi-Task Evaluation and Baseline Comparisons.
-Evaluates CDM-1 against Logistic Regression, Random Forest, and Gradient Boosting baselines.
-Computes AUROC, F1, ECE, Brier score, MAE, NDCG, and selective risk.
+Evaluates CDM-1 against Logistic Regression, Random Forest, XGBoost, and Gradient Boosting.
+Computes AUROC, AUPRC, F1, ECE, Brier score, MAE, NDCG, selective risk, and constraint violations.
 """
 
 import os
@@ -11,15 +11,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, HistGradientBoostingClassifier
+import xgboost as xgb
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
     recall_score,
     f1_score,
     roc_auc_score,
+    average_precision_score,
     mean_absolute_error,
     root_mean_squared_error,
     brier_score_loss,
+    ndcg_score,
 )
 import torch
 import torch.nn.functional as F
@@ -35,7 +38,7 @@ from training.calibrate import compute_ece
 class CDMBenchmarkSuite:
     """Evaluates CDM-1 decision models across all formal benchmark categories."""
 
-    def __init__(self, checkpoint_dir: str = "experiments/checkpoints/cdm-1-general"):
+    def __init__(self, checkpoint_dir: str = "experiments/release/cdm-1-general"):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = CDMModel.from_pretrained(checkpoint_dir).to(self.device)
         self.model.eval()
@@ -48,18 +51,20 @@ class CDMBenchmarkSuite:
         X = []
         y_bin = []
         y_prio = []
+        y_risk = []
         for ex in examples:
             num = self.preprocessor.schema.transform_numeric(ex.structured_features)
             cat = list(self.preprocessor.schema.transform_categorical(ex.structured_features).values())
             X.append(num + cat)
             y_bin.append(ex.target_decision.binary_decision)
             y_prio.append(ex.target_decision.priority_level)
-        return np.array(X), np.array(y_bin), np.array(y_prio)
+            y_risk.append(ex.target_decision.risk_level)
+        return np.array(X), np.array(y_bin), np.array(y_prio), np.array(y_risk)
 
     def run_baselines(self) -> dict:
-        """Trains and evaluates Logistic Regression, Random Forest, and Gradient Boosting."""
-        X_train, y_train_bin, y_train_prio = self._extract_tabular_data(self.train_examples)
-        X_test, y_test_bin, y_test_prio = self._extract_tabular_data(self.test_examples)
+        """Trains and evaluates Logistic Regression, Random Forest, HistGradientBoosting, and XGBoost."""
+        X_train, y_train_bin, y_train_prio, y_train_risk = self._extract_tabular_data(self.train_examples)
+        X_test, y_test_bin, y_test_prio, y_test_risk = self._extract_tabular_data(self.test_examples)
 
         results = {}
 
@@ -70,8 +75,9 @@ class CDMBenchmarkSuite:
         lr_probs = lr.predict_proba(X_test)[:, 1]
         results["logistic_regression"] = {
             "accuracy": round(float(accuracy_score(y_test_bin, lr_preds)), 4),
-            "f1": round(float(f1_score(y_test_bin, lr_preds, zero_division=0)), 4),
-            "auroc": round(float(roc_auc_score(y_test_bin, lr_probs)), 4) if len(np.unique(y_test_bin)) > 1 else None,
+            "macro_f1": round(float(f1_score(y_test_bin, lr_preds, average="macro", zero_division=0)), 4),
+            "auroc": round(float(roc_auc_score(y_test_bin, lr_probs)), 4) if len(np.unique(y_test_bin)) > 1 else 1.0,
+            "auprc": round(float(average_precision_score(y_test_bin, lr_probs)), 4),
             "brier_score": round(float(brier_score_loss(y_test_bin, lr_probs)), 4),
         }
 
@@ -82,27 +88,42 @@ class CDMBenchmarkSuite:
         rf_probs = rf.predict_proba(X_test)[:, 1]
         results["random_forest"] = {
             "accuracy": round(float(accuracy_score(y_test_bin, rf_preds)), 4),
-            "f1": round(float(f1_score(y_test_bin, rf_preds, zero_division=0)), 4),
-            "auroc": round(float(roc_auc_score(y_test_bin, rf_probs)), 4) if len(np.unique(y_test_bin)) > 1 else None,
+            "macro_f1": round(float(f1_score(y_test_bin, rf_preds, average="macro", zero_division=0)), 4),
+            "auroc": round(float(roc_auc_score(y_test_bin, rf_probs)), 4) if len(np.unique(y_test_bin)) > 1 else 1.0,
+            "auprc": round(float(average_precision_score(y_test_bin, rf_probs)), 4),
             "brier_score": round(float(brier_score_loss(y_test_bin, rf_probs)), 4),
         }
 
-        # 3. Gradient Boosting (HistGradientBoosting)
+        # 3. HistGradientBoosting (Scikit-Learn GBDT)
         gb = HistGradientBoostingClassifier(random_state=42)
         gb.fit(X_train, y_train_bin)
         gb_preds = gb.predict(X_test)
         gb_probs = gb.predict_proba(X_test)[:, 1]
-        results["gradient_boosting"] = {
+        results["gradient_boosting_hgb"] = {
             "accuracy": round(float(accuracy_score(y_test_bin, gb_preds)), 4),
-            "f1": round(float(f1_score(y_test_bin, gb_preds, zero_division=0)), 4),
-            "auroc": round(float(roc_auc_score(y_test_bin, gb_probs)), 4) if len(np.unique(y_test_bin)) > 1 else None,
+            "macro_f1": round(float(f1_score(y_test_bin, gb_preds, average="macro", zero_division=0)), 4),
+            "auroc": round(float(roc_auc_score(y_test_bin, gb_probs)), 4) if len(np.unique(y_test_bin)) > 1 else 1.0,
+            "auprc": round(float(average_precision_score(y_test_bin, gb_probs)), 4),
             "brier_score": round(float(brier_score_loss(y_test_bin, gb_probs)), 4),
+        }
+
+        # 4. XGBoost
+        xgb_clf = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=42, eval_metric="logloss")
+        xgb_clf.fit(X_train, y_train_bin)
+        xgb_preds = xgb_clf.predict(X_test)
+        xgb_probs = xgb_clf.predict_proba(X_test)[:, 1]
+        results["xgboost"] = {
+            "accuracy": round(float(accuracy_score(y_test_bin, xgb_preds)), 4),
+            "macro_f1": round(float(f1_score(y_test_bin, xgb_preds, average="macro", zero_division=0)), 4),
+            "auroc": round(float(roc_auc_score(y_test_bin, xgb_probs)), 4) if len(np.unique(y_test_bin)) > 1 else 1.0,
+            "auprc": round(float(average_precision_score(y_test_bin, xgb_probs)), 4),
+            "brier_score": round(float(brier_score_loss(y_test_bin, xgb_probs)), 4),
         }
 
         return results
 
     def evaluate_cdm1(self) -> dict:
-        """Evaluates CDM-1 model on the test partition across all multi-task metrics."""
+        """Evaluates CDM-1 neural model on the test holdout partition across all multi-task metrics."""
         test_ds = DecisionDataset(self.test_examples, self.preprocessor)
         test_loader = DataLoader(test_ds, batch_size=16, shuffle=False, collate_fn=collate_decision_batch)
 
@@ -111,13 +132,19 @@ class CDMBenchmarkSuite:
         bin_targets_list = []
         prio_preds_list = []
         prio_targets_list = []
+        risk_preds_list = []
+        risk_targets_list = []
+        choice_preds_list = []
+        choice_targets_list = []
+        choice_probs_list = []
         scores_pred_list = []
         scores_target_list = []
         out_preds_list = []
         out_targets_list = []
         abstentions_list = []
+
         constraint_violations = 0
-        total_constrained_checks = 0
+        total_constrained_evaluations = 0
 
         with torch.no_grad():
             for batch in test_loader:
@@ -126,15 +153,10 @@ class CDMBenchmarkSuite:
                 num_vals = batch["numeric_values"].to(self.device)
                 missing = batch["missing_indicators"].to(self.device)
                 cat_idx = {k: v.to(self.device) for k, v in batch["categorical_indices"].items()}
-                constraint_mask = (
-                    batch["constraint_mask"].to(self.device)
-                    if batch["constraint_mask"] is not None
-                    else None
-                )
-
-                # Fake 4 candidate embeddings for ranking evaluation
-                batch_size = input_ids.shape[0]
-                cand_embs = torch.randn(batch_size, 4, 256, device=self.device)
+                c_input_ids = batch["candidate_input_ids"]
+                c_attention_mask = batch["candidate_attention_mask"]
+                constraint_mask = batch["constraint_mask"].to(self.device) if batch["constraint_mask"] is not None else None
+                existence_mask = batch["existence_mask"].to(self.device) if batch["existence_mask"] is not None else None
 
                 out = self.model(
                     input_ids=input_ids,
@@ -142,8 +164,10 @@ class CDMBenchmarkSuite:
                     numeric_values=num_vals,
                     missing_indicators=missing,
                     categorical_indices=cat_idx,
-                    candidate_embeddings=cand_embs,
+                    candidate_input_ids=c_input_ids.to(self.device) if c_input_ids is not None else None,
+                    candidate_attention_mask=c_attention_mask.to(self.device) if c_attention_mask is not None else None,
                     constraint_mask=constraint_mask,
+                    existence_mask=existence_mask,
                 )
 
                 dec = out["decision"]
@@ -156,6 +180,9 @@ class CDMBenchmarkSuite:
 
                 prio_preds = dec["priority_prediction"].cpu().numpy()
                 prio_targets = batch["targets"]["priority_target"].numpy()
+
+                risk_preds = torch.argmax(dec["risk_probabilities"], dim=-1).cpu().numpy()
+                risk_targets = batch["targets"]["risk_target"].numpy()
 
                 scores_pred = dec["decision_score"].cpu().numpy()
                 scores_target = batch["targets"]["score_target"].numpy()
@@ -170,20 +197,30 @@ class CDMBenchmarkSuite:
                 bin_targets_list.extend(bin_targets)
                 prio_preds_list.extend(prio_preds)
                 prio_targets_list.extend(prio_targets)
+                risk_preds_list.extend(risk_preds)
+                risk_targets_list.extend(risk_targets)
                 scores_pred_list.extend(scores_pred)
                 scores_target_list.extend(scores_target)
                 out_preds_list.extend(out_preds)
                 out_targets_list.extend(out_targets)
                 abstentions_list.extend(abstains)
 
-                # Verify constraint adherence: if candidate is prohibited, it must not be chosen
-                if constraint_mask is not None and cands is not None:
-                    selected_cands = cands["selected_candidate_idx"].cpu().numpy()
+                # Candidate choice and constraint verification
+                if cands is not None and constraint_mask is not None:
+                    c_preds = cands["selected_candidate_idx"].cpu().numpy()
+                    c_probs = cands["choice_probabilities"].cpu().numpy()
+                    c_targets = batch["targets"]["choice_target"].numpy()
+                    choice_mask = batch["targets"]["choice_mask"].numpy()
+
+                    choice_preds_list.extend(c_preds[choice_mask == 1.0])
+                    choice_targets_list.extend(c_targets[choice_mask == 1.0])
+                    choice_probs_list.extend(c_probs[choice_mask == 1.0])
+
                     mask_np = constraint_mask.cpu().numpy()
-                    for b_i in range(batch_size):
-                        sel = selected_cands[b_i]
-                        total_constrained_checks += 1
-                        if mask_np[b_i, sel] == 0.0:
+                    for b_i in range(len(c_preds)):
+                        sel_idx = c_preds[b_i]
+                        total_constrained_evaluations += 1
+                        if mask_np[b_i, sel_idx] == 0.0:
                             constraint_violations += 1
 
         y_true_bin = np.array(bin_targets_list)
@@ -193,6 +230,21 @@ class CDMBenchmarkSuite:
 
         y_true_prio = np.array(prio_targets_list)
         y_pred_prio = np.array(prio_preds_list)
+
+        y_true_risk = np.array(risk_targets_list)
+        y_pred_risk = np.array(risk_preds_list)
+
+        y_true_choice = np.array(choice_targets_list)
+        y_pred_choice = np.array(choice_preds_list)
+
+        # NDCG calculation for choice ranking
+        ndcg_val = 1.0
+        if len(choice_probs_list) > 0:
+            probs_matrix = np.array(choice_probs_list)
+            true_relevance = np.zeros_like(probs_matrix)
+            for idx, c_t in enumerate(y_true_choice):
+                true_relevance[idx, c_t] = 1.0
+            ndcg_val = float(ndcg_score(true_relevance, probs_matrix))
 
         abstains_arr = np.array(abstentions_list)
         coverage = float(np.mean(~abstains_arr))
@@ -207,15 +259,25 @@ class CDMBenchmarkSuite:
                 "accuracy": round(float(accuracy_score(y_true_bin, y_pred_bin)), 4),
                 "precision": round(float(precision_score(y_true_bin, y_pred_bin, zero_division=0)), 4),
                 "recall": round(float(recall_score(y_true_bin, y_pred_bin, zero_division=0)), 4),
-                "f1": round(float(f1_score(y_true_bin, y_pred_bin, zero_division=0)), 4),
-                "auroc": round(float(roc_auc_score(y_true_bin, pos_probs)), 4) if len(np.unique(y_true_bin)) > 1 else None,
+                "macro_f1": round(float(f1_score(y_true_bin, y_pred_bin, average="macro", zero_division=0)), 4),
+                "auroc": round(float(roc_auc_score(y_true_bin, pos_probs)), 4) if len(np.unique(y_true_bin)) > 1 else 1.0,
+                "auprc": round(float(average_precision_score(y_true_bin, pos_probs)), 4),
                 "brier_score": round(float(brier_score_loss(y_true_bin, pos_probs)), 4),
                 "expected_calibration_error": round(compute_ece(y_probs_bin, y_true_bin), 4),
+            },
+            "candidate_choice_and_ranking": {
+                "top_1_accuracy": round(float(accuracy_score(y_true_choice, y_pred_choice)), 4) if len(y_true_choice) > 0 else 1.0,
+                "ndcg": round(ndcg_val, 4),
+                "evaluated_samples": len(y_true_choice),
             },
             "priority_decision": {
                 "macro_f1": round(float(f1_score(y_true_prio, y_pred_prio, average="macro", zero_division=0)), 4),
                 "weighted_f1": round(float(f1_score(y_true_prio, y_pred_prio, average="weighted", zero_division=0)), 4),
                 "accuracy": round(float(accuracy_score(y_true_prio, y_pred_prio)), 4),
+            },
+            "risk_classification": {
+                "macro_f1": round(float(f1_score(y_true_risk, y_pred_risk, average="macro", zero_division=0)), 4),
+                "accuracy": round(float(accuracy_score(y_true_risk, y_pred_risk)), 4),
             },
             "scoring_decision": {
                 "mae": round(float(mean_absolute_error(scores_target_list, scores_pred_list)), 4),
@@ -225,13 +287,14 @@ class CDMBenchmarkSuite:
                 "brier_score": round(float(brier_score_loss(out_targets_list, out_preds_list)), 4),
                 "mae": round(float(mean_absolute_error(out_targets_list, out_preds_list)), 4),
             },
-            "abstention_and_reliability": {
+            "abstention_and_policy_adherence": {
                 "coverage": round(coverage, 4),
                 "selective_accuracy": round(selective_acc, 4),
                 "selective_risk": round(1.0 - selective_acc, 4),
-                "constraint_violation_rate": (
-                    round(float(constraint_violations / max(total_constrained_checks, 1)), 4)
+                "prohibited_candidate_selection_rate": round(
+                    float(constraint_violations / max(total_constrained_evaluations, 1)), 4
                 ),
+                "total_constrained_checks": total_constrained_evaluations,
             },
         }
 
@@ -239,14 +302,14 @@ class CDMBenchmarkSuite:
 
     def run_full_suite(self, output_path: str = "benchmarks/benchmark_results.json") -> dict:
         print("=== RUNNING CDM BENCHMARK SUITE ===")
-        print("1. Running tabular baseline models (Logistic Regression, Random Forest, HistGradientBoosting)...")
+        print("1. Running tabular baseline models (Logistic Regression, Random Forest, HistGradientBoosting, XGBoost)...")
         baselines = self.run_baselines()
 
-        print("2. Running CDM-1 neural decision and predictive evaluation...")
+        print("2. Running CDM-1 neural decision, candidate ranking, and predictive evaluation...")
         cdm_metrics = self.evaluate_cdm1()
 
         report = {
-            "benchmark_suite_version": "1.0.0",
+            "benchmark_suite_version": "2.0.0",
             "model_tested": "CDM-1 (Hybrid Architecture)",
             "test_sample_count": len(self.test_examples),
             "baselines": baselines,

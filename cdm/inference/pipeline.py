@@ -1,10 +1,12 @@
 """CDM-1 Local Inference Runtime Pipeline.
 Provides high-level, production-grade interface for standalone single and batch decisions,
 calibrated probability estimation, abstention checking, and candidate ranking.
+Supports offline local execution and strictly validated checkpoints.
 """
 
 from typing import Dict, List, Optional, Any, Union
 import os
+import json
 import torch
 from transformers import AutoTokenizer
 from cdm.models.cdm_model import CDMModel
@@ -60,17 +62,40 @@ class CognitiveDecisionModel:
         cls,
         model_name_or_path: str = "experiments/release/cdm-1-general",
         device: Optional[str] = None,
+        local_files_only: bool = False,
     ) -> "CognitiveDecisionModel":
-        """Load CDM-1 weights and tokenizer from local checkpoint or release artifact."""
+        """Load CDM-1 weights, feature schema, and tokenizer from local checkpoint or release artifact.
+
+        Raises FileNotFoundError or ValueError if weights are missing or corrupt.
+        """
         if not os.path.exists(model_name_or_path):
-            # Check experiments/checkpoints
             alt_path = os.path.join("experiments", "checkpoints", "cdm-1-general")
             if os.path.exists(alt_path):
                 model_name_or_path = alt_path
+            else:
+                raise FileNotFoundError(f"Model path does not exist: {model_name_or_path}")
 
-        model = CDMModel.from_pretrained(model_name_or_path)
-        tokenizer = AutoTokenizer.from_pretrained(model.config.language_encoder.model_name_or_path)
-        return cls(model=model, tokenizer=tokenizer, device=device)
+        # Strict model loading
+        model = CDMModel.from_pretrained(model_name_or_path, strict=True)
+
+        # Check for packaged feature schema
+        schema_path = os.path.join(model_name_or_path, "feature_schema.json")
+        schema = None
+        if os.path.exists(schema_path):
+            with open(schema_path, "r", encoding="utf-8") as f:
+                schema = FeatureSchema.model_validate(json.load(f))
+
+        # Check if tokenizer files exist locally in release directory
+        tok_file = os.path.join(model_name_or_path, "tokenizer.json")
+        if os.path.exists(tok_file):
+            tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, local_files_only=True)
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(
+                model.config.language_encoder.model_name_or_path,
+                local_files_only=local_files_only,
+            )
+
+        return cls(model=model, tokenizer=tokenizer, schema=schema, device=device)
 
     def decide(
         self,
@@ -104,30 +129,28 @@ class CognitiveDecisionModel:
         t_cat = {k: torch.tensor([v], dtype=torch.long, device=self.device) for k, v in cat_idx.items()}
 
         # 3. Handle candidate actions if task is choice/ranking
-        cand_embs = None
+        cand_input_ids = None
+        cand_attention_mask = None
         constraint_mask = None
+        existence_mask = None
 
         if candidates:
             num_cands = len(candidates)
             c_tok = self.tokenizer(
                 candidates,
-                max_length=32,
+                max_length=64,
                 padding="max_length",
                 truncation=True,
                 return_tensors="pt",
             )
-            c_ids = c_tok["input_ids"].to(self.device)
-            c_mask = c_tok["attention_mask"].to(self.device)
+            # Add batch dimension: [1, num_cands, 64]
+            cand_input_ids = c_tok["input_ids"].unsqueeze(0).to(self.device)
+            cand_attention_mask = c_tok["attention_mask"].unsqueeze(0).to(self.device)
 
-            with torch.no_grad():
-                c_text_rep = self.model.language_encoder(c_ids, c_mask)
-                # Reshape to [1, num_cands, dim]
-                cand_embs = c_text_rep.unsqueeze(0)
-
-            # Build constraint mask
             proh = set(prohibited_actions or [])
             c_mask_list = [0.0 if c in proh else 1.0 for c in candidates]
             constraint_mask = torch.tensor([c_mask_list], dtype=torch.float32, device=self.device)
+            existence_mask = torch.ones((1, num_cands), dtype=torch.float32, device=self.device)
 
         # 4. Model Forward Pass
         with torch.no_grad():
@@ -137,8 +160,10 @@ class CognitiveDecisionModel:
                 numeric_values=t_num,
                 missing_indicators=t_missing,
                 categorical_indices=t_cat,
-                candidate_embeddings=cand_embs,
+                candidate_input_ids=cand_input_ids,
+                candidate_attention_mask=cand_attention_mask,
                 constraint_mask=constraint_mask,
+                existence_mask=existence_mask,
             )
 
         dec = outputs["decision"]

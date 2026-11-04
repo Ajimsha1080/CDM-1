@@ -1,0 +1,193 @@
+"""CDM-1 Local Inference Runtime Pipeline.
+Provides high-level, production-grade interface for standalone single and batch decisions,
+calibrated probability estimation, abstention checking, and candidate ranking.
+"""
+
+from typing import Dict, List, Optional, Any, Union
+import os
+import torch
+from transformers import AutoTokenizer
+from cdm.models.cdm_model import CDMModel
+from cdm.config.feature_schema import FeatureSchema
+
+
+class DecisionResult:
+    """Structured decision output with calibrated confidence and policy flags."""
+
+    def __init__(self, data: Dict[str, Any]):
+        self.data = data
+        self.decision = data.get("decision")
+        self.task = data.get("task")
+        self.confidence = data.get("confidence")
+        self.calibrated = data.get("calibrated", True)
+        self.score = data.get("score")
+        self.priority = data.get("priority")
+        self.risk = data.get("risk")
+        self.predicted_outcome = data.get("predicted_outcome")
+        self.abstain = data.get("abstain", False)
+        self.selected_candidate = data.get("selected_candidate")
+        self.candidate_scores = data.get("candidate_scores")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return self.data
+
+    def __repr__(self) -> str:
+        return f"<DecisionResult task={self.task} decision={self.decision} confidence={self.confidence:.4f} abstain={self.abstain}>"
+
+
+class CognitiveDecisionModel:
+    """High-level standalone inference engine for CDM-1 models."""
+
+    def __init__(
+        self,
+        model: CDMModel,
+        tokenizer: AutoTokenizer,
+        schema: Optional[FeatureSchema] = None,
+        device: Optional[str] = None,
+    ):
+        if device is None:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+
+        self.model = model.to(self.device)
+        self.model.eval()
+        self.tokenizer = tokenizer
+        self.schema = schema or FeatureSchema.get_default_schema()
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        model_name_or_path: str = "experiments/release/cdm-1-general",
+        device: Optional[str] = None,
+    ) -> "CognitiveDecisionModel":
+        """Load CDM-1 weights and tokenizer from local checkpoint or release artifact."""
+        if not os.path.exists(model_name_or_path):
+            # Check experiments/checkpoints
+            alt_path = os.path.join("experiments", "checkpoints", "cdm-1-general")
+            if os.path.exists(alt_path):
+                model_name_or_path = alt_path
+
+        model = CDMModel.from_pretrained(model_name_or_path)
+        tokenizer = AutoTokenizer.from_pretrained(model.config.language_encoder.model_name_or_path)
+        return cls(model=model, tokenizer=tokenizer, device=device)
+
+    def decide(
+        self,
+        text: str,
+        structured_features: Optional[Dict[str, Any]] = None,
+        task: str = "binary",
+        candidates: Optional[List[str]] = None,
+        prohibited_actions: Optional[List[str]] = None,
+    ) -> DecisionResult:
+        """Run single inference decision."""
+        features = structured_features or {}
+
+        # 1. Tokenize text
+        tokenized = self.tokenizer(
+            text,
+            max_length=self.model.config.language_encoder.max_seq_length,
+            padding="max_length",
+            truncation=True,
+            return_tensors="pt",
+        )
+        input_ids = tokenized["input_ids"].to(self.device)
+        attention_mask = tokenized["attention_mask"].to(self.device)
+
+        # 2. Transform structured tabular features
+        num_vals = self.schema.transform_numeric(features)
+        missing = self.schema.get_missing_indicators(features)
+        cat_idx = self.schema.transform_categorical(features)
+
+        t_num = torch.tensor([num_vals], dtype=torch.float32, device=self.device)
+        t_missing = torch.tensor([missing], dtype=torch.float32, device=self.device)
+        t_cat = {k: torch.tensor([v], dtype=torch.long, device=self.device) for k, v in cat_idx.items()}
+
+        # 3. Handle candidate actions if task is choice/ranking
+        cand_embs = None
+        constraint_mask = None
+
+        if candidates:
+            num_cands = len(candidates)
+            c_tok = self.tokenizer(
+                candidates,
+                max_length=32,
+                padding="max_length",
+                truncation=True,
+                return_tensors="pt",
+            )
+            c_ids = c_tok["input_ids"].to(self.device)
+            c_mask = c_tok["attention_mask"].to(self.device)
+
+            with torch.no_grad():
+                c_text_rep = self.model.language_encoder(c_ids, c_mask)
+                # Reshape to [1, num_cands, dim]
+                cand_embs = c_text_rep.unsqueeze(0)
+
+            # Build constraint mask
+            proh = set(prohibited_actions or [])
+            c_mask_list = [0.0 if c in proh else 1.0 for c in candidates]
+            constraint_mask = torch.tensor([c_mask_list], dtype=torch.float32, device=self.device)
+
+        # 4. Model Forward Pass
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                numeric_values=t_num,
+                missing_indicators=t_missing,
+                categorical_indices=t_cat,
+                candidate_embeddings=cand_embs,
+                constraint_mask=constraint_mask,
+            )
+
+        dec = outputs["decision"]
+        pred = outputs["predictive"]
+        cands_out = outputs.get("candidates")
+
+        # Compile result object
+        bin_pred_val = int(dec["binary_prediction"][0].item())
+        bin_decision_str = "YES" if bin_pred_val == 1 else "NO"
+        confidence_val = float(dec["binary_confidence"][0].item())
+        abstain_val = bool(dec["abstain"][0].item())
+        score_val = round(float(dec["decision_score"][0].item()), 2)
+
+        priority_idx = int(dec["priority_prediction"][0].item())
+        priority_map = {0: "LOW", 1: "MEDIUM", 2: "HIGH", 3: "CRITICAL"}
+        priority_str = priority_map.get(priority_idx, "UNKNOWN")
+
+        risk_val = round(float(pred["estimated_risk"][0].item()), 4)
+
+        result_payload = {
+            "task": task,
+            "decision": bin_decision_str,
+            "binary_prediction": bin_pred_val,
+            "confidence": confidence_val,
+            "calibrated": True,
+            "score": score_val,
+            "priority": priority_str,
+            "risk": risk_val,
+            "abstain": abstain_val,
+            "predicted_outcome": {
+                "binary_outcome_probability": round(
+                    float(torch.sigmoid(pred["binary_outcome_logits"][0]).item()), 4
+                ),
+                "predicted_resolution_time": round(float(pred["numeric_outcome"][0].item()), 2),
+            },
+        }
+
+        if candidates and cands_out is not None:
+            sel_idx = int(cands_out["selected_candidate_idx"][0].item())
+            choice_probs = cands_out["choice_probabilities"][0].cpu().tolist()
+            result_payload["selected_candidate"] = candidates[sel_idx]
+            result_payload["candidate_scores"] = {
+                candidates[i]: round(choice_probs[i], 4) for i in range(len(candidates))
+            }
+            if task == "choice":
+                result_payload["decision"] = candidates[sel_idx]
+
+        return DecisionResult(result_payload)
+
+    def predict(self, text: str, task: str = "binary", candidates: Optional[List[str]] = None, **kwargs) -> DecisionResult:
+        """Alias for decide matching the exact Section 11 specifications."""
+        return self.decide(text=text, task=task, candidates=candidates, **kwargs)

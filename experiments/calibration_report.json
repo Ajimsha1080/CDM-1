@@ -1,0 +1,62 @@
+{
+  "temperature": 0.6854315400123596,
+  "uncalibrated_ece": 0.041593304276466375,
+  "calibrated_ece": 0.018505766987800598,
+  "optimal_abstention_threshold": 0.9000000000000004,
+  "abstention_sweeps": [
+    {
+      "threshold": 0.5,
+      "coverage": 1.0,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    },
+    {
+      "threshold": 0.55,
+      "coverage": 1.0,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    },
+    {
+      "threshold": 0.6,
+      "coverage": 1.0,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    },
+    {
+      "threshold": 0.65,
+      "coverage": 1.0,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    },
+    {
+      "threshold": 0.7,
+      "coverage": 1.0,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    },
+    {
+      "threshold": 0.75,
+      "coverage": 1.0,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    },
+    {
+      "threshold": 0.8,
+      "coverage": 1.0,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    },
+    {
+      "threshold": 0.85,
+      "coverage": 0.95,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    },
+    {
+      "threshold": 0.9,
+      "coverage": 0.95,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0
+    }
+  ]
+}

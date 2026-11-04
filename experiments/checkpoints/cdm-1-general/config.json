@@ -1,0 +1,63 @@
+{
+  "model_name": "CDM-1",
+  "version": "1.0.0",
+  "language_encoder": {
+    "model_name_or_path": "answerdotai/ModernBERT-base",
+    "freeze_encoder": true,
+    "pooling_strategy": "mean",
+    "max_seq_length": 256,
+    "encoder_hidden_size": 768,
+    "projection_dim": 256,
+    "dropout": 0.1
+  },
+  "structured_encoder": {
+    "num_numeric_features": 6,
+    "categorical_cardinalities": {
+      "domain": 8,
+      "channel": 6,
+      "customer_tier": 5,
+      "urgency_level": 4
+    },
+    "categorical_embedding_dim": 16,
+    "hidden_dims": [
+      128,
+      256
+    ],
+    "projection_dim": 256,
+    "dropout": 0.1
+  },
+  "fusion": {
+    "fusion_type": "gated",
+    "fusion_dim": 256,
+    "num_attention_heads": 4,
+    "dropout": 0.1
+  },
+  "predictive": {
+    "enabled": true,
+    "hidden_dim": 128,
+    "num_outcome_classes": 4,
+    "dropout": 0.1
+  },
+  "decision": {
+    "num_priority_classes": 4,
+    "num_risk_classes": 4,
+    "score_range": [
+      0.0,
+      100.0
+    ],
+    "abstention_threshold": 0.9000000000000004,
+    "uncertainty_threshold": 0.45,
+    "dropout": 0.1
+  },
+  "loss_weights": {
+    "lambda_binary": 1.0,
+    "lambda_choice": 1.0,
+    "lambda_ranking": 0.5,
+    "lambda_score": 0.5,
+    "lambda_priority": 0.8,
+    "lambda_risk": 0.8,
+    "lambda_outcome_binary": 0.6,
+    "lambda_outcome_multiclass": 0.6,
+    "lambda_outcome_numeric": 0.4
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "benchmark_suite_version": "1.0.0",
+  "model_tested": "CDM-1 (Hybrid Architecture)",
+  "test_sample_count": 21,
+  "baselines": {
+    "logistic_regression": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "auroc": 1.0,
+      "brier_score": 0.0011
+    },
+    "random_forest": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "auroc": 1.0,
+      "brier_score": 0.0
+    },
+    "gradient_boosting": {
+      "accuracy": 1.0,
+      "f1": 1.0,
+      "auroc": 1.0,
+      "brier_score": 0.0
+    }
+  },
+  "cdm_1": {
+    "binary_decision": {
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "auroc": 1.0,
+      "brier_score": 0.002,
+      "expected_calibration_error": 0.0172
+    },
+    "priority_decision": {
+      "macro_f1": 1.0,
+      "weighted_f1": 1.0,
+      "accuracy": 1.0
+    },
+    "scoring_decision": {
+      "mae": 0.7463,
+      "rmse": 0.972
+    },
+    "predictive_outcome": {
+      "brier_score": 0.0014,
+      "mae": 0.0347
+    },
+    "abstention_and_reliability": {
+      "coverage": 0.9524,
+      "selective_accuracy": 1.0,
+      "selective_risk": 0.0,
+      "constraint_violation_rate": 0.0
+    }
+  }
+}

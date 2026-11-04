@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Framework](https://img.shields.io/badge/PyTorch-2.12+-EE4C2C.svg)](https://pytorch.org/)
 [![Transformers](https://img.shields.io/badge/HuggingFace-Transformers-yellow.svg)](https://huggingface.co/)
-[![Tests](https://img.shields.io/badge/Unit%20Tests-46%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Unit%20Tests-51%20Passed-brightgreen.svg)]()
 [![Model Weights](https://img.shields.io/badge/Model%20Weights-SafeTensors%20633MB-success.svg)]()
 
 ---
@@ -161,18 +161,18 @@ curl -X POST http://localhost:8000/v1/decisions \
 
 CDM-1 was benchmarked against classical tabular algorithms and fine-tuned transformers on identical holdout partitions (N=58) across seeds `[42, 123, 999]`:
 
-| Evaluation Metric | Logistic Regression | Random Forest | XGBoost (v3.4.1) | **CDM-1 (Neural Architecture)** |
-|---|---|---|---|---|
-| **Binary Accuracy** | 0.9310 | 1.0000 | 1.0000 | **0.9483** |
-| **Binary AUROC** | 0.9905 | 1.0000 | 1.0000 | **0.9821** |
-| **Brier Score** | 0.0628 | 0.0002 | 0.0002 | **0.0449** |
-| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | **0.8966** |
-| **Candidate Choice NDCG** | N/A | N/A | N/A | **0.9618** |
-| **Operational Priority (Macro F1)** | N/A | N/A | N/A | **0.8538** |
-| **Risk Classification Accuracy** | N/A | N/A | N/A | **0.9483** |
-| **Prohibited Selection Rate** | N/A | N/A | N/A | **0.0000%** (Zero Violations) |
-| **Permutation Invariance ($\Delta_{L2}$)** | N/A | N/A | N/A | **0.0000** (Strictly Invariant) |
-| **Candidate Scalability ($K=32$)** | N/A | N/A | N/A | **31.65 ms** CPU Latency |
+| Evaluation Metric | Logistic Regression | Random Forest | XGBoost (v3.4.1) | ModernBERT Baseline | **CDM-1 (Neural Architecture)** |
+|---|---|---|---|---|---|
+| **Binary Accuracy** | 0.9310 | 1.0000 | 1.0000 | 1.0000 | **0.9483** |
+| **Binary AUROC** | 0.9905 | 1.0000 | 1.0000 | 1.0000 | **0.9857** |
+| **Brier Score** | 0.0628 | 0.0002 | 0.0002 | 0.0113 | **0.0463** |
+| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | N/A | **0.8966** |
+| **Candidate Choice NDCG** | N/A | N/A | N/A | N/A | **0.9618** |
+| **Operational Priority (Macro F1)** | N/A | N/A | N/A | N/A | **0.8538** |
+| **Risk Classification Accuracy** | N/A | N/A | N/A | N/A | **0.9483** |
+| **Prohibited Selection Rate** | N/A | N/A | N/A | N/A | **0.0000%** (Zero Violations) |
+| **Permutation Invariance ($\Delta_{L2}$)** | N/A | N/A | N/A | N/A | **0.0000** (Strictly Invariant) |
+| **Candidate Scalability ($K=32$)** | N/A | N/A | N/A | N/A | **19.07 ms** CPU Latency |
 | **Out-of-Distribution (OOD) Safety** | N/A | N/A | N/A | **100% Policy Adherence** |
 
 See [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for full statistical tables, confusion matrices, and research disclosures.

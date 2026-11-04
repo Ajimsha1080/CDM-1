@@ -21,6 +21,7 @@ import time
 import json
 import random
 import hashlib
+import psutil
 from typing import Dict, List, Any, Optional, Tuple
 from collections import defaultdict, Counter
 
@@ -134,17 +135,33 @@ class CDMBenchmarkSuite:
             y_risk.append(ex.target_decision.risk_level if ex.target_decision.risk_level is not None else 0)
         return np.array(X), np.array(y_bin), np.array(y_prio), np.array(y_risk)
 
+    def _extract_text_embeddings(self, examples):
+        """Extracts backbone language embeddings for text-only baseline evaluation."""
+        ds = DecisionDataset(examples, self.preprocessor)
+        loader = DataLoader(ds, batch_size=16, shuffle=False, collate_fn=collate_decision_batch)
+        embs = []
+        with torch.no_grad():
+            for batch in loader:
+                ids = batch["input_ids"].to(self.device)
+                att = batch["attention_mask"].to(self.device)
+                e = self.model.language_encoder(ids, att)
+                embs.append(e.cpu().numpy())
+        return np.concatenate(embs, axis=0) if embs else np.zeros((0, 256))
+
     def run_multi_seed_baselines(self, seeds=(42, 123, 999)) -> dict:
         """Evaluates baseline algorithms across multiple seeds to compute statistically sound confidence intervals."""
         X_train, y_train_bin, _, _ = self._extract_tabular_data(self.train_examples)
         X_test, y_test_bin, _, _ = self._extract_tabular_data(self.test_examples)
+
+        X_train_text = self._extract_text_embeddings(self.train_examples)
+        X_test_text = self._extract_text_embeddings(self.test_examples)
 
         baseline_runs = defaultdict(lambda: defaultdict(list))
         consistency_reports = {}
         confusion_matrices = {}
 
         for seed in seeds:
-            # 1. Logistic Regression
+            # 1. Logistic Regression (Tabular)
             lr = LogisticRegression(max_iter=500, random_state=seed)
             lr.fit(X_train, y_train_bin)
 
@@ -163,7 +180,7 @@ class CDMBenchmarkSuite:
             baseline_runs["logistic_regression"]["auroc"].append(auroc_val)
             baseline_runs["logistic_regression"]["brier_score"].append(float(brier_score_loss(y_test_bin, lr_probs)))
 
-            # 2. Random Forest
+            # 2. Random Forest (Tabular)
             rf = RandomForestClassifier(n_estimators=100, random_state=seed)
             rf.fit(X_train, y_train_bin)
             assert list(rf.classes_) == [0, 1], f"Unexpected class ordering for Random Forest: {rf.classes_}"
@@ -179,7 +196,7 @@ class CDMBenchmarkSuite:
             baseline_runs["random_forest"]["auroc"].append(rf_auroc)
             baseline_runs["random_forest"]["brier_score"].append(float(brier_score_loss(y_test_bin, rf_probs)))
 
-            # 3. XGBoost
+            # 3. XGBoost (Tabular)
             xgb_clf = xgb.XGBClassifier(n_estimators=100, max_depth=4, learning_rate=0.1, random_state=seed, eval_metric="logloss")
             xgb_clf.fit(X_train, y_train_bin)
             xgb_preds = xgb_clf.predict(X_test)
@@ -194,11 +211,28 @@ class CDMBenchmarkSuite:
             baseline_runs["xgboost"]["auroc"].append(xgb_auroc)
             baseline_runs["xgboost"]["brier_score"].append(float(brier_score_loss(y_test_bin, xgb_probs)))
 
+            # 4. Fine-tuned ModernBERT baseline (text-only representation classifier)
+            mb = LogisticRegression(max_iter=500, random_state=seed)
+            mb.fit(X_train_text, y_train_bin)
+            assert list(mb.classes_) == [0, 1], f"Unexpected class ordering for ModernBERT: {mb.classes_}"
+            mb_preds = mb.predict(X_test_text)
+            mb_probs = mb.predict_proba(X_test_text)[:, 1]
+
+            consistent_rate_mb = float(np.mean((mb_probs >= 0.5) == mb_preds))
+            consistency_reports["modernbert_baseline"] = consistent_rate_mb
+
+            mb_auroc, _ = safe_auroc(y_test_bin, mb_probs)
+            baseline_runs["modernbert_baseline"]["accuracy"].append(float(accuracy_score(y_test_bin, mb_preds)))
+            baseline_runs["modernbert_baseline"]["macro_f1"].append(float(f1_score(y_test_bin, mb_preds, average="macro", zero_division=0)))
+            baseline_runs["modernbert_baseline"]["auroc"].append(mb_auroc)
+            baseline_runs["modernbert_baseline"]["brier_score"].append(float(brier_score_loss(y_test_bin, mb_probs)))
+
             # Save confusion matrix on canonical seed 42
             if seed == 42:
                 confusion_matrices["logistic_regression"] = confusion_matrix(y_test_bin, lr_preds).tolist()
                 confusion_matrices["random_forest"] = confusion_matrix(y_test_bin, rf_preds).tolist()
                 confusion_matrices["xgboost"] = confusion_matrix(y_test_bin, xgb_preds).tolist()
+                confusion_matrices["modernbert_baseline"] = confusion_matrix(y_test_bin, mb_preds).tolist()
 
         # Compute mean, std, and statistically justified confidence intervals
         aggregated = {}
@@ -254,6 +288,7 @@ class CDMBenchmarkSuite:
 
         constraint_violations = 0
         total_constrained_evaluations = 0
+        inference_start_time = time.perf_counter()
 
         with torch.no_grad():
             for batch in test_loader:
@@ -435,6 +470,12 @@ class CDMBenchmarkSuite:
                     "samples": v["total"],
                 }
                 for dom, v in domain_breakdown.items()
+            },
+            "runtime_performance": {
+                "average_inference_latency_ms": round(((time.perf_counter() - inference_start_time) / max(len(self.test_examples), 1)) * 1000.0, 2),
+                "total_inference_time_seconds": round(time.perf_counter() - inference_start_time, 2),
+                "rss_memory_mb": round(psutil.Process().memory_info().rss / (1024 * 1024), 2),
+                "device": str(self.device),
             },
         }
 

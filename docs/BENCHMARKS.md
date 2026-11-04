@@ -20,11 +20,20 @@
 | **Logistic Regression** | 0.9310 ± 0.0000 | [0.9310, 0.9310] | 0.9310 | 0.9905 | 0.0628 | 100.0% |
 | **Random Forest** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0002 | 100.0% |
 | **XGBoost (v3.4.1)** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0002 | 100.0% |
-| **CDM-1 (Hybrid Neural)** | **0.9483** | **[0.8912, 1.0000]** | **0.9483** | **0.9821** | **0.0449** | **100.0%** |
+| **ModernBERT Baseline (Text-Only)** | 1.0000 ± 0.0000 | [1.0000, 1.0000] | 1.0000 | 1.0000 | 0.0113 | 100.0% |
+| **CDM-1 (Hybrid Multi-Task)** | **0.9483** | **[0.8912, 1.0000]** | **0.9482** | **0.9857** | **0.0463** | **100.0%** |
 
 *Key Empirical Insights*:
-1. While tree models perform well on tabular structured numbers alone, they cannot process unstructured narrative texts, cannot dynamically rank variable candidate action sets, cannot predict candidate-conditioned counterfactual outcomes, and cannot enforce hard policy constraints.
-2. CDM-1 simultaneously optimizes across 6 distinct tasks: binary decision, candidate action ranking, priority classification, ordinal risk categorization, continuous score regression, and counterfactual outcome risk estimation.
+1. While tree models perform well on tabular structured numbers alone, and pure ModernBERT baseline evaluates text alone, they cannot simultaneously process multimodal narrative + structured context, cannot dynamically score variable candidate action sets, cannot predict candidate-conditioned counterfactual outcomes, and cannot enforce hard zero-tolerance policy constraints.
+2. CDM-1 simultaneously optimizes across 6 distinct tasks: binary decision, candidate action ranking, priority classification, ordinal risk categorization, continuous score regression, and counterfactual outcome risk estimation with calibrated abstention.
+
+---
+
+### Runtime Latency & Memory Footprint
+- **Average Inference Latency**: **1,019.27 ms / sample** (on 12-core CPU with full 149M ModernBERT backbone forward pass)
+- **Candidate-Only Scorer Latency**: **13.47 ms** ($K=5$) to **19.07 ms** ($K=32$)
+- **Process RSS Memory**: **637.96 MB**
+- **Hardware Profile**: 12-core CPU, Windows 11, PyTorch 2.12.1+cpu
 
 ---
 

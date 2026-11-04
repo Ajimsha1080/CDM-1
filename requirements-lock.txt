@@ -1,0 +1,18 @@
+# CDM-1 Pinned Reproducible Dependency Lockfile
+torch==2.12.1
+torchaudio==2.11.0
+torchvision==0.27.1
+transformers==5.17.0
+safetensors==0.8.0
+pydantic==2.13.4
+pydantic-settings==2.15.0
+fastapi==0.143.0
+uvicorn==0.49.0
+scikit-learn==1.9.0
+scipy==1.17.1
+numpy==2.4.6
+psutil==7.2.2
+requests==2.34.2
+pytest==9.1.1
+httpx==0.28.1
+xgboost==3.4.1

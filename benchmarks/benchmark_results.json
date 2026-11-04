@@ -165,6 +165,55 @@
         ],
         "ci_status": "deterministic_across_seeds"
       }
+    },
+    "modernbert_baseline": {
+      "prediction_probability_consistency": 1.0,
+      "confusion_matrix": [
+        [
+          28,
+          0
+        ],
+        [
+          0,
+          30
+        ]
+      ],
+      "accuracy": {
+        "mean": 1.0,
+        "std": 0.0,
+        "ci_95": [
+          1.0,
+          1.0
+        ],
+        "ci_status": "deterministic_across_seeds"
+      },
+      "macro_f1": {
+        "mean": 1.0,
+        "std": 0.0,
+        "ci_95": [
+          1.0,
+          1.0
+        ],
+        "ci_status": "deterministic_across_seeds"
+      },
+      "auroc": {
+        "mean": 1.0,
+        "std": 0.0,
+        "ci_95": [
+          1.0,
+          1.0
+        ],
+        "ci_status": "deterministic_across_seeds"
+      },
+      "brier_score": {
+        "mean": 0.0113,
+        "std": 0.0,
+        "ci_95": [
+          0.0113,
+          0.0113
+        ],
+        "ci_status": "deterministic_across_seeds"
+      }
     }
   },
   "cdm_1_multitask": {
@@ -359,6 +408,12 @@
         "priority_accuracy": 0.8333,
         "samples": 12
       }
+    },
+    "runtime_performance": {
+      "average_inference_latency_ms": 1019.27,
+      "total_inference_time_seconds": 59.12,
+      "rss_memory_mb": 637.96,
+      "device": "cpu"
     }
   },
   "heldout_domains_evaluation": {
@@ -373,23 +428,23 @@
   },
   "candidate_scalability": {
     "2_candidates": {
-      "latency_ms": 19.219,
+      "latency_ms": 13.704,
       "supported": true
     },
     "5_candidates": {
-      "latency_ms": 19.085,
+      "latency_ms": 13.473,
       "supported": true
     },
     "10_candidates": {
-      "latency_ms": 21.361,
+      "latency_ms": 15.351,
       "supported": true
     },
     "20_candidates": {
-      "latency_ms": 23.357,
+      "latency_ms": 20.073,
       "supported": true
     },
     "32_candidates": {
-      "latency_ms": 25.999,
+      "latency_ms": 19.068,
       "supported": true
     }
   },

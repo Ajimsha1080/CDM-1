@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Framework](https://img.shields.io/badge/PyTorch-2.12+-EE4C2C.svg)](https://pytorch.org/)
 [![Transformers](https://img.shields.io/badge/HuggingFace-Transformers-yellow.svg)](https://huggingface.co/)
-[![Tests](https://img.shields.io/badge/Unit%20Tests-37%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Unit%20Tests-41%20Passed-brightgreen.svg)]()
 [![Model Weights](https://img.shields.io/badge/Model%20Weights-SafeTensors%20633MB-success.svg)]()
 
 ---
@@ -26,7 +26,7 @@ CDM-1 is **not** a chatbot, **not** a conventional RAG application, and **not** 
 | **Component C: Gated Fusion** | Dynamic Gated & Cross-Attention Latent Fusion | 394,496 | Trainable |
 | **Component D: Predictive Network** | Multi-outcome regression, candidate-conditioned outcomes, & risk | 69,509 | Trainable |
 | **Component E: Decision Network** | Binary, Scoring, Priority, Risk & Abstention heads | 134,663 | Trainable |
-| **Candidate Scorer & Projector** | Candidate conditioning, bilinear interaction & hard constraint masking | 8,573,752 | Trainable ($\Delta W_{L2} = 2.198 > 0$) |
+| **Candidate Scorer & Projector** | Candidate conditioning, bilinear interaction & hard constraint masking | 8,573,752 | Trainable ($\Delta W_{L2} = 2.929 > 0$) |
 | **TOTAL CDM-1 MODEL** | **Hybrid Cognitive Decision Architecture** | **158,360,004** | **Target Met (150–200M)** |
 
 ---
@@ -208,7 +208,7 @@ python training/calibrate.py
 python benchmarks/benchmark_suite.py
 
 # Stage 10: SafeTensors Release Packaging
-python training/export_model.py
+python scripts/package_release.py --copy-downloads
 ```
 
 ---
@@ -230,9 +230,9 @@ cdm-1/
 ├── benchmarks/              # Benchmark suite, multi-seed baselines & empirical results
 ├── api/                     # FastAPI commercial service with persistent auth, metering, & rate limits
 ├── sdk/                     # Installable Python SDK (cdm_sdk) with explicit mode validation
-├── docs/                    # Model Card, Benchmark report & API docs
+├── docs/                    # Model Card, Benchmark report, Dataset Provenance & API docs
 ├── scripts/                 # Packaging & deployment utilities
-├── tests/                   # 37 comprehensive unit, gradient, constraint, and integration tests
+├── tests/                   # 41 comprehensive unit, gradient, constraint, and integration tests
 ├── Dockerfile               # Production container definition
 ├── docker-compose.yml       # API + Pgvector deployment configuration
 ├── requirements.txt         # Core dependencies

@@ -1,60 +1,60 @@
 {
-  "temperature": 0.8956050872802734,
-  "uncalibrated_ece": 0.026549693942070008,
-  "calibrated_ece": 0.01946946382522583,
-  "optimal_abstention_threshold": 0.9000000000000004,
+  "temperature": 1.8308231830596924,
+  "uncalibrated_ece": 0.4767470359802246,
+  "calibrated_ece": 0.3852805495262146,
+  "optimal_abstention_threshold": 0.6,
   "abstention_sweeps": [
     {
       "threshold": 0.5,
       "coverage": 1.0,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0
+      "selective_accuracy": 0.5,
+      "selective_risk": 0.5
     },
     {
       "threshold": 0.55,
       "coverage": 1.0,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0
+      "selective_accuracy": 0.5,
+      "selective_risk": 0.5
     },
     {
       "threshold": 0.6,
       "coverage": 1.0,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0
+      "selective_accuracy": 0.5,
+      "selective_risk": 0.5
     },
     {
       "threshold": 0.65,
       "coverage": 1.0,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0
+      "selective_accuracy": 0.5,
+      "selective_risk": 0.5
     },
     {
       "threshold": 0.7,
       "coverage": 1.0,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0
+      "selective_accuracy": 0.5,
+      "selective_risk": 0.5
     },
     {
       "threshold": 0.75,
       "coverage": 1.0,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0
+      "selective_accuracy": 0.5,
+      "selective_risk": 0.5
     },
     {
       "threshold": 0.8,
       "coverage": 1.0,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0
+      "selective_accuracy": 0.5,
+      "selective_risk": 0.5
     },
     {
       "threshold": 0.85,
-      "coverage": 0.95,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0
+      "coverage": 1.0,
+      "selective_accuracy": 0.5,
+      "selective_risk": 0.5
     },
     {
       "threshold": 0.9,
-      "coverage": 0.95,
+      "coverage": 0.0,
       "selective_accuracy": 1.0,
       "selective_risk": 0.0
     }

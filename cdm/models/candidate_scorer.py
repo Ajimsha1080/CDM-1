@@ -111,23 +111,36 @@ class CandidateScorer(nn.Module):
         if existence_mask is not None:
             effective_mask = effective_mask * existence_mask
 
+        # Priority 2: Candidate Constraint Safety - Detect All-Prohibited Edge Cases
+        valid_counts = effective_mask.sum(dim=-1)  # [batch_size]
+        all_prohibited = (valid_counts == 0)      # [batch_size] boolean tensor
+
         mask_val = -1e9
         constrained_scores = raw_scores.masked_fill(effective_mask == 0, mask_val)
 
+        # Compute softmax over candidates
         choice_probs = F.softmax(constrained_scores, dim=-1)
-        # Ensure padded items strictly have 0 probability
-        if existence_mask is not None:
-            choice_probs = choice_probs * existence_mask
-            sum_p = torch.clamp(choice_probs.sum(dim=-1, keepdim=True), min=1e-9)
-            choice_probs = choice_probs / sum_p
 
-        selected_idx = torch.argmax(constrained_scores, dim=-1)
+        # Zero out prohibited and padded candidates explicitly
+        choice_probs = choice_probs * effective_mask
+
+        # Re-normalize over valid candidates; for all_prohibited, set all probabilities to 0.0
+        sum_p = choice_probs.sum(dim=-1, keepdim=True)
+        # Avoid division by zero: where sum_p > 0 normalize, else keep 0.0
+        choice_probs = torch.where(sum_p > 0, choice_probs / torch.clamp(sum_p, min=1e-9), torch.zeros_like(choice_probs))
+
+        # Argmax selection: if all candidates are prohibited, select -1 (abstain sentinel)
+        raw_selected_idx = torch.argmax(constrained_scores, dim=-1)
+        # Sentinel -1 indicates abstention / no candidate permitted
+        selected_idx = torch.where(all_prohibited, torch.tensor(-1, device=device, dtype=torch.long), raw_selected_idx)
 
         return {
             "raw_scores": raw_scores,
             "constrained_scores": constrained_scores,
             "choice_probabilities": choice_probs,
             "selected_candidate_idx": selected_idx,
+            "abstained": all_prohibited,
+            "all_prohibited": all_prohibited,
         }
 
     @staticmethod

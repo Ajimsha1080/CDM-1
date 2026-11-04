@@ -86,6 +86,11 @@ def collate_decision_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         candidate_constraint_mask = torch.zeros((batch_size, max_cands), dtype=torch.float32)
         candidate_existence_mask = torch.zeros((batch_size, max_cands), dtype=torch.float32)
 
+        cand_bin_targets = torch.zeros((batch_size, max_cands), dtype=torch.float32)
+        cand_bin_mask = torch.zeros((batch_size, max_cands), dtype=torch.float32)
+        cand_risk_targets = torch.zeros((batch_size, max_cands), dtype=torch.float32)
+        cand_risk_mask = torch.zeros((batch_size, max_cands), dtype=torch.float32)
+
         for b_idx, item in enumerate(batch):
             n_c = item["num_candidates"]
             if n_c > 0 and item["cand_input_ids"] is not None:
@@ -97,7 +102,20 @@ def collate_decision_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
                 else:
                     candidate_constraint_mask[b_idx, :n_c] = 1.0
 
+                if item.get("cand_outcome_binary") is not None and item.get("cand_outcome_binary_mask") is not None:
+                    cand_bin_targets[b_idx, :n_c] = item["cand_outcome_binary"]
+                    cand_bin_mask[b_idx, :n_c] = item["cand_outcome_binary_mask"]
+                if item.get("cand_risk") is not None and item.get("cand_risk_mask") is not None:
+                    cand_risk_targets[b_idx, :n_c] = item["cand_risk"]
+                    cand_risk_mask[b_idx, :n_c] = item["cand_risk_mask"]
+
         targets["candidate_existence_mask"] = candidate_existence_mask
+        if cand_bin_mask.sum() > 0:
+            targets["candidate_binary_targets"] = cand_bin_targets
+            targets["candidate_binary_mask"] = cand_bin_mask
+        if cand_risk_mask.sum() > 0:
+            targets["candidate_risk_targets"] = cand_risk_targets
+            targets["candidate_risk_mask"] = cand_risk_mask
 
     return {
         "input_ids": input_ids,

@@ -13,6 +13,9 @@ class CandidateAction(BaseModel):
     description: str
     expected_impact: Optional[str] = None
     estimated_cost: Optional[float] = 0.0
+    candidate_outcome_binary: Optional[int] = None
+    candidate_risk: Optional[float] = None
+    candidate_resolution_time: Optional[float] = None
 
 
 class PolicyConstraint(BaseModel):

@@ -90,6 +90,23 @@ class DecisionPreprocessor:
         td = example.target_decision
         ol = example.outcome_label
 
+        cand_outcome_binary = [
+            c.candidate_outcome_binary if c.candidate_outcome_binary is not None else 0
+            for c in example.candidate_actions
+        ]
+        cand_outcome_binary_mask = [
+            1.0 if c.candidate_outcome_binary is not None else 0.0
+            for c in example.candidate_actions
+        ]
+        cand_risk = [
+            c.candidate_risk if c.candidate_risk is not None else 0.0
+            for c in example.candidate_actions
+        ]
+        cand_risk_mask = [
+            1.0 if c.candidate_risk is not None else 0.0
+            for c in example.candidate_actions
+        ]
+
         return {
             "input_ids": tokenized["input_ids"].squeeze(0),
             "attention_mask": tokenized["attention_mask"].squeeze(0),
@@ -100,6 +117,10 @@ class DecisionPreprocessor:
             "cand_attention_mask": cand_attention_mask,
             "constraint_mask": torch.tensor(constraint_mask, dtype=torch.float32) if constraint_mask else None,
             "num_candidates": num_cands,
+            "cand_outcome_binary": torch.tensor(cand_outcome_binary, dtype=torch.float32) if cand_outcome_binary else None,
+            "cand_outcome_binary_mask": torch.tensor(cand_outcome_binary_mask, dtype=torch.float32) if cand_outcome_binary_mask else None,
+            "cand_risk": torch.tensor(cand_risk, dtype=torch.float32) if cand_risk else None,
+            "cand_risk_mask": torch.tensor(cand_risk_mask, dtype=torch.float32) if cand_risk_mask else None,
             "choice_target": choice_target_idx,
             "choice_mask": 1.0 if choice_target_idx is not None else 0.0,
             "binary_target": td.binary_decision if td.binary_decision is not None else 0,

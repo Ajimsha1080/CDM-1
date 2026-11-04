@@ -23,6 +23,8 @@ class PredictiveNetwork(nn.Module):
         config: Optional[PredictiveNetworkConfig] = None,
     ):
         super().__init__()
+        self.input_dim = input_dim
+        self.action_dim = action_dim
         self.config = config or PredictiveNetworkConfig()
         hidden = self.config.hidden_dim
 
@@ -64,11 +66,13 @@ class PredictiveNetwork(nn.Module):
         self,
         cognitive_state: torch.Tensor,
         action_embedding: Optional[torch.Tensor] = None,
+        candidate_embeddings: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """Args:
 
             cognitive_state: [batch_size, input_dim]
             action_embedding: [batch_size, action_dim] or None
+            candidate_embeddings: [batch_size, num_cands, candidate_dim] or None
 
         Returns:
             Dictionary containing:
@@ -77,6 +81,12 @@ class PredictiveNetwork(nn.Module):
                 numeric_outcome: [batch_size, 1]
                 estimated_risk: [batch_size, 1]
                 outcome_entropy: [batch_size]
+                candidate_representations: [batch_size, num_cands, input_dim * 2] (if candidate_embeddings provided)
+                candidate_binary_outcome_logits: [batch_size, num_cands, 1] (if candidate_embeddings provided)
+                candidate_multiclass_outcome_logits: [batch_size, num_cands, num_classes] (if candidate_embeddings provided)
+                candidate_numeric_outcome: [batch_size, num_cands, 1] (if candidate_embeddings provided)
+                candidate_estimated_risk: [batch_size, num_cands, 1] (if candidate_embeddings provided)
+                candidate_outcome_entropy: [batch_size, num_cands] (if candidate_embeddings provided)
         """
         batch_size = cognitive_state.shape[0]
         device = cognitive_state.device
@@ -101,13 +111,48 @@ class PredictiveNetwork(nn.Module):
         max_entropy = torch.log(torch.tensor(float(self.config.num_outcome_classes), device=device))
         normalized_entropy = entropy / torch.clamp(max_entropy, min=1e-5)
 
-        return {
+        result: Dict[str, torch.Tensor] = {
             "binary_outcome_logits": bin_logits,
             "multiclass_outcome_logits": multi_logits,
             "numeric_outcome": num_pred,
             "estimated_risk": risk_pred,
             "outcome_entropy": normalized_entropy,
         }
+
+        # Priority 1: Action-Conditioned Forward Predictive Modeling for Candidate Actions
+        if candidate_embeddings is not None and candidate_embeddings.shape[1] > 0:
+            num_cands = candidate_embeddings.shape[1]
+            # Project candidate embeddings into input_dim space
+            cand_proj = self.action_projector(candidate_embeddings)  # [batch_size, num_cands, input_dim]
+            ctx_expanded = cognitive_state.unsqueeze(1).expand(-1, num_cands, -1)  # [batch_size, num_cands, input_dim]
+
+            # Candidate predictive representations: [batch_size, num_cands, input_dim * 2]
+            cand_rep = torch.cat([ctx_expanded, cand_proj], dim=-1)
+
+            # Pass each candidate's representation through shared predictive backbone
+            flat_cand_rep = cand_rep.reshape(-1, self.input_dim * 2)
+            flat_cand_features = self.shared_backbone(flat_cand_rep)  # [batch_size * num_cands, hidden]
+
+            # Independent candidate outcome predictions
+            cand_bin_logits = self.binary_head(flat_cand_features).reshape(batch_size, num_cands, 1)
+            cand_multi_logits = self.multiclass_head(flat_cand_features).reshape(
+                batch_size, num_cands, self.config.num_outcome_classes
+            )
+            cand_numeric = self.numeric_head(flat_cand_features).reshape(batch_size, num_cands, 1)
+            cand_risk = self.risk_head(flat_cand_features).reshape(batch_size, num_cands, 1)
+
+            cand_probs = F.softmax(cand_multi_logits, dim=-1)
+            cand_entropy = -torch.sum(cand_probs * torch.log(torch.clamp(cand_probs, min=1e-9)), dim=-1)
+            cand_norm_entropy = cand_entropy / torch.clamp(max_entropy, min=1e-5)
+
+            result["candidate_representations"] = cand_rep
+            result["candidate_binary_outcome_logits"] = cand_bin_logits
+            result["candidate_multiclass_outcome_logits"] = cand_multi_logits
+            result["candidate_numeric_outcome"] = cand_numeric
+            result["candidate_estimated_risk"] = cand_risk
+            result["candidate_outcome_entropy"] = cand_norm_entropy
+
+        return result
 
     def estimate_uncertainty_mc_dropout(
         self,

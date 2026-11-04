@@ -202,14 +202,24 @@ class CognitiveDecisionModel:
         }
 
         if candidates and cands_out is not None:
+            is_abstained = bool(cands_out.get("abstained", [False])[0].item() if hasattr(cands_out.get("abstained"), "__getitem__") else False)
             sel_idx = int(cands_out["selected_candidate_idx"][0].item())
             choice_probs = cands_out["choice_probabilities"][0].cpu().tolist()
-            result_payload["selected_candidate"] = candidates[sel_idx]
-            result_payload["candidate_scores"] = {
-                candidates[i]: round(choice_probs[i], 4) for i in range(len(candidates))
-            }
-            if task == "choice":
-                result_payload["decision"] = candidates[sel_idx]
+
+            if is_abstained or sel_idx < 0:
+                result_payload["abstain"] = True
+                result_payload["abstention_reason"] = "all_candidates_prohibited"
+                result_payload["selected_candidate"] = None
+                result_payload["candidate_scores"] = {c: 0.0 for c in candidates}
+                if task == "choice":
+                    result_payload["decision"] = "ABSTAIN"
+            else:
+                result_payload["selected_candidate"] = candidates[sel_idx]
+                result_payload["candidate_scores"] = {
+                    candidates[i]: round(choice_probs[i], 4) for i in range(len(candidates))
+                }
+                if task == "choice":
+                    result_payload["decision"] = candidates[sel_idx]
 
         return DecisionResult(result_payload)
 

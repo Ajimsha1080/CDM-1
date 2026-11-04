@@ -139,28 +139,38 @@ class CDMModel(nn.Module):
             categorical_indices=categorical_indices,
         )
 
-        # 2. Predictive Network Output
-        predictive_out = self.predictive_network(
-            cognitive_state=cognitive_state,
-            action_embedding=selected_action_embedding,
-        )
-
-        # 3. Decision Network Output
-        decision_out = self.decision_network(cognitive_state=cognitive_state)
-
-        # 4. Candidate Embeddings (either provided directly or encoded from candidate tokens)
+        # 2. Candidate Embeddings (either provided directly or encoded from candidate tokens)
         if candidate_embeddings is None and candidate_input_ids is not None and candidate_attention_mask is not None:
             candidate_embeddings = self.encode_candidates_from_tokens(
                 candidate_input_ids=candidate_input_ids,
                 candidate_attention_mask=candidate_attention_mask,
             )
 
-        # 5. Candidate Scoring (if candidates provided)
+        # 3. Action-Conditioned Predictive Network Output
+        predictive_out = self.predictive_network(
+            cognitive_state=cognitive_state,
+            action_embedding=selected_action_embedding,
+            candidate_embeddings=candidate_embeddings,
+        )
+
+        # 4. Decision Network Output
+        decision_out = self.decision_network(cognitive_state=cognitive_state)
+
+        # 5. Candidate Scoring conditioned on cognitive state and predicted candidate outcomes/risks
         candidate_out: Optional[Dict[str, torch.Tensor]] = None
         if candidate_embeddings is not None:
+            cand_outcomes = (
+                torch.sigmoid(predictive_out["candidate_binary_outcome_logits"])
+                if "candidate_binary_outcome_logits" in predictive_out
+                else None
+            )
+            cand_risks = predictive_out.get("candidate_estimated_risk")
+
             candidate_out = self.candidate_scorer(
                 cognitive_context=cognitive_state,
                 candidate_embeddings=candidate_embeddings,
+                candidate_outcomes=cand_outcomes,
+                candidate_risks=cand_risks,
                 constraint_mask=constraint_mask,
                 existence_mask=existence_mask,
             )
@@ -297,6 +307,64 @@ class CDMModel(nn.Module):
                 loss_out_num = (raw_loss_out_num * out_num_mask).sum() / torch.clamp(out_num_mask.sum(), min=1.0)
                 total_loss = total_loss + lw.lambda_outcome_numeric * loss_out_num
                 loss_dict["loss_outcome_numeric"] = loss_out_num.item()
+
+        # 10. Candidate-Conditioned Predictive Outcome Losses (Priority 1)
+        if outputs.get("predictive") and "candidate_binary_outcome_logits" in outputs["predictive"]:
+            cand_bin_logits = outputs["predictive"]["candidate_binary_outcome_logits"]  # [B, K, 1]
+            cand_risk_preds = outputs["predictive"]["candidate_estimated_risk"]        # [B, K, 1]
+            cand_num_preds = outputs["predictive"]["candidate_numeric_outcome"]        # [B, K, 1]
+
+            # (a) Per-candidate binary outcome supervision
+            if "candidate_binary_targets" in targets and targets["candidate_binary_targets"] is not None:
+                cb_target = targets["candidate_binary_targets"].float().unsqueeze(-1).to(device)
+                cb_mask = targets.get("candidate_binary_mask")
+                if cb_mask is not None:
+                    cb_mask = cb_mask.float().unsqueeze(-1).to(device)
+                else:
+                    cb_mask = torch.ones_like(cb_target)
+                if cb_mask.sum() > 0:
+                    raw_cb_loss = F.binary_cross_entropy_with_logits(cand_bin_logits, cb_target, reduction="none")
+                    loss_cb = (raw_cb_loss * cb_mask).sum() / torch.clamp(cb_mask.sum(), min=1.0)
+                    total_loss = total_loss + (lw.lambda_outcome_binary * 0.5) * loss_cb
+                    loss_dict["loss_cand_outcome_binary"] = loss_cb.item()
+            elif "choice_target" in targets and targets["choice_target"] is not None and "outcome_binary_target" in targets:
+                c_idx = torch.clamp(targets["choice_target"].long(), 0, cand_bin_logits.shape[1] - 1).to(device)
+                c_mask = targets.get("choice_mask", torch.ones_like(c_idx, dtype=torch.float32)).to(device)
+                out_b_mask = targets.get("outcome_binary_mask", torch.ones_like(c_mask)).to(device) * c_mask
+
+                if out_b_mask.sum() > 0:
+                    chosen_logits = cand_bin_logits.gather(1, c_idx.view(-1, 1, 1)).squeeze(1)  # [B, 1]
+                    out_b_target = targets["outcome_binary_target"].float().unsqueeze(-1).to(device)
+                    raw_loss_cand_bin = F.binary_cross_entropy_with_logits(chosen_logits, out_b_target, reduction="none")
+                    loss_cand_bin = (raw_loss_cand_bin * out_b_mask.unsqueeze(-1)).sum() / torch.clamp(out_b_mask.sum(), min=1.0)
+                    total_loss = total_loss + (lw.lambda_outcome_binary * 0.5) * loss_cand_bin
+                    loss_dict["loss_cand_outcome_binary"] = loss_cand_bin.item()
+
+            # (b) Per-candidate risk estimation supervision
+            if "candidate_risk_targets" in targets and targets["candidate_risk_targets"] is not None:
+                cr_target = targets["candidate_risk_targets"].float().unsqueeze(-1).to(device)
+                cr_mask = targets.get("candidate_risk_mask")
+                if cr_mask is not None:
+                    cr_mask = cr_mask.float().unsqueeze(-1).to(device)
+                else:
+                    cr_mask = torch.ones_like(cr_target)
+                if cr_mask.sum() > 0:
+                    raw_cr_loss = F.binary_cross_entropy(cand_risk_preds, cr_target, reduction="none")
+                    loss_cr = (raw_cr_loss * cr_mask).sum() / torch.clamp(cr_mask.sum(), min=1.0)
+                    total_loss = total_loss + (lw.lambda_risk * 0.25) * loss_cr
+                    loss_dict["loss_cand_risk"] = loss_cr.item()
+            elif "choice_target" in targets and targets["choice_target"] is not None and "risk_prob_target" in targets:
+                c_idx = torch.clamp(targets["choice_target"].long(), 0, cand_risk_preds.shape[1] - 1).to(device)
+                c_mask = targets.get("choice_mask", torch.ones_like(c_idx, dtype=torch.float32)).to(device)
+                r_mask = targets.get("risk_prob_mask", torch.ones_like(c_mask)).to(device) * c_mask
+
+                if r_mask.sum() > 0:
+                    chosen_risk = cand_risk_preds.gather(1, c_idx.view(-1, 1, 1)).squeeze(1)
+                    r_target = targets["risk_prob_target"].float().unsqueeze(-1).to(device)
+                    raw_loss_cr = F.binary_cross_entropy(chosen_risk, r_target, reduction="none")
+                    loss_cr = (raw_loss_cr * r_mask.unsqueeze(-1)).sum() / torch.clamp(r_mask.sum(), min=1.0)
+                    total_loss = total_loss + (lw.lambda_risk * 0.25) * loss_cr
+                    loss_dict["loss_cand_risk"] = loss_cr.item()
 
         loss_dict["loss_total"] = total_loss.item()
         return total_loss, loss_dict

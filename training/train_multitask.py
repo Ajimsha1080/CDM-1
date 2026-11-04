@@ -130,21 +130,27 @@ def train_multitask(
             struct_emb = model.structured_encoder(num_vals, missing, cat_idx)
             cognitive_state = model.fusion(text_emb, struct_emb)
 
-            # 2. Candidate Projection & Scoring
+            # 2. Action-Conditioned Predictive Modeling & Candidate Scoring
+            cand_embs = model.candidate_text_proj(cand_raw) if cand_raw is not None else None
+            predictive_out = model.predictive_network(cognitive_state, candidate_embeddings=cand_embs)
+            decision_out = model.decision_network(cognitive_state)
+
             candidate_out = None
-            if cand_raw is not None:
-                # Pass through trainable candidate text projector
-                cand_embs = model.candidate_text_proj(cand_raw)
+            if cand_embs is not None:
+                cand_outcomes = (
+                    torch.sigmoid(predictive_out["candidate_binary_outcome_logits"])
+                    if "candidate_binary_outcome_logits" in predictive_out
+                    else None
+                )
+                cand_risks = predictive_out.get("candidate_estimated_risk")
                 candidate_out = model.candidate_scorer(
                     cognitive_context=cognitive_state,
                     candidate_embeddings=cand_embs,
+                    candidate_outcomes=cand_outcomes,
+                    candidate_risks=cand_risks,
                     constraint_mask=constraint_mask,
                     existence_mask=existence_mask,
                 )
-
-            # 3. Decision & Predictive outputs
-            predictive_out = model.predictive_network(cognitive_state)
-            decision_out = model.decision_network(cognitive_state)
 
             outputs = {
                 "cognitive_state": cognitive_state,
@@ -187,18 +193,26 @@ def train_multitask(
                 struct_emb = model.structured_encoder(num_vals, missing, cat_idx)
                 cognitive_state = model.fusion(text_emb, struct_emb)
 
+                cand_embs = model.candidate_text_proj(cand_raw) if cand_raw is not None else None
+                predictive_out = model.predictive_network(cognitive_state, candidate_embeddings=cand_embs)
+                decision_out = model.decision_network(cognitive_state)
+
                 candidate_out = None
-                if cand_raw is not None:
-                    cand_embs = model.candidate_text_proj(cand_raw)
+                if cand_embs is not None:
+                    cand_outcomes = (
+                        torch.sigmoid(predictive_out["candidate_binary_outcome_logits"])
+                        if "candidate_binary_outcome_logits" in predictive_out
+                        else None
+                    )
+                    cand_risks = predictive_out.get("candidate_estimated_risk")
                     candidate_out = model.candidate_scorer(
                         cognitive_context=cognitive_state,
                         candidate_embeddings=cand_embs,
+                        candidate_outcomes=cand_outcomes,
+                        candidate_risks=cand_risks,
                         constraint_mask=constraint_mask,
                         existence_mask=existence_mask,
                     )
-
-                predictive_out = model.predictive_network(cognitive_state)
-                decision_out = model.decision_network(cognitive_state)
 
                 outputs = {
                     "cognitive_state": cognitive_state,
@@ -248,6 +262,9 @@ def train_multitask(
             best_val_loss = avg_val_loss
             print(f"--> Val loss improved to {best_val_loss:.4f}. Saving checkpoint to {checkpoint_dir}", flush=True)
             model.save_pretrained(checkpoint_dir)
+            release_dir = "experiments/release/cdm-1-general"
+            os.makedirs(release_dir, exist_ok=True)
+            model.save_pretrained(release_dir)
 
         if early_stopping(avg_val_loss):
             print(f"Early stopping triggered at epoch {epoch+1}.", flush=True)

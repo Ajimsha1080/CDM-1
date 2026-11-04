@@ -1,76 +1,200 @@
 {
-  "benchmark_suite_version": "2.0.0",
-  "model_tested": "CDM-1 (Hybrid Architecture)",
-  "test_sample_count": 24,
-  "baselines": {
+  "benchmark_suite_version": "3.0.0",
+  "model_tested": "CDM-1 (Hybrid Cognitive Architecture)",
+  "test_sample_count": 50,
+  "baselines_multi_seed": {
     "logistic_regression": {
-      "accuracy": 1.0,
-      "macro_f1": 1.0,
-      "auroc": 1.0,
-      "auprc": 1.0,
-      "brier_score": 0.0013
+      "accuracy": {
+        "mean": 0.0,
+        "std": 0.0,
+        "ci_95": [
+          0.0,
+          0.0
+        ]
+      },
+      "macro_f1": {
+        "mean": 0.0,
+        "std": 0.0,
+        "ci_95": [
+          0.0,
+          0.0
+        ]
+      },
+      "auroc": {
+        "mean": 1.0,
+        "std": 0.0,
+        "ci_95": [
+          1.0,
+          1.0
+        ]
+      },
+      "brier_score": {
+        "mean": 0.9831,
+        "std": 0.0,
+        "ci_95": [
+          0.9831,
+          0.9831
+        ]
+      }
     },
     "random_forest": {
-      "accuracy": 1.0,
-      "macro_f1": 1.0,
-      "auroc": 1.0,
-      "auprc": 1.0,
-      "brier_score": 0.0061
-    },
-    "gradient_boosting_hgb": {
-      "accuracy": 1.0,
-      "macro_f1": 1.0,
-      "auroc": 1.0,
-      "auprc": 1.0,
-      "brier_score": 0.0033
+      "accuracy": {
+        "mean": 0.0,
+        "std": 0.0,
+        "ci_95": [
+          0.0,
+          0.0
+        ]
+      },
+      "macro_f1": {
+        "mean": 0.0,
+        "std": 0.0,
+        "ci_95": [
+          0.0,
+          0.0
+        ]
+      },
+      "auroc": {
+        "mean": 1.0,
+        "std": 0.0,
+        "ci_95": [
+          1.0,
+          1.0
+        ]
+      },
+      "brier_score": {
+        "mean": 0.8455,
+        "std": 0.0185,
+        "ci_95": [
+          0.8091,
+          0.8818
+        ]
+      }
     },
     "xgboost": {
-      "accuracy": 0.9583,
-      "macro_f1": 0.9515,
-      "auroc": 1.0,
-      "auprc": 1.0,
-      "brier_score": 0.0142
+      "accuracy": {
+        "mean": 0.0,
+        "std": 0.0,
+        "ci_95": [
+          0.0,
+          0.0
+        ]
+      },
+      "macro_f1": {
+        "mean": 0.0,
+        "std": 0.0,
+        "ci_95": [
+          0.0,
+          0.0
+        ]
+      },
+      "auroc": {
+        "mean": 1.0,
+        "std": 0.0,
+        "ci_95": [
+          1.0,
+          1.0
+        ]
+      },
+      "brier_score": {
+        "mean": 0.975,
+        "std": 0.0,
+        "ci_95": [
+          0.975,
+          0.975
+        ]
+      }
     }
   },
-  "cdm_1": {
+  "cdm_1_multitask": {
     "binary_decision": {
-      "accuracy": 1.0,
-      "precision": 1.0,
-      "recall": 1.0,
-      "macro_f1": 1.0,
+      "accuracy": 0.0,
+      "macro_f1": 0.0,
       "auroc": 1.0,
-      "auprc": 1.0,
-      "brier_score": 0.0025,
-      "expected_calibration_error": 0.0257
+      "auprc": 0.0,
+      "brier_score": 0.9868,
+      "expected_calibration_error": 0.9934
     },
     "candidate_choice_and_ranking": {
-      "top_1_accuracy": 1.0,
-      "ndcg": 1.0,
-      "evaluated_samples": 24
+      "top_1_accuracy": 0.5,
+      "ndcg": 0.75,
+      "prohibited_selection_rate": 0.0,
+      "total_constrained_evaluations": 50
     },
-    "priority_decision": {
-      "macro_f1": 1.0,
-      "weighted_f1": 1.0,
-      "accuracy": 1.0
+    "priority_classification": {
+      "accuracy": 1.0,
+      "macro_f1": 1.0
     },
     "risk_classification": {
-      "macro_f1": 0.7143,
-      "accuracy": 0.9167
+      "accuracy": 0.0,
+      "macro_f1": 0.0
     },
-    "scoring_decision": {
-      "mae": 1.2127,
-      "rmse": 1.7902
+    "continuous_scoring": {
+      "mae": 62.9393,
+      "rmse": 63.1034
     },
     "predictive_outcome": {
-      "brier_score": 0.0016,
-      "mae": 0.0365
+      "brier_score": 0.9689,
+      "mae": 0.9843
     },
-    "abstention_and_policy_adherence": {
-      "coverage": 0.9167,
-      "selective_accuracy": 1.0,
-      "selective_risk": 0.0,
-      "prohibited_candidate_selection_rate": 0.0,
-      "total_constrained_checks": 24
+    "selective_prediction": {
+      "coverage": 1.0,
+      "selective_accuracy": 0.0,
+      "selective_risk": 1.0
+    },
+    "domain_breakdown": {
+      "RET": {
+        "accuracy": 0.0,
+        "samples": 50
+      }
+    }
+  },
+  "candidate_scalability": {
+    "2_candidates": {
+      "latency_ms": 17.199,
+      "supported": true
+    },
+    "5_candidates": {
+      "latency_ms": 17.52,
+      "supported": true
+    },
+    "10_candidates": {
+      "latency_ms": 30.392,
+      "supported": true
+    },
+    "20_candidates": {
+      "latency_ms": 28.495,
+      "supported": true
+    },
+    "32_candidates": {
+      "latency_ms": 28.365,
+      "supported": true
+    }
+  },
+  "candidate_permutation_invariance": {
+    "permutation_invariant": true,
+    "vector_l2_difference": 0.0,
+    "permutation_tested": [
+      3,
+      1,
+      2,
+      4,
+      0
+    ]
+  },
+  "out_of_distribution_evaluation": {
+    "ood_samples_evaluated": 6,
+    "prohibited_selection_rate": 0.0,
+    "zero_shot_constraint_adherence": true
+  },
+  "external_model_comparisons": {
+    "jev": {
+      "status": "proprietary_weights_unavailable",
+      "notes": "Jev is a proprietary closed model with non-public weights. Spec comparison disclosed in BENCHMARKS.md."
+    },
+    "laya": {
+      "status": "proprietary_weights_unavailable",
+      "notes": "Laya is a proprietary closed model with non-public weights. Spec comparison disclosed in BENCHMARKS.md."
     }
   }
 }

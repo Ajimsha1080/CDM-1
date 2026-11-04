@@ -29,21 +29,18 @@ model-index:
       type: decision-making
       name: Cognitive Decision Modeling
     metrics:
-    - name: Binary Accuracy
-      type: accuracy
-      value: 1.0000
-    - name: AUROC
+    - name: Binary AUROC
       type: auroc
       value: 1.0000
     - name: Expected Calibration Error (ECE)
       type: expected_calibration_error
-      value: 0.0195
+      value: 0.3853
     - name: Priority Macro F1
       type: f1
       value: 1.0000
-    - name: Candidate Choice Top-1 Accuracy
-      type: accuracy
-      value: 1.0000
+    - name: Candidate Choice NDCG
+      type: ndcg
+      value: 0.7500
     - name: Hard Constraint Violation Rate
       type: constraint_violation_rate
       value: 0.0000
@@ -74,23 +71,17 @@ Unlike generative conversational chatbots or LLM API wrappers, CDM-1 is purpose-
    - Risk Assessment (`LOW`, `MODERATE`, `HIGH`, `SEVERE`)
    - Calibrated Confidence & Selective Abstention ($ECE = 0.0195$)
 
-## Verified Benchmark Results (Holdout Test Partition, N=24)
-| Benchmark Metric | Logistic Reg. | Random Forest | GBDT (HistGrad) | XGBoost (v3.4.1) | **CDM-1 (Ours)** |
-|---|---|---|---|---|---|
-| **Binary Decision Accuracy** | 1.0000 | 1.0000 | 1.0000 | 0.9583 | **1.0000** |
-| **Binary Macro F1** | 1.0000 | 1.0000 | 1.0000 | 0.9515 | **1.0000** |
-| **AUROC** | 1.0000 | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
-| **AUPRC** | 1.0000 | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
-| **Brier Score** | 0.0013 | 0.0061 | 0.0033 | 0.0142 | **0.0025** |
-| **Expected Calibration Error (ECE)** | 0.0520 | 0.0410 | 0.0380 | 0.0450 | **0.0195** |
-| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | N/A | **1.0000** |
-| **Candidate Choice NDCG** | N/A | N/A | N/A | N/A | **1.0000** |
-| **Priority Classification (Macro F1)** | N/A | N/A | N/A | N/A | **1.0000** |
-| **Risk Classification Accuracy** | N/A | N/A | N/A | N/A | **0.9167** |
-| **Continuous Score MAE** | N/A | N/A | N/A | N/A | **1.2127** |
-| **Selective Coverage** | 100% | 100% | 100% | 100% | **91.67%** |
-| **Selective Accuracy (Under Abstention)** | 100% | 100% | 100% | 95.8% | **100.00%** |
-| **Policy Constraint Violations** | N/A | N/A | N/A | N/A | **0.00%** |
+## Verified Benchmark Results (Holdout Test Partition, N=50)
+| Benchmark Metric | Logistic Reg. | Random Forest | XGBoost (v3.4.1) | **CDM-1 (Ours)** |
+|---|---|---|---|---|
+| **Binary AUROC** | 1.0000 | 1.0000 | 1.0000 | **1.0000** |
+| **Brier Score** | 0.9831 | 0.8455 | 0.9750 | **0.9689** |
+| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | **0.5000** |
+| **Candidate Choice NDCG** | N/A | N/A | N/A | **0.7500** |
+| **Priority Classification (Macro F1)** | N/A | N/A | N/A | **1.0000** |
+| **Prohibited Constraint Violations** | N/A | N/A | N/A | **0.00%** |
+| **Permutation Invariance ($\Delta_{L2}$)** | N/A | N/A | N/A | **0.0000** |
+| **Scalability (32 candidates latency)** | N/A | N/A | N/A | **28.37 ms** |
 
 ## Quickstart Usage
 

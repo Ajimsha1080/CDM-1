@@ -28,59 +28,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("cdm.api")
 
-# Persistent Usage Meter File
-METER_STORE_PATH = os.environ.get("CDM_METER_PATH", "experiments/api_usage_meter.json")
+from api.auth import PersistentApiKeyManager
+from api.metering import DurableUsageMeter
 
+# Persistent Secret & Key Management (Priority 6)
+KEY_MANAGER = PersistentApiKeyManager(db_path=os.environ.get("CDM_KEY_DB", "experiments/api_keys.sqlite"))
 
-def load_persistent_meter() -> Dict[str, Any]:
-    if os.path.exists(METER_STORE_PATH):
-        try:
-            with open(METER_STORE_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.warning(f"Could not read meter store: {e}")
-    return {"total_requests": 0, "decisions_by_tenant": {}, "last_updated": time.time()}
-
-
-def save_persistent_meter(data: Dict[str, Any]) -> None:
-    try:
-        os.makedirs(os.path.dirname(METER_STORE_PATH), exist_ok=True)
-        with open(METER_STORE_PATH, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-    except Exception as e:
-        logger.error(f"Failed to persist meter: {e}")
-
-
-USAGE_METER = load_persistent_meter()
-
-
-# Environment-Based Secret Management
-def get_configured_api_keys() -> Dict[str, Dict[str, str]]:
-    """Loads API keys from environment variable CDM_API_KEYS (JSON mapping token -> tenant info)
-
-    or CDM_API_KEY for single tenant. Defaults to secure dev key in non-production.
-    """
-    env_keys = os.environ.get("CDM_API_KEYS")
-    if env_keys:
-        try:
-            return json.loads(env_keys)
-        except json.JSONDecodeError:
-            logger.error("Failed to parse CDM_API_KEYS JSON from environment.")
-
-    single_key = os.environ.get("CDM_API_KEY")
-    if single_key:
-        return {single_key: {"tenant_id": "tenant_env_default", "tier": "enterprise"}}
-
-    # Development fallback
-    return {
-        "sk_live_cdm_demo_key": {"tenant_id": "tenant_enterprise_01", "tier": "enterprise"},
-        "sk_test_developer_key": {"tenant_id": "tenant_dev_default", "tier": "developer"},
-    }
-
-
-API_KEYS = get_configured_api_keys()
-RATE_LIMIT_BUCKET: Dict[str, List[float]] = {}
-RATE_LIMIT_MAX_PER_MINUTE = int(os.environ.get("CDM_RATE_LIMIT_RPM", "120"))
+# Durable Transactional Metering & Rate Limiting (Priority 6)
+USAGE_METER = DurableUsageMeter(db_path=os.environ.get("CDM_METER_DB", "experiments/api_usage_meter.sqlite"))
 
 security = HTTPBearer(auto_error=False)
 
@@ -137,6 +92,15 @@ model_load_error: Optional[str] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global runtime_model, model_load_error
+
+    # Priority 6: Fail startup in production if secrets are missing or default
+    KEY_MANAGER.check_production_safety()
+
+    # Seed development / test keys only in non-production environments
+    if os.environ.get("CDM_ENV", "development").lower() != "production":
+        KEY_MANAGER.register_key("sk_test_developer_key", "tenant_dev_default", tier="developer", rate_limit_rpm=120)
+        KEY_MANAGER.register_key("sk_live_cdm_demo_key", "tenant_enterprise_01", tier="enterprise", rate_limit_rpm=300)
+
     model_path = os.environ.get("CDM_MODEL_PATH", "experiments/release/cdm-1-general")
     if not os.path.exists(model_path):
         model_path = "experiments/checkpoints/cdm-1-general"
@@ -149,8 +113,6 @@ async def lifespan(app: FastAPI):
         model_load_error = str(e)
         logger.critical(f"FATAL: Failed to load CDM-1 model: {e}", exc_info=True)
     yield
-    # Save meter on shutdown
-    save_persistent_meter(USAGE_METER)
 
 
 app = FastAPI(
@@ -164,7 +126,7 @@ app = FastAPI(
 def authenticate_and_rate_limit(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
 ) -> Dict[str, str]:
-    """Validates API token against configured secrets and enforces per-tenant rate limits."""
+    """Validates API token against persistent secret store and enforces durable rate limits."""
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -172,38 +134,25 @@ def authenticate_and_rate_limit(
         )
 
     token = credentials.credentials
-    keys = get_configured_api_keys()
-    if token not in keys:
+    tenant_info = KEY_MANAGER.validate_key(token)
+    if not tenant_info:
         logger.warning(f"Unauthorized access attempt with invalid token hash: {token[:6]}...")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or revoked CDM API Key.",
         )
 
-    tenant_info = keys[token]
     tenant_id = tenant_info["tenant_id"]
+    rpm_limit = tenant_info.get("rate_limit_rpm", 120)
 
-    # Rate limiting
-    now = time.time()
-    timestamps = RATE_LIMIT_BUCKET.setdefault(tenant_id, [])
-    timestamps = [t for t in timestamps if now - t < 60.0]
-    RATE_LIMIT_BUCKET[tenant_id] = timestamps
-
-    if len(timestamps) >= RATE_LIMIT_MAX_PER_MINUTE:
-        logger.warning(f"Rate limit exceeded for tenant: {tenant_id}")
+    allowed, count = USAGE_METER.check_rate_limit(tenant_id, max_rpm=rpm_limit)
+    if not allowed:
+        logger.warning(f"Rate limit exceeded for tenant: {tenant_id} (count={count}, limit={rpm_limit})")
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Rate limit exceeded. Maximum {RATE_LIMIT_MAX_PER_MINUTE} requests per minute.",
+            detail=f"Rate limit exceeded. Maximum {rpm_limit} requests per minute.",
+            headers={"Retry-After": "60"},
         )
-
-    RATE_LIMIT_BUCKET[tenant_id].append(now)
-
-    # Metering
-    USAGE_METER["total_requests"] += 1
-    USAGE_METER["decisions_by_tenant"][tenant_id] = (
-        USAGE_METER["decisions_by_tenant"].get(tenant_id, 0) + 1
-    )
-    USAGE_METER["last_updated"] = now
 
     return tenant_info
 
@@ -219,15 +168,25 @@ def health_check():
 
 @app.get("/v1/ready")
 def readiness_check():
-    """Readiness probe checking model initialization."""
+    """Readiness probe checking model initialization and physical weights presence."""
     if runtime_model is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Model runtime not ready: {model_load_error or 'Initializing'}",
         )
+    model_path = os.environ.get("CDM_MODEL_PATH", "experiments/release/cdm-1-general")
+    if not os.path.exists(model_path):
+        model_path = "experiments/checkpoints/cdm-1-general"
+    weights_path = os.path.join(model_path, "model.safetensors")
+    if not os.path.exists(weights_path):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Checkpoint weights missing at {weights_path}",
+        )
     return {
         "status": "ready",
         "model_loaded": True,
+        "weights_verified": True,
         "parameters": "158M",
         "timestamp": time.time(),
     }
@@ -288,6 +247,15 @@ def create_decision(
 
     latency = round((time.time() - start_t) * 1000, 2)
     data = res.to_dict()
+
+    # Durable transactional metering (Priority 6)
+    USAGE_METER.record_request(
+        tenant_id=tenant["tenant_id"],
+        endpoint="/v1/decisions",
+        task=req.task,
+        latency_ms=latency,
+        status_code=200,
+    )
 
     return DecisionResponse(
         decision_id=f"dec_{int(time.time()*1000)}",

@@ -33,32 +33,65 @@ class AdaptationGatekeeper:
         self, feedback_events: List[Any], output_path: str = "datasets/staged_feedback.jsonl"
     ) -> int:
         """Stages verified feedback events into standardized JSONL training samples.
-        Strictly prevents training on holdout test or OOD data.
+        Strictly validates review status, human reviewer provenance, and verified target labels.
         """
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
         count = 0
         with open(output_path, "a", encoding="utf-8") as f:
             for ev in feedback_events:
-                # Only stage events that have been verified by human review
+                # 1. Validate verified review status
                 status = getattr(ev, "review_status", None) or (ev.get("review_status") if isinstance(ev, dict) else None)
                 if status != "verified":
                     continue
 
+                # 2. Validate human reviewer provenance
+                reviewer = getattr(ev, "reviewer_id", None) or (
+                    ev.get("reviewer_id") if isinstance(ev, dict) else None
+                ) or (
+                    ev.get("label_provenance", {}).get("verifier_id") if isinstance(ev, dict) else None
+                )
+                if not reviewer or str(reviewer).strip() == "":
+                    # Reject unauthenticated or uncredited reviews
+                    continue
+
+                # 3. Extract and validate target decision labels
+                act_out = getattr(ev, "verified_actual_outcome", None) or (
+                    ev.get("verified_actual_outcome") if isinstance(ev, dict) else {}
+                )
+                if not isinstance(act_out, dict):
+                    continue
+
+                bin_target = act_out.get("binary_target")
+                if bin_target is None:
+                    bin_target = act_out.get("observed_outcome_binary")
+                if bin_target not in (0, 1, 0.0, 1.0, True, False):
+                    # Reject records lacking a valid verified ground-truth target
+                    continue
+
+                bin_val = 1 if bin_target in (1, 1.0, True) else 0
+                cand_id = act_out.get("selected_candidate_id", "act_auto_resolve")
+                pred_dec = getattr(ev, "predicted_decision", None) or (
+                    ev.get("predicted_decision") if isinstance(ev, dict) else {}
+                )
+                event_id = getattr(ev, "event_id", None) or (
+                    ev.get("event_id") if isinstance(ev, dict) else f"staged_{count}"
+                )
+
                 sample = {
-                    "example_id": getattr(ev, "event_id", f"staged_{count}"),
-                    "input_text": getattr(ev, "predicted_decision", {}).get("text", "Telemetry feedback sample"),
-                    "structured_features": getattr(ev, "predicted_decision", {}).get("structured_features", {}),
+                    "example_id": event_id,
+                    "input_text": pred_dec.get("text", "Telemetry feedback sample"),
+                    "structured_features": pred_dec.get("structured_features", {}),
                     "target_decision": {
-                        "binary_decision": getattr(ev, "verified_actual_outcome", {}).get("binary_target", 1),
-                        "selected_candidate_id": getattr(ev, "verified_actual_outcome", {}).get("selected_candidate_id", "act_auto_resolve"),
-                        "decision_score": 85.0,
-                        "priority_level": 1,
-                        "risk_level": 0,
+                        "binary_decision": bin_val,
+                        "selected_candidate_id": cand_id,
+                        "decision_score": float(act_out.get("decision_score", 85.0)),
+                        "priority_level": int(act_out.get("priority_level", 1)),
+                        "risk_level": int(act_out.get("risk_level", 0)),
                     },
-                    "outcome_label": getattr(ev, "verified_actual_outcome", {}),
+                    "outcome_label": act_out,
                     "label_provenance": {
                         "source_type": "verified_human_feedback",
-                        "verifier_id": "human_reviewer",
+                        "verifier_id": str(reviewer),
                         "synthetic": False,
                     },
                 }

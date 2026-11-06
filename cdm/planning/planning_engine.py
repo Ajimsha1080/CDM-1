@@ -15,6 +15,68 @@ class PlanningEngine:
     def __init__(self, world_model: Optional[WorldModel] = None):
         self.world_model = world_model or WorldModel()
 
+    def _compute_action_risk(
+        self,
+        action: str,
+        current_world_state: WorldState,
+        predicted_outcome: Optional[Dict[str, Any]] = None,
+    ) -> float:
+        """Computes dynamic risk derived from learned outcome predictions and world state uncertainty,
+        avoiding hardcoded static lookup tables.
+        """
+        state_unc = float(getattr(current_world_state, "overall_state_uncertainty", 0.05))
+
+        # 1. Extract learned continuous risk prediction if available
+        pred_risk = None
+        if predicted_outcome:
+            pred_risk = (
+                predicted_outcome.get("predicted_risk")
+                or predicted_outcome.get("risk")
+                or predicted_outcome.get("action_risk", {}).get(action)
+            )
+            if pred_risk is None and "candidate_scores" in predicted_outcome:
+                cand_scores = predicted_outcome["candidate_scores"]
+                if action in cand_scores:
+                    norm_score = max(0.0, min(1.0, cand_scores[action]))
+                    pred_risk = round(1.0 - norm_score, 4)
+
+        if pred_risk is None:
+            pred_fut = getattr(current_world_state, "predicted_future_state", {})
+            if isinstance(pred_fut, dict):
+                pred_risk = pred_fut.get("predicted_risk")
+
+        if pred_risk is not None:
+            return round(float(pred_risk) * 0.7 + state_unc * 0.3, 4)
+
+        # 2. Dynamic environmental risk calculation derived from observed facts & metrics
+        monetary = float(current_world_state.environment_metrics.get("monetary_value_usd", 50.0))
+        sla = float(current_world_state.environment_metrics.get("sla_remaining_hours", 24.0))
+        env_pressure = min(1.0, (monetary / 250.0) * 0.5 + max(0.0, 1.0 - sla / 48.0) * 0.5)
+        return round(0.05 + 0.4 * env_pressure + 0.3 * state_unc, 4)
+
+    def _evaluate_preconditions(
+        self,
+        action: str,
+        current_world_state: WorldState,
+        forbidden_actions: set,
+    ) -> Tuple[List[str], bool]:
+        """Evaluates domain and state preconditions, returning defined preconditions and satisfied boolean."""
+        preconditions = [f"constraint_clear_{action}"]
+        satisfied = action not in forbidden_actions
+
+        monetary = float(current_world_state.environment_metrics.get("monetary_value_usd", 0.0))
+        if "refund" in action.lower():
+            preconditions.append("policy_refund_limit_verified")
+            # If monetary value exceeds refund cap, precondition fails
+            if monetary > 1500.0:
+                satisfied = False
+        elif "escalate" in action.lower():
+            preconditions.append("tier1_triage_completed")
+        elif "auto_resolve" in action.lower():
+            preconditions.append("uncontested_standard_issue")
+
+        return preconditions, satisfied
+
     def generate_plan(
         self,
         target_goal: GoalNode,
@@ -39,31 +101,29 @@ class PlanningEngine:
 
         # Sequence actions towards goal with preconditions and counterfactual effects
         for idx, action in enumerate(valid_actions[:4], start=1):
+            preconditions, preconditions_met = self._evaluate_preconditions(
+                action=action,
+                current_world_state=current_world_state,
+                forbidden_actions=forbidden,
+            )
+
+            # If precondition fails, skip or mark blocked
+            if not preconditions_met:
+                continue
+
             # Simulate forward transition consequence in World Model
             simulated_next_state = self.world_model.simulate_transition(action)
 
-            # Determine risk estimate
-            if "escalate" in action.lower():
-                step_risk = 0.15
-            elif "refund" in action.lower():
-                step_risk = 0.25
-            elif "quarantine" in action.lower() or "block" in action.lower():
-                step_risk = 0.20
-            else:
-                step_risk = 0.05
+            # Determine dynamic learned risk estimate
+            step_risk = self._compute_action_risk(
+                action=action,
+                current_world_state=current_world_state,
+                predicted_outcome=predicted_outcome,
+            )
             cumulative_risk += step_risk
 
-            # Establish explicit domain preconditions
-            preconditions = [f"constraint_clear_{action}"]
-            if "refund" in action.lower():
-                preconditions.append("policy_refund_limit_verified")
-            elif "escalate" in action.lower():
-                preconditions.append("tier1_triage_completed")
-            elif "auto_resolve" in action.lower():
-                preconditions.append("uncontested_standard_issue")
-
             step = PlanStep(
-                step_number=idx,
+                step_number=len(plan_steps) + 1,
                 action_name=action,
                 parameters={"target_goal": target_goal.goal_id},
                 expected_outcome={
@@ -71,7 +131,7 @@ class PlanningEngine:
                     "simulated_transition": simulated_next_state.simulated_state.get(f"transition_{action}", {}),
                 },
                 preconditions=preconditions,
-                postconditions=[f"action_executed_{action}"],
+                postconditions=[f"action_executed_{action}", f"goal_advanced_{target_goal.goal_id}"],
                 risk_estimate=step_risk,
                 is_reversible="refund" not in action.lower(),
             )
@@ -80,26 +140,25 @@ class PlanningEngine:
         efficiency = max(0.2, 1.0 - (len(plan_steps) * 0.1))
         constraint_compliance = len(forbidden.intersection(set(valid_actions))) == 0
 
-        # Generate realistic alternative plan options (Conservative and Contingency)
+        # Generate and evaluate alternative plans using predicted outcomes
         alternatives = []
         if len(valid_actions) > 1:
-            alt_conservative = {
-                "name": "Conservative Diagnostic Plan",
-                "first_action": valid_actions[-1],
-                "expected_risk": round(cumulative_risk * 0.6, 3),
-                "rationale": "Prioritize diagnostic information gathering before high-commitment actions.",
-            }
-            alternatives.append(alt_conservative)
-
-        if any("escalate" in a.lower() for a in valid_actions):
-            escalate_act = next(a for a in valid_actions if "escalate" in a.lower())
-            alt_escalation = {
-                "name": "Direct Escalation Plan",
-                "first_action": escalate_act,
-                "expected_risk": 0.15,
-                "rationale": "Bypass automated routines for critical SLA or high-exposure incidents.",
-            }
-            alternatives.append(alt_escalation)
+            for alt_act in valid_actions[1:]:
+                alt_score = 0.5
+                if predicted_outcome and "candidate_scores" in predicted_outcome:
+                    alt_score = predicted_outcome["candidate_scores"].get(alt_act, 0.5)
+                alt_risk = self._compute_action_risk(
+                    action=alt_act,
+                    current_world_state=current_world_state,
+                    predicted_outcome=predicted_outcome,
+                )
+                alternatives.append({
+                    "name": f"Alternative Branch: {alt_act}",
+                    "first_action": alt_act,
+                    "predicted_outcome_score": round(float(alt_score), 4),
+                    "expected_risk": alt_risk,
+                    "rationale": f"Contingency plan executing '{alt_act}' evaluated with prospective outcome forecasting.",
+                })
 
         return Plan(
             target_goal_id=target_goal.goal_id,

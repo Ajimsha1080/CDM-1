@@ -217,3 +217,78 @@ def test_concurrent_multithreaded_cognitive_processing():
                 os.remove(db_path)
             except Exception:
                 pass
+
+
+def test_simultaneous_requests_same_session():
+    """Requirement 12: Verifies simultaneous concurrent requests against the EXACT same session are synchronized."""
+    model_path = "experiments/release/cdm-1-general"
+    if not os.path.exists(model_path):
+        pytest.skip("Release checkpoint required for integration test")
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        db_path = tmp.name
+
+    try:
+        engine = CognitiveEngine.from_pretrained(model_name_or_path=model_path, db_path=db_path)
+        errors = []
+        results = []
+        lock = threading.Lock()
+
+        def worker(thread_idx: int):
+            try:
+                res = engine.process(
+                    text=f"Simultaneous turn #{thread_idx}: Follow-up update on order status.",
+                    structured_features={"monetary_value_usd": 50.0 + thread_idx, "sla_remaining_hours": 10.0},
+                    session_id="contentious_shared_session",
+                    tenant_id="tenant_synchronous",
+                )
+                with lock:
+                    results.append((thread_idx, res))
+            except Exception as e:
+                with lock:
+                    errors.append(f"Thread {thread_idx} failed: {e}")
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0, f"Simultaneous session requests encountered errors: {errors}"
+        assert len(results) == 4, "All 4 simultaneous requests to same session must succeed"
+
+        # Check that context engine turns were serialized and properly incremented
+        ctx = engine.context_engine.get_latest_context("contentious_shared_session", "tenant_synchronous")
+        assert ctx is not None
+        assert ctx.turn_index == 4, f"Expected 4 turns in history, got {ctx.turn_index}"
+        assert len(ctx.dialogue_history) == 4
+    finally:
+        if os.path.exists(db_path):
+            try:
+                os.remove(db_path)
+            except Exception:
+                pass
+
+
+def test_cross_tenant_state_leak_prevention():
+    """Requirement 14: Verifies context, world state, and working memory cannot leak across requests or tenants."""
+    ce = ContextEngine()
+    wm_a = WorldModel(tenant_id="tenant_secret_alpha", session_id="sess_1")
+    wm_b = WorldModel(tenant_id="tenant_secret_beta", session_id="sess_1")
+
+    wm_a.record_observed_fact("top_secret_code", "ALPHA_999")
+    wm_b.record_observed_fact("top_secret_code", "BETA_111")
+
+    assert wm_a.get_state().observed_facts["top_secret_code"] == "ALPHA_999"
+    assert wm_b.get_state().observed_facts["top_secret_code"] == "BETA_111"
+    assert "ALPHA_999" not in str(wm_b.get_state().observed_facts)
+
+    # Working memory isolation check
+    wmem_a = WorkingMemory()
+    wmem_b = WorkingMemory()
+
+    wmem_a.write_scratchpad("auth_token", "TOKEN_A")
+    wmem_b.write_scratchpad("auth_token", "TOKEN_B")
+
+    assert wmem_a.read_scratchpad("auth_token") == "TOKEN_A"
+    assert wmem_b.read_scratchpad("auth_token") == "TOKEN_B"

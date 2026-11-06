@@ -3,16 +3,20 @@ Produces grounded, normalized vector representations from text and structured fe
 for semantic episodic retrieval and state matching, replacing hardcoded mock vectors.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import math
 import hashlib
+import logging
 import torch
+
+logger = logging.getLogger("cdm.memory.embedder")
 
 
 class SemanticMemoryEmbedder:
     """Produces normalized vector representations for cognitive memory search.
-    Supports neural embeddings when a language encoder is provided, or a deterministic,
-    statistically normalized structured+lexical representation method when running standalone.
+    Enables transformer-based semantic embeddings when the language encoder and tokenizer
+    are available, while maintaining a deterministic, statistically normalized structured+lexical
+    representation as an explicitly identified fallback.
     """
 
     def __init__(
@@ -20,12 +24,26 @@ class SemanticMemoryEmbedder:
         language_encoder: Optional[Any] = None,
         tokenizer: Optional[Any] = None,
         dim: int = 16,
-        use_neural: bool = False,
+        use_neural: Optional[bool] = None,
     ):
         self.language_encoder = language_encoder
         self.tokenizer = tokenizer
         self.dim = dim
-        self.use_neural = use_neural
+        # Automatically enable transformer neural embeddings if both encoder and tokenizer are present
+        if use_neural is None:
+            self.use_neural = bool(language_encoder is not None and tokenizer is not None)
+        else:
+            self.use_neural = use_neural
+        self.last_embedding_mode: str = "uninitialized"
+
+    def embed_with_metadata(
+        self,
+        text: str,
+        structured_features: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[List[float], str]:
+        """Generates embedding vector and returns it along with the explicit embedding mode."""
+        vec = self.embed(text=text, structured_features=structured_features)
+        return vec, self.last_embedding_mode
 
     def embed(
         self,
@@ -35,9 +53,16 @@ class SemanticMemoryEmbedder:
         """Generates a normalized dense vector embedding (L2 unit vector)."""
         struct = structured_features or {}
 
-        # Path 1: Neural transformer embedding if enabled and available
+        # Path 1: Transformer-based semantic embedding if available
         if self.use_neural and self.language_encoder is not None and self.tokenizer is not None:
             try:
+                device = torch.device("cpu")
+                if hasattr(self.language_encoder, "parameters"):
+                    try:
+                        device = next(self.language_encoder.parameters()).device
+                    except Exception:
+                        pass
+
                 tokens = self.tokenizer(
                     text,
                     max_length=64,
@@ -45,21 +70,37 @@ class SemanticMemoryEmbedder:
                     truncation=True,
                     return_tensors="pt",
                 )
+                tokens = {k: v.to(device) for k, v in tokens.items()}
+
                 with torch.no_grad():
                     input_ids = tokens["input_ids"]
                     attention_mask = tokens["attention_mask"]
                     # Extract sequence output from transformer
-                    seq_out = self.language_encoder.transformer(input_ids=input_ids, attention_mask=attention_mask)[0]
-                    pooled = self.language_encoder.pool_tokens(seq_out, attention_mask)[0]
-                    # Project or truncate to target dimension
-                    vec = pooled[: self.dim].cpu().numpy().tolist()
+                    if hasattr(self.language_encoder, "transformer"):
+                        seq_out = self.language_encoder.transformer(input_ids=input_ids, attention_mask=attention_mask)[0]
+                        if hasattr(self.language_encoder, "pool_tokens"):
+                            pooled = self.language_encoder.pool_tokens(seq_out, attention_mask)[0]
+                        else:
+                            pooled = seq_out[:, 0, :][0]
+                    elif hasattr(self.language_encoder, "forward"):
+                        pooled = self.language_encoder(input_ids, attention_mask)[0]
+                    else:
+                        raise AttributeError("Language encoder has no recognizable forward or transformer module")
+
+                    vec = pooled[: self.dim].cpu().float().numpy().tolist()
                     norm = math.sqrt(sum(x * x for x in vec))
                     if norm > 1e-6:
+                        self.last_embedding_mode = "transformer"
                         return [round(x / norm, 6) for x in vec]
-            except Exception:
-                pass  # Fallback to structured deterministic embedding
+            except Exception as e:
+                # Do NOT silently suppress neural embedding failures
+                logger.warning(
+                    f"Transformer neural embedding failed: {e}. "
+                    f"Falling back to deterministic structured embedding."
+                )
 
-        # Path 2: Grounded structured + lexical feature projection
+        # Path 2: Deterministic structured + lexical feature projection (Explicit Fallback)
+        self.last_embedding_mode = "structured_fallback"
         vec = [0.0] * self.dim
 
         # Extract normalized structured signals

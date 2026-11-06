@@ -33,8 +33,11 @@ class ContextEngine:
             history = self.sessions.setdefault(key, [])
 
             now = time.time()
-            last_turn_time = history[-1].temporal_delta_seconds if history else now
-            temporal_delta = max(0.0, now - last_turn_time) if history else 0.0
+            if history:
+                last_turn_time = getattr(history[-1], "timestamp", now)
+                temporal_delta = max(0.0, now - last_turn_time)
+            else:
+                temporal_delta = 0.0
 
             turn_index = len(history) + 1
 
@@ -60,6 +63,7 @@ class ContextEngine:
                 turn_index=turn_index,
                 dialogue_history=dialogue,
                 temporal_delta_seconds=temporal_delta,
+                timestamp=now,
                 detected_contradictions=contradictions,
                 relevance_scores=relevance,
             )

@@ -37,6 +37,7 @@ class ContextFrame(BaseModel):
     turn_index: int = 0
     dialogue_history: List[Dict[str, str]] = Field(default_factory=list)
     temporal_delta_seconds: float = 0.0
+    timestamp: float = Field(default_factory=time.time)
     detected_contradictions: List[str] = Field(default_factory=list)
     relevance_scores: Dict[str, float] = Field(default_factory=dict)
 

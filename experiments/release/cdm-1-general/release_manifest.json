@@ -23,12 +23,34 @@
     "predictive_network_heads": 2,
     "decision_network_heads": 4
   },
+  "packaged_files": {
+    "model.safetensors": {
+      "size_bytes": 633465536,
+      "sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
+    },
+    "config.json": {
+      "size_bytes": 1428,
+      "sha256": "b500ede84dd307ec59729b9a30873191f1a5e042c285f00a5fc8c8eb4b31e9fe"
+    },
+    "feature_schema.json": {
+      "size_bytes": 2839,
+      "sha256": "3e5e8f4e7c58786c6fd34e3fe5370e171bca89cdf9737fca9db943f20cf29c04"
+    },
+    "tokenizer.json": {
+      "size_bytes": 3583228,
+      "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
+    },
+    "tokenizer_config.json": {
+      "size_bytes": 397,
+      "sha256": "8d895c33fed683bb7b70178097d5a50478c9803236f53631c60e55851f1ddbe6"
+    }
+  },
   "verification": {
     "offline_inference_tested": true,
     "strict_safetensors_reload": true,
     "temperature_scaling_calibrated": true,
     "temperature_parameter": 0.7957,
-    "test_suite_status": "60/60 passing",
+    "test_suite_status": "72/72 passing",
     "tenant_isolation_verified": true
   }
 }

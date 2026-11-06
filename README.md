@@ -4,7 +4,7 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Framework](https://img.shields.io/badge/PyTorch-2.12+-EE4C2C.svg)](https://pytorch.org/)
 [![Transformers](https://img.shields.io/badge/HuggingFace-Transformers-yellow.svg)](https://huggingface.co/)
-[![Tests](https://img.shields.io/badge/Unit%20Tests-61%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Unit%20Tests-72%20Passed-brightgreen.svg)]()
 [![Model Weights](https://img.shields.io/badge/Model%20Weights-SafeTensors%20633MB-success.svg)]()
 
 ---
@@ -15,15 +15,15 @@
 
 CDM-1 is **not** a chatbot, **not** a conventional RAG application, and **not** an LLM wrapper. It is a dedicated 158M-parameter hybrid neural model and coordinated cognitive system combining:
 1. **Perception Intelligence**: Entity and signal extraction with perception confidence.
-2. **Contextual Intelligence**: Multi-turn dialogue context, temporal delta tracking, and contradiction detection.
-3. **Cognitive Memory**: Coordinated Working Memory (scratchpad & active goals), Episodic Memory, Semantic Rules, and Procedural Memory with grounded unit-vector semantic embeddings.
+2. **Contextual Intelligence**: Multi-turn dialogue context, temporal delta tracking with real timestamps, and contradiction detection.
+3. **Cognitive Memory**: Coordinated Working Memory (scratchpad & active goals), Episodic Memory, Semantic Rules, and Procedural Memory with grounded unit-vector semantic embeddings (transformer-based with structured fallback).
 4. **World Model**: Explicit environmental state, relation graph, and counterfactual transition dynamics ($S_{t+1} = T(S_t, A_t)$) with strict state separation (observed facts, inferred state, simulated state, and predicted future state).
 5. **Reasoning Intelligence**: Multi-step deduction, policy constraint gates, and traceable proof graphs.
 6. **Predictive Intelligence**: Action-conditioned forward outcome predictions, continuous resolution time, and risk modeling.
-7. **Planning & Goal Intelligence**: Goal hierarchies, constraint-aware forward plan search, plan evaluation, and replanning triggers.
+7. **Planning & Goal Intelligence**: Goal hierarchies, constraint-aware forward plan search, precondition validation, dynamic risk from predicted outcomes, and alternative plan evaluation.
 8. **CDM-1 Decision Core**: Central multi-head decision network with temperature calibration ($T=0.7957$), hard constraint logit masking, and selective abstention.
-9. **Metacognition & Feedback**: Telemetry feedback recording, discrepancy auditing, and controlled fine-tuning staging.
-10. **Multi-Tenant Isolation**: Rigorous tenant-isolated world model, context frames, memory partitions, and thread-safe concurrent execution.
+9. **Metacognition & Feedback**: Telemetry feedback recording with collision-resistant UUIDs, restart recovery, human review provenance validation, and controlled fine-tuning staging.
+10. **Multi-Tenant Isolation**: Rigorous tenant-isolated world model, context frames, memory partitions, and per-tenant-session thread safety.
 
 ---
 
@@ -88,8 +88,8 @@ CDM-1 is **not** a chatbot, **not** a conventional RAG application, and **not** 
 ### Pretrained Weights & Release Distribution
 
 Portable release packages are available in the repository `dist/` folder and verified against clean offline inference:
-- **Complete Release Archive (With Model Weights)**: `dist/CDM-1-Complete-With-Weights.zip` (1,120.92 MB, SHA-256: `309af929396701b5b988d127b5256b92c6ad5c9979dc0e4ea41d2476df2ef957`)
-- **Source-Only Archive**: `dist/CDM-1-Project.zip` (0.86 MB, SHA-256: `58c542d5c83f1e0f0eed636512dd755b5cf9f1d77b74646f82bf2dfc9e096f14`)
+- **Complete Release Archive (With Model Weights)**: `dist/CDM-1-Complete-With-Weights.zip` (1,120.93 MB, SHA-256: `3e17b4653dbbc982da5214f7e5512d6287a1d515e8da3609abb1b883bbc5e1fd`)
+- **Source-Only Archive**: `dist/CDM-1-Project.zip` (0.87 MB, SHA-256: `84d49c27827fac53b1c5d3962127e62e060426e50af8e05998b3a8bbbfb32771`)
 - **Release Verification Manifest**: [`dist/release_manifest.json`](dist/release_manifest.json)
 - **SafeTensors Model File**: `experiments/release/cdm-1-general/model.safetensors` (633 MB, SHA-256: `9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a`)
 

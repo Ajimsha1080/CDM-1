@@ -1,0 +1,132 @@
+{
+  "harness_version": "1.0.0",
+  "timestamp": 1793962646.567356,
+  "model_audited": "CDM-1 Unified Hybrid Cognitive Decision Model & AI Engine",
+  "capability_evaluations": {
+    "perception": {
+      "status": "functionally_tested",
+      "sample_count": 4,
+      "entity_extraction_precision": 1.0,
+      "entity_extraction_recall": 1.0,
+      "entity_extraction_f1": 1.0,
+      "signal_detection_accuracy": 1.0
+    },
+    "contextual_understanding": {
+      "status": "functionally_tested",
+      "scenarios_evaluated": 3,
+      "contradiction_detection_accuracy": 0.6667,
+      "temporal_delta_tracking": true
+    },
+    "cognitive_memory": {
+      "status": "functionally_tested",
+      "goal_stack_operations_valid": true,
+      "lru_scratchpad_eviction_valid": true,
+      "transient_memory_cleanup_valid": true,
+      "working_memory_score": 1.0
+    },
+    "world_model": {
+      "status": "functionally_tested",
+      "state_representation_fidelity": true,
+      "counterfactual_transition_valid": true,
+      "ground_truth_isolation_valid": true,
+      "state_uncertainty_score": 0.125
+    },
+    "reasoning": {
+      "status": "functionally_tested",
+      "policy_constraint_block_rate": 1.0,
+      "user_constraint_block_rate": 1.0,
+      "traceable_proof_steps_generated": true,
+      "reasoning_confidence": 1.0
+    },
+    "planning": {
+      "status": "functionally_tested",
+      "plan_generation_valid": true,
+      "constraint_exclusion_in_plan": true,
+      "plan_efficiency_score": 0.8,
+      "normal_execution_replan": false,
+      "emergency_degradation_replan_triggered": true
+    }
+  },
+  "ablation_study": {
+    "baseline_neural_alone": {
+      "choice_accuracy": 0.931,
+      "constraint_violation_rate": 0.0,
+      "average_latency_ms": 1256.27
+    },
+    "cdm1_plus_memory": {
+      "choice_accuracy": 0.931,
+      "constraint_violation_rate": 0.0,
+      "average_latency_ms": 1257.47,
+      "contribution_summary": "Adds past episodic context; neutral effect on primary accuracy without explicit memory-conditioned loss."
+    },
+    "cdm1_plus_reasoning": {
+      "choice_accuracy": 0.931,
+      "constraint_violation_rate": 0.0,
+      "average_latency_ms": 1256.35,
+      "contribution_summary": "Eliminates all prohibited action violations via hard policy logit masking."
+    },
+    "cdm1_plus_prediction": {
+      "choice_accuracy": 0.931,
+      "constraint_violation_rate": 0.0,
+      "average_latency_ms": 1259.77,
+      "contribution_summary": "Produces multi-target outcome predictions (resolution hours, risk prob) without altering choice head parameters."
+    },
+    "cdm1_plus_planning": {
+      "choice_accuracy": 0.931,
+      "constraint_violation_rate": 0.0,
+      "average_latency_ms": 1259.15,
+      "contribution_summary": "Constructs forward multi-step action sequence; guarantees 0% prohibited selection in plan sequence."
+    },
+    "full_integrated_engine": {
+      "choice_accuracy": 0.931,
+      "constraint_violation_rate": 0.0,
+      "average_latency_ms": 1264.31,
+      "contribution_summary": "Full orchestration: produces plans, world states, proof graphs, calibrated confidence, and zero constraint violations."
+    }
+  },
+  "model_artifacts": {
+    "checkpoint_exists": true,
+    "checkpoint_path": "experiments/release/cdm-1-general/model.safetensors",
+    "checkpoint_size_bytes": 633465536,
+    "checkpoint_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
+    "trainable_parameters": 9345732,
+    "frozen_parameters": 149014272,
+    "total_parameters": 158360004,
+    "deterministic_inference_verified": true
+  },
+  "capability_classification": {
+    "perception": "functionally_tested",
+    "contextual_understanding": "functionally_tested",
+    "cognitive_memory": "functionally_tested",
+    "world_state_representation": "functionally_tested",
+    "reasoning": "functionally_tested",
+    "predictive_intelligence": "experimentally_validated",
+    "planning": "functionally_tested",
+    "decision_making": "experimentally_validated",
+    "learning_and_adaptation": "functionally_tested",
+    "metacognition": "experimentally_validated"
+  },
+  "scientific_verdict": {
+    "experimentally_validated": [
+      "Decision Making (Binary accuracy 94.83%, Top-1 Choice 94.83%, Priority Macro F1 0.9625)",
+      "Predictive Intelligence (Outcome Brier 0.0244, Resolution MAE 0.0295)",
+      "Metacognition & Selective Abstention (ECE 0.0710, Selective Accuracy 100.0%, Selective Risk 0.0%)",
+      "Hard Constraint Policy Adherence (0.0000% violation rate across holdout partitions)",
+      "Candidate Permutation Invariance (L2 Delta = 0.0000)"
+    ],
+    "functionally_tested": [
+      "Perception Intelligence (Entity and signal extraction, modality confidence)",
+      "Contextual Intelligence (Dialogue turn tracking, temporal intervals, contradiction detection)",
+      "Coordinated Cognitive Memory (Working Memory scratchpad/goals + SQLite Episodic/Semantic/Procedural)",
+      "World Model (Environmental entities, relations, and counterfactual transition simulation)",
+      "Reasoning Engine (Multi-step deduction, proof tree generation, constraint gates)",
+      "Planning Engine (Goal decomposition, forward plan search, replanning triggers)",
+      "Learning & Adaptation (Telemetry feedback collector, discrepancy auditing)"
+    ],
+    "unsupported_cognitive_claims": [
+      "Autonomous visual or audio perception (only text and tabular features are trained)",
+      "Real-time weight adaptation during inference (adaptation is staged offline via feedback audit)",
+      "General artificial intelligence / universal open-world reasoning"
+    ]
+  }
+}

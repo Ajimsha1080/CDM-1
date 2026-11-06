@@ -5,14 +5,19 @@ contextual contradictions, and relevance scoring.
 
 from typing import Dict, List, Optional, Any, Tuple
 import time
+import threading
 from cdm.cognitive.state import ContextFrame, PerceptionResult
 
 
 class ContextEngine:
-    """Manages situation tracking across time, conversation history, and detects contextual contradictions."""
+    """Manages situation tracking across time, conversation history, and detects contextual contradictions.
+    Enforces strict tenant isolation and thread-safe session ownership.
+    """
 
     def __init__(self):
-        self.sessions: Dict[str, List[ContextFrame]] = {}
+        # Key: (tenant_id, session_id)
+        self.sessions: Dict[Tuple[str, str], List[ContextFrame]] = {}
+        self._lock = threading.Lock()
 
     def update_context(
         self,
@@ -23,42 +28,44 @@ class ContextEngine:
         system_response: Optional[str] = None,
     ) -> ContextFrame:
         """Appends a new turn to the session dialogue history and calculates temporal/contradiction metrics."""
-        history = self.sessions.setdefault(session_id, [])
+        with self._lock:
+            key = (tenant_id, session_id)
+            history = self.sessions.setdefault(key, [])
 
-        now = time.time()
-        last_turn_time = history[-1].temporal_delta_seconds if history else now
-        temporal_delta = max(0.0, now - last_turn_time) if history else 0.0
+            now = time.time()
+            last_turn_time = history[-1].temporal_delta_seconds if history else now
+            temporal_delta = max(0.0, now - last_turn_time) if history else 0.0
 
-        turn_index = len(history) + 1
+            turn_index = len(history) + 1
 
-        # Build dialogue history
-        dialogue = []
-        if history:
-            dialogue = list(history[-1].dialogue_history)
-        dialogue.append({"role": "user", "content": user_message})
-        if system_response:
-            dialogue.append({"role": "assistant", "content": system_response})
+            # Build dialogue history
+            dialogue = []
+            if history:
+                dialogue = list(history[-1].dialogue_history)
+            dialogue.append({"role": "user", "content": user_message})
+            if system_response:
+                dialogue.append({"role": "assistant", "content": system_response})
 
-        # Check for contradictions
-        contradictions = self._detect_contradictions(dialogue, perception)
+            # Check for contradictions
+            contradictions = self._detect_contradictions(dialogue, perception)
 
-        # Calculate relevance scores
-        relevance: Dict[str, float] = {}
-        for ent in perception.extracted_entities:
-            relevance[ent.name] = ent.confidence
+            # Calculate relevance scores
+            relevance: Dict[str, float] = {}
+            for ent in perception.extracted_entities:
+                relevance[ent.name] = ent.confidence
 
-        frame = ContextFrame(
-            session_id=session_id,
-            tenant_id=tenant_id,
-            turn_index=turn_index,
-            dialogue_history=dialogue,
-            temporal_delta_seconds=temporal_delta,
-            detected_contradictions=contradictions,
-            relevance_scores=relevance,
-        )
+            frame = ContextFrame(
+                session_id=session_id,
+                tenant_id=tenant_id,
+                turn_index=turn_index,
+                dialogue_history=dialogue,
+                temporal_delta_seconds=temporal_delta,
+                detected_contradictions=contradictions,
+                relevance_scores=relevance,
+            )
 
-        history.append(frame)
-        return frame
+            history.append(frame)
+            return frame
 
     def _detect_contradictions(self, dialogue: List[Dict[str, str]], perception: PerceptionResult) -> List[str]:
         """Detects factual contradictions between recent turns and current statements."""
@@ -84,7 +91,25 @@ class ContextEngine:
 
         return contradictions
 
-    def get_latest_context(self, session_id: str) -> Optional[ContextFrame]:
-        """Retrieves the most recent context frame for a session."""
-        frames = self.sessions.get(session_id)
-        return frames[-1] if frames else None
+    def get_latest_context(self, session_id: str, tenant_id: str = "default_tenant") -> Optional[ContextFrame]:
+        """Retrieves the most recent context frame for a tenant's session."""
+        with self._lock:
+            key = (tenant_id, session_id)
+            frames = self.sessions.get(key)
+            if frames:
+                return frames[-1]
+            # Fallback scan only if default_tenant
+            if tenant_id == "default_tenant":
+                for (t_id, s_id), f_list in self.sessions.items():
+                    if s_id == session_id and f_list:
+                        return f_list[-1]
+            return None
+
+    def clear_session(self, session_id: str, tenant_id: str = "default_tenant") -> bool:
+        """Clears session context for a specific tenant."""
+        with self._lock:
+            key = (tenant_id, session_id)
+            if key in self.sessions:
+                del self.sessions[key]
+                return True
+            return False

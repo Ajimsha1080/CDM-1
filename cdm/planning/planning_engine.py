@@ -1,6 +1,7 @@
 """Planning and Goal Intelligence Subsystem for CDM-1 Cognitive AI Engine.
 Manages goal decomposition, multi-step action sequencing, constraint-aware plan search,
-prospective plan evaluation against World Model state transitions, and replanning triggers.
+prospective plan evaluation against World Model state transitions, preconditions,
+risk estimates, alternative plan generation, and dynamic replanning triggers.
 """
 
 from typing import Dict, List, Optional, Any, Tuple
@@ -9,7 +10,7 @@ from cdm.world_model.world_model import WorldModel
 
 
 class PlanningEngine:
-    """Multi-step action sequencing, plan evaluation, and goal accomplishment engine."""
+    """Multi-step action sequencing, precondition validation, risk evaluation, and alternative plan generation."""
 
     def __init__(self, world_model: Optional[WorldModel] = None):
         self.world_model = world_model or WorldModel()
@@ -21,6 +22,7 @@ class PlanningEngine:
         current_world_state: WorldState,
         reasoning_trace: ReasoningTrace,
         prohibited_actions: Optional[List[str]] = None,
+        predicted_outcome: Optional[Dict[str, Any]] = None,
     ) -> Plan:
         """Constructs and evaluates a multi-step plan to achieve the target goal while adhering to constraints."""
         forbidden = set(prohibited_actions or [])
@@ -35,12 +37,30 @@ class PlanningEngine:
         plan_steps: List[PlanStep] = []
         cumulative_risk = 0.0
 
-        # Sequence actions towards goal
+        # Sequence actions towards goal with preconditions and counterfactual effects
         for idx, action in enumerate(valid_actions[:4], start=1):
             # Simulate forward transition consequence in World Model
             simulated_next_state = self.world_model.simulate_transition(action)
-            step_risk = 0.15 if "escalate" in action.lower() else (0.25 if "refund" in action.lower() else 0.05)
+
+            # Determine risk estimate
+            if "escalate" in action.lower():
+                step_risk = 0.15
+            elif "refund" in action.lower():
+                step_risk = 0.25
+            elif "quarantine" in action.lower() or "block" in action.lower():
+                step_risk = 0.20
+            else:
+                step_risk = 0.05
             cumulative_risk += step_risk
+
+            # Establish explicit domain preconditions
+            preconditions = [f"constraint_clear_{action}"]
+            if "refund" in action.lower():
+                preconditions.append("policy_refund_limit_verified")
+            elif "escalate" in action.lower():
+                preconditions.append("tier1_triage_completed")
+            elif "auto_resolve" in action.lower():
+                preconditions.append("uncontested_standard_issue")
 
             step = PlanStep(
                 step_number=idx,
@@ -48,8 +68,9 @@ class PlanningEngine:
                 parameters={"target_goal": target_goal.goal_id},
                 expected_outcome={
                     "state_delta": simulated_next_state.environment_metrics,
+                    "simulated_transition": simulated_next_state.simulated_state.get(f"transition_{action}", {}),
                 },
-                preconditions=[f"constraint_clear_{action}"],
+                preconditions=preconditions,
                 postconditions=[f"action_executed_{action}"],
                 risk_estimate=step_risk,
                 is_reversible="refund" not in action.lower(),
@@ -59,15 +80,26 @@ class PlanningEngine:
         efficiency = max(0.2, 1.0 - (len(plan_steps) * 0.1))
         constraint_compliance = len(forbidden.intersection(set(valid_actions))) == 0
 
-        # Generate alternative plan option
+        # Generate realistic alternative plan options (Conservative and Contingency)
         alternatives = []
         if len(valid_actions) > 1:
-            alt_plan_summary = {
-                "name": "Minimal Intervention Plan",
+            alt_conservative = {
+                "name": "Conservative Diagnostic Plan",
                 "first_action": valid_actions[-1],
-                "expected_risk": round(cumulative_risk * 0.7, 3),
+                "expected_risk": round(cumulative_risk * 0.6, 3),
+                "rationale": "Prioritize diagnostic information gathering before high-commitment actions.",
             }
-            alternatives.append(alt_plan_summary)
+            alternatives.append(alt_conservative)
+
+        if any("escalate" in a.lower() for a in valid_actions):
+            escalate_act = next(a for a in valid_actions if "escalate" in a.lower())
+            alt_escalation = {
+                "name": "Direct Escalation Plan",
+                "first_action": escalate_act,
+                "expected_risk": 0.15,
+                "rationale": "Bypass automated routines for critical SLA or high-exposure incidents.",
+            }
+            alternatives.append(alt_escalation)
 
         return Plan(
             target_goal_id=target_goal.goal_id,
@@ -86,7 +118,9 @@ class PlanningEngine:
         # Check if any hard constraint in world state now forbids the upcoming action
         next_action = current_plan.steps[0].action_name
         for constraint in current_world_state.active_constraints:
-            if next_action.lower() in constraint.lower() and ("prohibit" in constraint.lower() or "forbidden" in constraint.lower()):
+            if next_action.lower() in constraint.lower() and (
+                "prohibit" in constraint.lower() or "forbidden" in constraint.lower()
+            ):
                 return True, f"Planned action '{next_action}' is now prohibited by updated world state constraint: {constraint}"
 
         # Check if environment metrics deteriorated unexpectedly

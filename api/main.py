@@ -140,7 +140,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"Loading CDM-1 Model from {model_path}...")
     try:
         runtime_model = CognitiveDecisionModel.from_pretrained(model_path)
-        runtime_cognitive_engine = CognitiveEngine(decision_model=runtime_model)
+        runtime_cognitive_engine = CognitiveEngine(
+            decision_model=runtime_model,
+            db_path=os.environ.get("CDM_MEMORY_DB", "experiments/cognitive_memory.db"),
+        )
         logger.info("CDM-1 Model and Cognitive Engine loaded successfully and verified for production inference.")
     except Exception as e:
         model_load_error = str(e)

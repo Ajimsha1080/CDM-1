@@ -80,12 +80,20 @@ class WorldRelation(BaseModel):
 
 
 class WorldState(BaseModel):
-    """Explicit internal representation of the operational environment."""
+    """Explicit internal representation of the operational environment.
+    Strictly distinguishes observed facts, inferred state, simulated state, and predicted future state.
+    """
     state_id: str = Field(default_factory=lambda: f"ws_{uuid.uuid4().hex[:8]}")
+    tenant_id: str = "default_tenant"
+    session_id: str = "default_session"
     entities: Dict[str, WorldEntity] = Field(default_factory=dict)
     relations: List[WorldRelation] = Field(default_factory=list)
     environment_metrics: Dict[str, float] = Field(default_factory=dict)
     active_constraints: List[str] = Field(default_factory=list)
+    observed_facts: Dict[str, Any] = Field(default_factory=dict)
+    inferred_state: Dict[str, Any] = Field(default_factory=dict)
+    simulated_state: Dict[str, Any] = Field(default_factory=dict)
+    predicted_future_state: Dict[str, Any] = Field(default_factory=dict)
     overall_state_uncertainty: float = 0.0
     timestamp: float = Field(default_factory=time.time)
 

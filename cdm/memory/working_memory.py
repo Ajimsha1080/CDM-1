@@ -75,6 +75,10 @@ class WorkingMemory:
         """Returns a snapshot of the current working memory state."""
         return self.state.model_copy(deep=True)
 
+    def clear(self) -> None:
+        """Clears all working memory state (goals, scratchpad, hypotheses)."""
+        self.state = WorkingMemoryState()
+
     def clear_transient(self) -> None:
         """Clears transient scratchpad and hypotheses while retaining completed goal traces."""
         self.state.scratchpad.clear()

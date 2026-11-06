@@ -10,23 +10,13 @@ services:
       - "8000:8000"
     environment:
       - CDM_MODEL_PATH=/app/experiments/release/cdm-1-general
+      - CDM_KEY_DB=/app/experiments/api_keys.sqlite
+      - CDM_METER_DB=/app/experiments/api_usage_meter.sqlite
+      - CDM_MEMORY_DB=/app/experiments/cognitive_memory.db
       - PORT=8000
-    restart: unless-stopped
-    depends_on:
-      - cdm-memory-db
-
-  cdm-memory-db:
-    image: pgvector/pgvector:pg16
-    container_name: cdm-memory-pgvector
-    environment:
-      POSTGRES_USER: cdm_user
-      POSTGRES_PASSWORD: cdm_secure_password
-      POSTGRES_DB: cdm_memory
-    ports:
-      - "5432:5432"
     volumes:
-      - pgvector_data:/var/lib/postgresql/data
+      - cdm_data:/app/experiments
     restart: unless-stopped
 
 volumes:
-  pgvector_data:
+  cdm_data:

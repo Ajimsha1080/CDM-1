@@ -1,7 +1,7 @@
 """Episodic Memory Subsystem for CDM-1.
 Stores and retrieves historical interactions, context vectors, and verified outcomes
 with semantic relevance scoring, duplicate detection, provenance, and TTL expiration
-backed by persistent storage.
+backed by persistent storage with tenant isolation.
 """
 
 from typing import Dict, List, Optional, Any
@@ -54,7 +54,6 @@ class EpisodicMemory:
         prohibited_actions: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Cosine similarity vector retrieval over episodic memory for a specific tenant.
-
         Guarantees memory retrieval does not surface recommendations that violate policy constraints.
         """
         raw_matches = self.storage.query_similar_episodic(
@@ -80,6 +79,26 @@ class EpisodicMemory:
 
         return guarded_results
 
-    def update_verified_outcome(self, record_id: str, outcome: Dict[str, Any]) -> bool:
-        """Update a historical record with verified ground-truth outcome once resolved."""
-        return self.storage.update_verified_outcome(record_id, outcome)
+    def search_similar(
+        self,
+        tenant_id: str = "default_tenant",
+        query_vector: Optional[List[float]] = None,
+        top_k: int = 3,
+        min_sim: float = 0.5,
+        prohibited_actions: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Convenience alias for retrieve_similar with flexible parameter order."""
+        vec = query_vector or []
+        return self.retrieve_similar(
+            query_vector=vec,
+            tenant_id=tenant_id,
+            top_k=top_k,
+            min_relevance=min_sim,
+            prohibited_actions=prohibited_actions,
+        )
+
+    def update_verified_outcome(
+        self, record_id: str, outcome: Dict[str, Any], tenant_id: Optional[str] = None
+    ) -> bool:
+        """Update a historical record with verified ground-truth outcome once resolved with tenant isolation."""
+        return self.storage.update_verified_outcome(record_id, outcome, tenant_id=tenant_id)

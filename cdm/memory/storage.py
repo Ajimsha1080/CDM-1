@@ -20,7 +20,7 @@ class BaseMemoryStorage:
     def query_similar_episodic(self, tenant_id: str, query_vector: List[float], top_k: int = 5, min_sim: float = 0.5) -> List[Dict[str, Any]]:
         raise NotImplementedError
 
-    def update_verified_outcome(self, record_id: str, outcome: Dict[str, Any]) -> bool:
+    def update_verified_outcome(self, record_id: str, outcome: Dict[str, Any], tenant_id: Optional[str] = None) -> bool:
         raise NotImplementedError
 
     def insert_rule(self, rule_id: str, tenant_id: str, domain: str, rule_data: Dict[str, Any]) -> None:
@@ -164,12 +164,18 @@ class SQLiteMemoryStorage(BaseMemoryStorage):
         results.sort(key=lambda x: x[0], reverse=True)
         return [item[1] for item in results[:top_k]]
 
-    def update_verified_outcome(self, record_id: str, outcome: Dict[str, Any]) -> bool:
+    def update_verified_outcome(self, record_id: str, outcome: Dict[str, Any], tenant_id: Optional[str] = None) -> bool:
         outcome_str = json.dumps(outcome)
-        rowcount = self._execute_commit(
-            "UPDATE episodic_memory SET verified_outcome_json = ? WHERE record_id = ?",
-            (outcome_str, record_id),
-        )
+        if tenant_id:
+            rowcount = self._execute_commit(
+                "UPDATE episodic_memory SET verified_outcome_json = ? WHERE record_id = ? AND tenant_id = ?",
+                (outcome_str, record_id, tenant_id),
+            )
+        else:
+            rowcount = self._execute_commit(
+                "UPDATE episodic_memory SET verified_outcome_json = ? WHERE record_id = ?",
+                (outcome_str, record_id),
+            )
         return rowcount > 0
 
     def insert_rule(self, rule_id: str, tenant_id: str, domain: str, rule_data: Dict[str, Any]) -> None:

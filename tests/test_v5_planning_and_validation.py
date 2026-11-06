@@ -83,10 +83,14 @@ def test_planning_distinguishes_trained_model_risk():
     )
     reasoning = ReasoningTrace()
 
-    # Pass explicit trained model outcome predictions
+    # Pass explicit trained model outcome predictions with genuine model provenance
     predicted_outcome = {
         "predicted_risk": 0.12,
         "candidate_scores": {"auto_resolve": 0.92, "escalate_tier2": 0.35},
+        "model_id": "CDM-1-General",
+        "model_version": "1.0.0",
+        "prediction_source": "trained_model_inference",
+        "is_genuine_neural_prediction": True,
     }
 
     plan = pe.generate_plan(

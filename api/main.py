@@ -215,53 +215,34 @@ def health_check():
     }
 
 
+from cdm.security.manifest_verification import (
+    verify_checkpoint_authenticity,
+    SecurityVerificationError,
+)
+
 VERIFIED_CHECKPOINT_HASH: Optional[str] = None
 
 
 def _verify_checkpoint_integrity(model_path: str, weights_path: str) -> str:
-    """Verifies that model.safetensors matches the trusted SHA-256 in release_manifest.json."""
+    """Verifies that model.safetensors matches the trusted SHA-256 and signed release_manifest.json."""
     global VERIFIED_CHECKPOINT_HASH
     if VERIFIED_CHECKPOINT_HASH is not None:
         return VERIFIED_CHECKPOINT_HASH
 
-    manifest_path = os.path.join(model_path, "release_manifest.json")
-    if not os.path.exists(manifest_path):
-        manifest_path = "experiments/release/cdm-1-general/release_manifest.json"
-
-    if not os.path.exists(manifest_path):
+    try:
+        auth_info = verify_checkpoint_authenticity(model_path, verify_signature=True)
+        VERIFIED_CHECKPOINT_HASH = auth_info["sha256"]
+        return VERIFIED_CHECKPOINT_HASH
+    except SecurityVerificationError as err:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Trusted release manifest missing at {manifest_path}",
+            detail=f"Checkpoint authenticity failure: {err}",
         )
-
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
-
-    trusted_hash = (
-        manifest.get("artifact", {}).get("sha256")
-        or manifest.get("packaged_files", {}).get("model.safetensors", {}).get("sha256")
-    )
-    if not trusted_hash:
+    except Exception as err:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Trusted release manifest lacks valid SHA-256 for model.safetensors",
+            detail=f"Checkpoint verification error: {err}",
         )
-
-    import hashlib
-    h = hashlib.sha256()
-    with open(weights_path, "rb") as f:
-        while chunk := f.read(1048576):
-            h.update(chunk)
-    computed_hash = h.hexdigest()
-
-    if computed_hash.lower() != trusted_hash.lower():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Checkpoint SHA-256 integrity mismatch: expected {trusted_hash}, got {computed_hash}",
-        )
-
-    VERIFIED_CHECKPOINT_HASH = computed_hash
-    return VERIFIED_CHECKPOINT_HASH
 
 
 @app.get("/v1/ready")
@@ -288,6 +269,7 @@ def readiness_check():
         "status": "ready",
         "model_loaded": True,
         "weights_verified": True,
+        "manifest_signature_verified": True,
         "weights_sha256": verified_hash,
         "parameters": "158M",
         "timestamp": time.time(),

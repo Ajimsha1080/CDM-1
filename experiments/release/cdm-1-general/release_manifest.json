@@ -52,5 +52,10 @@
     "temperature_parameter": 0.7957,
     "test_suite_status": "72/72 passing",
     "tenant_isolation_verified": true
+  },
+  "manifest_signature": {
+    "algorithm": "HMAC-SHA256",
+    "key_id": "cdm-release-root-2026",
+    "signature": "178c6ddec5343c3cfac27c24c6006fd82029428ec1bbbd5481b953cee0f39f56"
   }
 }

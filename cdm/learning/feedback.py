@@ -42,10 +42,21 @@ class FeedbackCollector:
             self._init_db()
             self._load_persisted_events()
 
+    def _get_connection(self) -> sqlite3.Connection:
+        """Creates an optimized, thread-safe, and multi-process resilient SQLite connection.
+        Configures WAL journal mode, 30-second busy timeout, and row factory.
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        conn.execute("PRAGMA busy_timeout = 30000")
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.row_factory = sqlite3.Row
+        return conn
+
     def _init_db(self) -> None:
         if not self.db_path:
             return
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         try:
             with conn:
                 conn.execute("""
@@ -77,27 +88,11 @@ class FeedbackCollector:
         """Retrieves persisted feedback records from SQLite after process restart."""
         if not self.db_path or not os.path.exists(self.db_path):
             return
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
+        conn = self._get_connection()
         try:
             with conn:
                 rows = conn.execute("SELECT * FROM feedback_events ORDER BY timestamp ASC").fetchall()
-                self.events = []
-                for r in rows:
-                    event = FeedbackEvent(
-                        event_id=r["event_id"],
-                        tenant_id=r["tenant_id"],
-                        decision_id=r["decision_id"],
-                        predicted_decision=json.loads(r["predicted_decision_json"]),
-                        predicted_outcome=json.loads(r["predicted_outcome_json"]),
-                        verified_actual_outcome=json.loads(r["verified_actual_outcome_json"]),
-                        decision_success=bool(r["decision_success"]),
-                        discrepancy_score=float(r["discrepancy_score"]),
-                        timestamp=float(r["timestamp"]),
-                        review_status=r["review_status"],
-                        reviewer_id=r["reviewer_id"] if "reviewer_id" in r.keys() else None,
-                    )
-                    self.events.append(event)
+                self.events = [self._row_to_event(r) for r in rows]
         finally:
             conn.close()
 
@@ -164,9 +159,15 @@ class FeedbackCollector:
 
             # Persist to durable SQLite database if configured
             if self.db_path:
-                conn = sqlite3.connect(self.db_path)
+                conn = self._get_connection()
                 try:
                     with conn:
+                        # Check SQLite storage for duplicate ID as well to prevent cross-process collisions
+                        exists = conn.execute("SELECT 1 FROM feedback_events WHERE event_id = ?", (event.event_id,)).fetchone()
+                        if exists:
+                            raise ValueError(
+                                f"Duplicate feedback event ID '{event.event_id}' already exists in SQLite storage."
+                            )
                         # Strict INSERT without OR REPLACE to prevent silent collision overwrites
                         try:
                             conn.execute(
@@ -222,8 +223,7 @@ class FeedbackCollector:
         """
         if self.db_path and os.path.exists(self.db_path):
             with self._lock:
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._get_connection()
                 try:
                     with conn:
                         if tenant_id:
@@ -265,7 +265,7 @@ class FeedbackCollector:
             rev_id = reviewer_id or "human_auditor"
 
             if self.db_path and os.path.exists(self.db_path):
-                conn = sqlite3.connect(self.db_path)
+                conn = self._get_connection()
                 try:
                     with conn:
                         if tenant_id:
@@ -300,8 +300,7 @@ class FeedbackCollector:
         """
         if self.db_path and os.path.exists(self.db_path):
             with self._lock:
-                conn = sqlite3.connect(self.db_path)
-                conn.row_factory = sqlite3.Row
+                conn = self._get_connection()
                 try:
                     with conn:
                         if tenant_id:

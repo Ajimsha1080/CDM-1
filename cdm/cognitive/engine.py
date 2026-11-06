@@ -318,13 +318,20 @@ class CognitiveEngine:
             if execute_planning and working_state.active_goals:
                 primary_goal = working_state.active_goals[0]
                 self.planning_engine.world_model = world_model
+                pred_for_planning = dict(cdm_result.predicted_outcome or {})
+                pred_for_planning["predicted_risk"] = risk
+                pred_for_planning["candidate_scores"] = cdm_result.candidate_scores
+                pred_for_planning["model_id"] = getattr(cdm_result, "model_id", "CDM-1-General")
+                pred_for_planning["model_version"] = getattr(cdm_result, "model_version", "1.0.0")
+                pred_for_planning["prediction_source"] = "trained_model_inference"
+                pred_for_planning["is_genuine_neural_prediction"] = True
                 generated_plan = self.planning_engine.generate_plan(
                     target_goal=primary_goal,
                     available_actions=candidate_list,
                     current_world_state=world_state,
                     reasoning_trace=reasoning_trace,
                     prohibited_actions=effective_prohibitions,
-                    predicted_outcome=cdm_result.predicted_outcome,
+                    predicted_outcome=pred_for_planning,
                 )
 
             # Step I: Metacognitive Review & Safety Gate

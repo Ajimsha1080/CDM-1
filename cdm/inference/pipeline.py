@@ -184,6 +184,9 @@ class CognitiveDecisionModel:
 
         risk_val = round(float(pred["estimated_risk"][0].item()), 4)
 
+        model_name = getattr(getattr(self.model, "config", None), "model_name", "CDM-1-General")
+        model_version = getattr(getattr(self.model, "config", None), "model_version", "1.0.0")
+
         result_payload = {
             "task": task,
             "decision": bin_decision_str,
@@ -194,11 +197,25 @@ class CognitiveDecisionModel:
             "priority": priority_str,
             "risk": risk_val,
             "abstain": abstain_val,
+            "model_id": model_name,
+            "model_version": model_version,
+            "prediction_source": "trained_model_inference",
+            "is_genuine_neural_prediction": True,
+            "provenance": {
+                "model_id": model_name,
+                "model_version": model_version,
+                "prediction_source": "trained_model_inference",
+                "is_genuine_neural_prediction": True,
+            },
             "predicted_outcome": {
                 "binary_outcome_probability": round(
                     float(torch.sigmoid(pred["binary_outcome_logits"][0]).item()), 4
                 ),
                 "predicted_resolution_time": round(float(pred["numeric_outcome"][0].item()), 2),
+                "model_id": model_name,
+                "model_version": model_version,
+                "prediction_source": "trained_model_inference",
+                "is_genuine_neural_prediction": True,
             },
         }
 

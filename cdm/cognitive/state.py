@@ -43,7 +43,7 @@ class ContextFrame(BaseModel):
 
 
 class GoalNode(BaseModel):
-    """Structured goal in the goal hierarchy."""
+    """Structured goal in the goal hierarchy with explicit verification conditions."""
     goal_id: str
     description: str
     priority: int = 1  # 1 (Highest) to 5 (Lowest)
@@ -51,6 +51,8 @@ class GoalNode(BaseModel):
     parent_goal_id: Optional[str] = None
     subgoal_ids: List[str] = Field(default_factory=list)
     success_criteria: Dict[str, Any] = Field(default_factory=dict)
+    required_postconditions: List[str] = Field(default_factory=list)
+    target_state_metrics: Dict[str, float] = Field(default_factory=dict)
 
 
 class WorkingMemoryState(BaseModel):
@@ -120,7 +122,7 @@ class ReasoningTrace(BaseModel):
 
 
 class PlanStep(BaseModel):
-    """Single action step in a multi-step plan."""
+    """Single action step in a multi-step plan with explicit risk and prediction provenance."""
     step_number: int
     action_name: str
     parameters: Dict[str, Any] = Field(default_factory=dict)
@@ -128,20 +130,26 @@ class PlanStep(BaseModel):
     preconditions: List[str] = Field(default_factory=list)
     postconditions: List[str] = Field(default_factory=list)
     risk_estimate: float = 0.0
-    risk_source: str = "trained_model_prediction"  # 'trained_model_prediction' vs 'world_state_uncertainty_heuristic'
+    risk_source: str = "trained_model_prediction"  # 'trained_model_prediction', 'world_state_uncertainty_heuristic', 'caller_unverified_heuristic'
+    model_id: Optional[str] = None
+    model_version: Optional[str] = None
+    prediction_source: Optional[str] = None
+    risk_provenance: Dict[str, Any] = Field(default_factory=dict)
     is_reversible: bool = True
 
 
 class Plan(BaseModel):
-    """Multi-step plan evaluated against World Model transitions."""
+    """Multi-step plan evaluated against World Model transitions and verified goal conditions."""
     plan_id: str = Field(default_factory=lambda: f"plan_{uuid.uuid4().hex[:8]}")
     target_goal_id: str
     steps: List[PlanStep] = Field(default_factory=list)
     cumulative_risk: float = 0.0
     risk_source: str = "trained_model_prediction"
+    risk_provenance: Dict[str, Any] = Field(default_factory=dict)
     plan_efficiency_score: float = 1.0
     constraint_compliance: bool = True
-    goal_satisfied: bool = True
+    goal_satisfied: bool = False
+    goal_satisfaction_details: Dict[str, Any] = Field(default_factory=dict)
     alternative_plans: List[Dict[str, Any]] = Field(default_factory=list)
 
 

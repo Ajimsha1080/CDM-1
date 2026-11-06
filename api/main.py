@@ -20,6 +20,8 @@ from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
 from cdm.inference.pipeline import CognitiveDecisionModel
+from cdm.cognitive.engine import CognitiveEngine
+from cdm.cognitive.state import CognitiveEngineResult
 
 # Structured Logging Configuration
 logging.basicConfig(
@@ -84,14 +86,44 @@ class DecisionResponse(BaseModel):
     latency_ms: float
 
 
-# Global model container
+class CognitiveProcessRequest(BaseModel):
+    text: str = Field(..., max_length=8192, description="Task narrative or inquiry text.")
+    structured_features: Dict[str, Any] = Field(default_factory=dict, description="Tabular attributes.")
+    task: str = Field(default="choice", description="Decision task type.")
+    candidates: Optional[List[str]] = Field(default=None, max_length=32, description="Candidate actions.")
+    prohibited_actions: Optional[List[str]] = Field(default=None, description="Prohibited action constraints.")
+    goals: Optional[List[str]] = Field(default=None, description="Active task goals.")
+    constraints: Optional[List[str]] = Field(default=None, description="Explicit caller constraints.")
+    session_id: str = Field(default="default_session", description="Session identifier for multi-turn tracking.")
+
+
+class CognitiveProcessResponse(BaseModel):
+    execution_id: str
+    decision: Any
+    confidence: float
+    calibrated_confidence: float
+    priority: str
+    risk: float
+    operational_score: Optional[float] = None
+    predicted_outcomes: Dict[str, Any] = Field(default_factory=dict)
+    selected_plan: Optional[Dict[str, Any]] = None
+    reasoning_evidence: Dict[str, Any] = Field(default_factory=dict)
+    world_state_summary: Dict[str, Any] = Field(default_factory=dict)
+    abstain: bool = False
+    abstention_reason: Optional[str] = None
+    execution_recommendation: str
+    latency_ms: float
+
+
+# Global model & cognitive engine container
 runtime_model: Optional[CognitiveDecisionModel] = None
+runtime_cognitive_engine: Optional[CognitiveEngine] = None
 model_load_error: Optional[str] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global runtime_model, model_load_error
+    global runtime_model, runtime_cognitive_engine, model_load_error
 
     # Priority 6: Fail startup in production if secrets are missing or default
     KEY_MANAGER.check_production_safety()
@@ -108,7 +140,8 @@ async def lifespan(app: FastAPI):
     logger.info(f"Loading CDM-1 Model from {model_path}...")
     try:
         runtime_model = CognitiveDecisionModel.from_pretrained(model_path)
-        logger.info("CDM-1 Model loaded successfully and verified for production inference.")
+        runtime_cognitive_engine = CognitiveEngine(decision_model=runtime_model)
+        logger.info("CDM-1 Model and Cognitive Engine loaded successfully and verified for production inference.")
     except Exception as e:
         model_load_error = str(e)
         logger.critical(f"FATAL: Failed to load CDM-1 model: {e}", exc_info=True)
@@ -322,6 +355,55 @@ def predict_outcome(
 ):
     req.task = "predict"
     return create_decision(req, tenant)
+
+
+@app.post("/v1/cognitive/process", response_model=CognitiveProcessResponse)
+def cognitive_process(
+    req: CognitiveProcessRequest,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Processes request through the complete integrated Cognitive AI Engine loop."""
+    if runtime_cognitive_engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cognitive Engine runtime not initialized.",
+        )
+    try:
+        res = runtime_cognitive_engine.process(
+            text=req.text,
+            structured_features=req.structured_features,
+            candidates=req.candidates,
+            prohibited_actions=req.prohibited_actions,
+            task=req.task,
+            goals=req.goals,
+            constraints=req.constraints,
+            session_id=req.session_id,
+            tenant_id=tenant["tenant_id"],
+        )
+        plan_dict = res.selected_plan.model_dump() if res.selected_plan else None
+        return CognitiveProcessResponse(
+            execution_id=res.execution_id,
+            decision=res.decision,
+            confidence=res.confidence,
+            calibrated_confidence=res.calibrated_confidence,
+            priority=res.priority,
+            risk=res.risk,
+            operational_score=res.operational_score,
+            predicted_outcomes=res.predicted_outcomes,
+            selected_plan=plan_dict,
+            reasoning_evidence=res.reasoning_evidence.model_dump(),
+            world_state_summary=res.world_state_summary,
+            abstain=res.abstain,
+            abstention_reason=res.abstention_reason,
+            execution_recommendation=res.execution_recommendation,
+            latency_ms=res.latency_ms,
+        )
+    except Exception as e:
+        logger.error(f"Cognitive process failure: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred during cognitive processing.",
+        )
 
 
 @app.post("/v1/batch")

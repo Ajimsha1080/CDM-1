@@ -35,3 +35,8 @@ class ProceduralMemory:
     def get_procedure(self, proc_id: str, tenant_id: str = "default_tenant") -> Optional[OperationalProcedure]:
         data = self.storage.get_procedure(proc_id=proc_id, tenant_id=tenant_id)
         return OperationalProcedure.model_validate(data) if data else None
+
+    def get_workflows_for_domain(self, domain: str, tenant_id: str = "default_tenant") -> List[Dict[str, Any]]:
+        if hasattr(self.storage, "get_procedures_for_domain"):
+            return self.storage.get_procedures_for_domain(tenant_id=tenant_id, domain=domain)
+        return []

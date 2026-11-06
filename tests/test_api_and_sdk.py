@@ -98,3 +98,42 @@ def test_sdk_explicit_mode_enforcement():
     assert client_hosted.mode == "hosted"
     with pytest.raises(CDMError):
         client_hosted.decide(text="Test inquiry", task="binary")
+
+
+def test_api_and_sdk_cognitive_process(client):
+    """Verifies the new /v1/cognitive/process REST endpoint and SDK .process() method."""
+    # 1. REST API endpoint
+    headers = {"Authorization": "Bearer sk_test_developer_key"}
+    payload = {
+        "text": "Customer reports critical security breach on server ACC-99212.",
+        "structured_features": {
+            "monetary_value_usd": 15000.0,
+            "sla_remaining_hours": 0.5,
+            "domain": "business_operations",
+            "urgency_level": "critical",
+        },
+        "candidates": ["auto_resolve", "isolate_server", "escalate_to_tier2"],
+        "prohibited_actions": ["auto_resolve"],
+        "goals": ["Contain breach and prevent lateral movement"],
+        "session_id": "test_api_session",
+    }
+    r = client.post("/v1/cognitive/process", json=payload, headers=headers)
+    assert r.status_code == 200
+    data = r.json()
+    assert data["decision"] != "auto_resolve"
+    assert data["selected_plan"] is not None
+    assert "reasoning_evidence" in data
+    assert "world_state_summary" in data
+
+    # 2. Local SDK .process()
+    client_local = CDM(mode="local", local_model_path="experiments/release/cdm-1-general")
+    sdk_res = client_local.process(
+        text="Customer reports item arrived damaged with broken glass.",
+        structured_features={"monetary_value_usd": 45.0, "urgency_level": "medium"},
+        candidates=["auto_resolve", "issue_refund", "escalate_to_tier2"],
+        prohibited_actions=["auto_resolve"],
+        goals=["Resolve customer damaged delivery"],
+    )
+    assert sdk_res.decision != "auto_resolve"
+    assert sdk_res.selected_plan is not None
+    assert len(sdk_res.selected_plan["steps"]) >= 1

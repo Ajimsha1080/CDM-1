@@ -1,19 +1,28 @@
-# CDM-1 — Cognitive Decision Model
-### Independent Trainable Hybrid Neural Decision Architecture | Open-Source Weights + Commercial API
+# CDM-1 — Cognitive Decision Model & Integrated Cognitive AI Engine
+### Unified Hybrid Neural Architecture & Coordinated Cognitive AI Engine | Open-Source Weights + Commercial API
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Framework](https://img.shields.io/badge/PyTorch-2.12+-EE4C2C.svg)](https://pytorch.org/)
 [![Transformers](https://img.shields.io/badge/HuggingFace-Transformers-yellow.svg)](https://huggingface.co/)
-[![Tests](https://img.shields.io/badge/Unit%20Tests-51%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Unit%20Tests-60%20Passed-brightgreen.svg)]()
 [![Model Weights](https://img.shields.io/badge/Model%20Weights-SafeTensors%20633MB-success.svg)]()
 
 ---
 
 ## 1. Executive Summary
 
-**CDM-1 (Cognitive Decision Model)** is an independent, trainable AI decision model purpose-built for operational reasoning, candidate action choice, priority scoring, risk estimation, and calibrated decision-making. 
+**CDM-1 (Cognitive Decision Model)** is an integrated Cognitive AI Engine and independent trainable decision model purpose-built for operational reasoning, candidate action choice, priority scoring, risk estimation, and calibrated decision-making. 
 
-CDM-1 is **not** a chatbot, **not** a conventional RAG application, and **not** an LLM wrapper. It is a dedicated 158M-parameter hybrid neural model combining contextual language representations, tabular structured feature embeddings, gated cognitive fusion, action-conditioned predictive outcome heads, and a multi-head decision network with hard policy constraint enforcement and selective abstention.
+CDM-1 is **not** a chatbot, **not** a conventional RAG application, and **not** an LLM wrapper. It is a dedicated 158M-parameter hybrid neural model and coordinated cognitive system combining:
+1. **Perception Intelligence**: Entity and signal extraction with perception confidence.
+2. **Contextual Intelligence**: Multi-turn dialogue context, temporal delta tracking, and contradiction detection.
+3. **Cognitive Memory**: Coordinated Working Memory (scratchpad & active goals), Episodic Memory, Semantic Rules, and Procedural Memory.
+4. **World Model**: Explicit environmental state, relation graph, and counterfactual transition dynamics ($S_{t+1} = T(S_t, A_t)$).
+5. **Reasoning Intelligence**: Multi-step deduction, policy constraint gates, and traceable proof graphs.
+6. **Predictive Intelligence**: Action-conditioned forward outcome predictions, continuous resolution time, and risk modeling.
+7. **Planning & Goal Intelligence**: Goal hierarchies, constraint-aware forward plan search, plan evaluation, and replanning triggers.
+8. **CDM-1 Decision Core**: Central multi-head decision network with temperature calibration ($T=0.7957$), hard constraint logit masking, and selective abstention.
+9. **Metacognition & Feedback**: Telemetry feedback recording, discrepancy auditing, and controlled fine-tuning staging.
 
 ---
 
@@ -123,6 +132,36 @@ print("Abstain:", result.abstain)                 # False
 print("Predicted Risk:", result.risk)              # 0.0412
 ```
 
+### End-to-End Integrated Cognitive AI Engine
+```python
+from cdm import CognitiveEngine
+
+# Initialize integrated engine with trained CDM-1 decision core
+engine = CognitiveEngine.from_pretrained("experiments/release/cdm-1-general")
+
+# Executes the complete cognitive loop:
+# Input -> Perception -> Context -> Memory -> World Model -> Reasoning -> Planning -> CDM-1 Decision -> Output
+result = engine.process(
+    text="Production server memory leak on payment service ACC-48291. Immediate mitigation required.",
+    structured_features={
+        "monetary_value_usd": 25000.0,
+        "sla_remaining_hours": 0.5,
+        "domain": "business_operations",
+        "urgency_level": "critical",
+    },
+    candidates=["auto_resolve", "isolate_server", "escalate_to_tier2"],
+    prohibited_actions=["auto_resolve"],
+    goals=["Contain memory leak and maintain SLA"],
+    session_id="incident_001",
+)
+
+print("Decision:", result.decision)                        # isolate_server
+print("Generated Multi-Step Plan:", result.selected_plan)  # Plan steps & risk
+print("Reasoning Evidence:", result.reasoning_evidence)    # Traceable proof graph
+print("World State Summary:", result.world_state_summary)  # Entities & metrics
+print("Recommendation:", result.execution_recommendation)
+```
+
 ### Python SDK (`cdm_sdk`)
 ```python
 from sdk.cdm_sdk import CDM
@@ -226,10 +265,16 @@ python scripts/package_release.py --copy-downloads
 ```
 cdm-1/
 ├── cdm/
+│   ├── cognitive/           # Cognitive Engine orchestrator & typed shared cognitive state
+│   ├── perception/          # Entity extraction, signal processing & perception confidence
+│   ├── context/             # Multi-turn tracking, temporal deltas & contradiction detector
+│   ├── memory/              # Working Memory (scratchpad & goals), Episodic, Semantic & Procedural
+│   ├── world_model/         # Explicit environment state & counterfactual transition simulation
+│   ├── reasoning/           # Multi-step deduction, policy constraint gates & proof traces
+│   ├── planning/            # Goal decomposition, forward plan search & replanning engine
+│   ├── models/              # PyTorch neural components (A, B, C, D, E, Scorer, Unified Model)
 │   ├── config/              # Model configurations & feature schemas
 │   ├── data/                # Data contracts, dataset loaders & preprocessors
-│   ├── models/              # PyTorch neural components (A, B, C, D, E, Scorer, Unified Model)
-│   ├── memory/              # Episodic, Semantic, Procedural, & Persistent Storage modules
 │   ├── learning/            # Feedback collector, discrepancy auditor, adaptation gatekeeper
 │   ├── inference/           # Standalone local inference runtime pipeline
 │   └── utils/               # Training utilities, seeds, early stopping
@@ -240,7 +285,7 @@ cdm-1/
 ├── sdk/                     # Installable Python SDK (cdm_sdk) with explicit mode validation
 ├── docs/                    # Model Card, Benchmark report, Dataset Provenance & API docs
 ├── scripts/                 # Packaging & deployment utilities
-├── tests/                   # 51 comprehensive unit, gradient, constraint, and integration tests
+├── tests/                   # 60 comprehensive unit, gradient, constraint, cognitive, and integration tests
 ├── Dockerfile               # Production container definition
 ├── docker-compose.yml       # API + Pgvector deployment configuration
 ├── requirements.txt         # Core dependencies

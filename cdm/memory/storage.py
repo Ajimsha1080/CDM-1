@@ -197,3 +197,10 @@ class SQLiteMemoryStorage(BaseMemoryStorage):
             (proc_id, tenant_id),
         )
         return json.loads(rows[0]["procedure_json"]) if rows else None
+
+    def get_procedures_for_domain(self, tenant_id: str, domain: str) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            "SELECT procedure_json FROM procedural_memory WHERE tenant_id = ? AND (domain = ? OR domain = 'global')",
+            (tenant_id, domain),
+        )
+        return [json.loads(r["procedure_json"]) for r in rows]

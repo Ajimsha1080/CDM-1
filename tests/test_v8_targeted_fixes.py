@@ -1,16 +1,21 @@
-"""CDM-1 V8 Final Targeted Fixes Test Suite.
+"""CDM-1 V8/V9 Security, Planning, and Release Integrity Test Suite.
 Validates:
 1. Planning Correctness:
    - Replaced nonempty-plan heuristic with explicit goal conditions and measurable postconditions.
    - Constraint compliance evaluated on actual plan steps and violated constraints.
    - Independent multi-step evaluation of alternative plans.
    - Plans containing valid actions that fail to achieve goal conditions produce goal_satisfied=False.
-2. Risk Provenance:
-   - Genuine trained model predictions record model ID, model version, and prediction source.
-   - Caller-supplied arbitrary values are NEVER labeled as trained model predictions.
-3. Checkpoint Authenticity:
-   - Signed release-manifest cryptographic verification (HMAC-SHA256).
-   - Tamper detection on modified SafeTensors weights and modified manifests.
+   - Separation of proposed plans, executed steps, and verified goal completion.
+2. Risk & Prediction Provenance:
+   - Genuine trained model predictions cryptographically signed and authenticated by runtime.
+   - Caller-supplied arbitrary values are NEVER labeled as trained model predictions (unverified_caller_input).
+   - Forged provenance records are strictly rejected.
+3. Checkpoint Authenticity (Ed25519 Asymmetric Verification):
+   - Signed release-manifest cryptographic verification.
+   - Rejection of unsigned manifests.
+   - Rejection of tampered SafeTensors weights.
+   - Rejection of modified manifests.
+   - Rejection of incorrect public keys.
 4. Feedback Concurrency:
    - Multi-process concurrent feedback recording, review updates, and WAL mode resilience.
 """
@@ -22,16 +27,20 @@ import tempfile
 import multiprocessing
 import pytest
 from fastapi.testclient import TestClient
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.hazmat.primitives import serialization
 
-from cdm.cognitive.state import GoalNode, WorldState, ReasoningTrace
+from cdm.cognitive.state import GoalNode, WorldState, ReasoningTrace, ExecutedActionStep
 from cdm.planning.planning_engine import PlanningEngine
 from cdm.learning.feedback import FeedbackCollector, FeedbackEvent
+from cdm.inference.provenance import PredictionProvenance
 from cdm.security.manifest_verification import (
     sign_manifest,
     verify_manifest_signature,
     verify_checkpoint_authenticity,
     SecurityVerificationError,
     compute_file_sha256,
+    TRUSTED_RELEASE_PUBLIC_KEY,
 )
 from api.main import app
 
@@ -73,6 +82,7 @@ def test_plan_with_actions_fails_when_goal_conditions_unmet():
     assert plan.steps[0].action_name == "order_labs"
     # But explicit required postconditions were NOT produced
     assert plan.goal_satisfied is False
+    assert plan.is_verified_goal_completion is False
     assert "failed_conditions" in plan.goal_satisfaction_details
     failed = str(plan.goal_satisfaction_details["failed_conditions"])
     assert "missing_required_postcondition:cardiac_rhythm_stabilized" in failed
@@ -124,7 +134,6 @@ def test_constraint_compliance_evaluates_actual_plan_steps():
         prohibited_actions=["dangerous_reset"],
     )
 
-    # dangerous_reset was excluded from valid plan steps
     step_actions = [s.action_name for s in plan.steps]
     assert "dangerous_reset" not in step_actions
     assert "safe_diagnostics" in step_actions
@@ -157,18 +166,19 @@ def test_alternative_plans_evaluated_independently():
         assert "steps" in alt
         assert len(alt["steps"]) > 0
         assert "cumulative_risk" in alt
+        assert "expected_risk" in alt
         assert "risk_source" in alt
         assert "constraint_compliance" in alt
         assert "goal_satisfied" in alt
 
 
 # =========================================================================
-# 2. RISK PROVENANCE & AUTHENTICATION TESTS
+# 2. RISK & PREDICTION PROVENANCE TESTS
 # =========================================================================
 
 def test_risk_provenance_rejects_caller_supplied_arbitrary_values():
     """Validates that arbitrary caller-supplied predicted_outcome dicts are NEVER labeled
-    as 'trained_model_prediction', but instead 'caller_unverified_heuristic'.
+    as 'trained_model_prediction', but instead 'unverified_caller_input'.
     """
     pe = PlanningEngine()
     goal = GoalNode(goal_id="goal_sec", description="Audit access", priority=1)
@@ -178,40 +188,44 @@ def test_risk_provenance_rejects_caller_supplied_arbitrary_values():
     # Caller passes arbitrary unauthenticated values
     unverified_outcome = {
         "predicted_risk": 0.05,
+        "is_genuine_neural_prediction": True,  # Attacker tries to forge flag!
         "arbitrary_user_key": "some_value",
     }
 
     plan = pe.generate_plan(
         target_goal=goal,
-        available_actions=["audit_logs"],
+        available_actions=["standard_healthcheck"],
         current_world_state=world,
         reasoning_trace=reasoning,
         predicted_outcome=unverified_outcome,
     )
 
-    assert plan.steps[0].risk_source == "caller_unverified_heuristic"
-    assert plan.risk_source == "caller_unverified_heuristic"
+    assert plan.steps[0].risk_source == "unverified_caller_input"
+    assert plan.risk_source == "unverified_caller_input"
     assert plan.steps[0].risk_provenance["authenticated"] is False
 
 
 def test_risk_provenance_accepts_genuine_trained_prediction():
-    """Validates that genuine model predictions with signature/model_id are authenticated."""
+    """Validates that genuine model predictions with runtime cryptographic signature are authenticated."""
     pe = PlanningEngine()
     goal = GoalNode(goal_id="goal_sec_2", description="Audit access 2", priority=1)
     world = WorldState()
     reasoning = ReasoningTrace()
 
+    prov = PredictionProvenance.create(
+        model_id="CDM-1-General",
+        model_version="1.0.0",
+        artifact_hash="9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
+        estimated_risk=0.05,
+    )
     genuine_outcome = {
         "predicted_risk": 0.05,
-        "model_id": "CDM-1-General",
-        "model_version": "1.0.0",
-        "prediction_source": "trained_model_inference",
-        "is_genuine_neural_prediction": True,
+        "provenance": prov,
     }
 
     plan = pe.generate_plan(
         target_goal=goal,
-        available_actions=["audit_logs"],
+        available_actions=["standard_healthcheck"],
         current_world_state=world,
         reasoning_trace=reasoning,
         predicted_outcome=genuine_outcome,
@@ -223,9 +237,52 @@ def test_risk_provenance_accepts_genuine_trained_prediction():
     assert plan.steps[0].risk_provenance["authenticated"] is True
 
 
+def test_prediction_provenance_forged_token_rejected():
+    """Validates that an attacker crafting a fake signature is rejected."""
+    pe = PlanningEngine()
+    goal = GoalNode(goal_id="goal_attack", description="Test forgery", priority=1)
+    world = WorldState()
+    reasoning = ReasoningTrace()
+
+    forged_prov = {
+        "model_id": "CDM-1-General",
+        "model_version": "1.0.0",
+        "artifact_hash": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
+        "execution_id": "exec_fake_12345",
+        "timestamp": 1234567.89,
+        "provenance_signature": "0000000000000000000000000000000000000000000000000000000000000000",
+    }
+    outcome = {"predicted_risk": 0.02, "provenance": forged_prov}
+
+    plan = pe.generate_plan(
+        target_goal=goal,
+        available_actions=["standard_healthcheck"],
+        current_world_state=world,
+        reasoning_trace=reasoning,
+        predicted_outcome=outcome,
+    )
+
+    assert plan.steps[0].risk_source == "unverified_caller_input"
+    assert plan.steps[0].risk_provenance["authenticated"] is False
+
+
 # =========================================================================
-# 3. CHECKPOINT AUTHENTICITY & TAMPER DETECTION TESTS
+# 3. CHECKPOINT AUTHENTICITY & ASYMMETRIC Ed25519 VERIFICATION TESTS
 # =========================================================================
+
+def _generate_test_keypair():
+    priv = ed25519.Ed25519PrivateKey.generate()
+    priv_hex = priv.private_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PrivateFormat.Raw,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).hex()
+    pub_hex = priv.public_key().public_bytes(
+        encoding=serialization.Encoding.Raw,
+        format=serialization.PublicFormat.Raw,
+    ).hex()
+    return priv_hex, pub_hex
+
 
 def test_checkpoint_authenticity_valid_signed_release():
     """Validates that genuine model checkpoint with valid signed manifest passes verification."""
@@ -233,13 +290,40 @@ def test_checkpoint_authenticity_valid_signed_release():
     auth_info = verify_checkpoint_authenticity(model_dir, verify_signature=True)
     assert auth_info["status"] == "authenticated"
     assert auth_info["signature_verified"] is True
+    assert auth_info["signature_algorithm"] == "Ed25519"
     assert auth_info["sha256"] == "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
+
+
+def test_checkpoint_authenticity_unsigned_manifest_rejected():
+    """Validates that an unsigned manifest missing manifest_signature is rejected."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dummy_weights = os.path.join(tmpdir, "model.safetensors")
+        with open(dummy_weights, "wb") as f:
+            f.write(b"SAMPLE_WEIGHTS")
+
+        manifest = {
+            "release_version": "1.0.0",
+            "model_name": "TestModel",
+            "artifact": {
+                "file_name": "model.safetensors",
+                "file_size_bytes": os.path.getsize(dummy_weights),
+                "sha256": compute_file_sha256(dummy_weights),
+            },
+            "packaged_files": {},
+            # Missing manifest_signature
+        }
+        with open(os.path.join(tmpdir, "release_manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(manifest, f)
+
+        with pytest.raises(SecurityVerificationError, match="unsigned"):
+            verify_checkpoint_authenticity(tmpdir, verify_signature=True)
 
 
 def test_checkpoint_authenticity_tampered_model_rejected():
     """Validates that modifying a single byte in the model file raises SecurityVerificationError."""
+    priv_hex, pub_hex = _generate_test_keypair()
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        # Create dummy weights
         dummy_weights = os.path.join(tmpdir, "model.safetensors")
         with open(dummy_weights, "wb") as f:
             f.write(b"REAL_UNTOUCHED_WEIGHTS_CONTENT_1234567890")
@@ -254,12 +338,12 @@ def test_checkpoint_authenticity_tampered_model_rejected():
             },
             "packaged_files": {},
         }
-        signed = sign_manifest(manifest)
+        signed = sign_manifest(manifest, private_key_hex=priv_hex)
         with open(os.path.join(tmpdir, "release_manifest.json"), "w", encoding="utf-8") as f:
             json.dump(signed, f)
 
         # Before tamper: passes
-        res = verify_checkpoint_authenticity(tmpdir, verify_signature=True)
+        res = verify_checkpoint_authenticity(tmpdir, verify_signature=True, trusted_public_key_hex=pub_hex)
         assert res["status"] == "authenticated"
 
         # Tamper weights by appending 1 byte
@@ -267,11 +351,13 @@ def test_checkpoint_authenticity_tampered_model_rejected():
             f.write(b"X")
 
         with pytest.raises(SecurityVerificationError, match="Checkpoint size mismatch|tampering detected"):
-            verify_checkpoint_authenticity(tmpdir, verify_signature=True)
+            verify_checkpoint_authenticity(tmpdir, verify_signature=True, trusted_public_key_hex=pub_hex)
 
 
 def test_checkpoint_authenticity_tampered_manifest_rejected():
     """Validates that modifying a field in the manifest without valid signing key raises SecurityVerificationError."""
+    priv_hex, pub_hex = _generate_test_keypair()
+
     with tempfile.TemporaryDirectory() as tmpdir:
         dummy_weights = os.path.join(tmpdir, "model.safetensors")
         with open(dummy_weights, "wb") as f:
@@ -287,7 +373,7 @@ def test_checkpoint_authenticity_tampered_manifest_rejected():
             },
             "packaged_files": {},
         }
-        signed = sign_manifest(manifest)
+        signed = sign_manifest(manifest, private_key_hex=priv_hex)
 
         # Attacker tampers manifest by changing release_version
         tampered = copy.deepcopy(signed)
@@ -296,8 +382,37 @@ def test_checkpoint_authenticity_tampered_manifest_rejected():
         with open(os.path.join(tmpdir, "release_manifest.json"), "w", encoding="utf-8") as f:
             json.dump(tampered, f)
 
-        with pytest.raises(SecurityVerificationError, match="signature mismatch! The manifest has been modified"):
-            verify_checkpoint_authenticity(tmpdir, verify_signature=True)
+        with pytest.raises(SecurityVerificationError, match="Ed25519 signature verification failed"):
+            verify_checkpoint_authenticity(tmpdir, verify_signature=True, trusted_public_key_hex=pub_hex)
+
+
+def test_checkpoint_authenticity_incorrect_public_key_rejected():
+    """Validates that verifying with an untrusted public key raises SecurityVerificationError."""
+    priv_hex, pub_hex = _generate_test_keypair()
+    _, other_pub_hex = _generate_test_keypair()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dummy_weights = os.path.join(tmpdir, "model.safetensors")
+        with open(dummy_weights, "wb") as f:
+            f.write(b"ORIGINAL_VALID_WEIGHTS")
+
+        manifest = {
+            "release_version": "1.0.0",
+            "model_name": "TestModel",
+            "artifact": {
+                "file_name": "model.safetensors",
+                "file_size_bytes": os.path.getsize(dummy_weights),
+                "sha256": compute_file_sha256(dummy_weights),
+            },
+            "packaged_files": {},
+        }
+        signed = sign_manifest(manifest, private_key_hex=priv_hex)
+        with open(os.path.join(tmpdir, "release_manifest.json"), "w", encoding="utf-8") as f:
+            json.dump(signed, f)
+
+        # Verifying with mismatched public key fails
+        with pytest.raises(SecurityVerificationError, match="Ed25519 signature verification failed"):
+            verify_checkpoint_authenticity(tmpdir, verify_signature=True, trusted_public_key_hex=other_pub_hex)
 
 
 # =========================================================================
@@ -330,7 +445,6 @@ def test_multiprocess_feedback_concurrency_and_wal():
         db_path = tf.name
 
     try:
-        # Initialize database
         init_col = FeedbackCollector(db_path=db_path)
         del init_col
 
@@ -351,14 +465,11 @@ def test_multiprocess_feedback_concurrency_and_wal():
         for p in procs:
             p.join(timeout=30)
 
-        # Ensure all worker processes succeeded
         for w_id in range(num_procs):
             assert return_dict.get(w_id) is True, f"Worker {w_id} failed: {return_dict.get(w_id)}"
 
-        # Fresh instance in main process reads all records
         final_collector = FeedbackCollector(db_path=db_path)
         failures = final_collector.get_failure_cases()
-        # Each worker wrote 10 items, 5 failures each -> 15 failures total
         assert len(failures) == num_procs * 5
 
     finally:

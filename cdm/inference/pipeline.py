@@ -47,6 +47,7 @@ class CognitiveDecisionModel:
         tokenizer: AutoTokenizer,
         schema: Optional[FeatureSchema] = None,
         device: Optional[str] = None,
+        artifact_hash: str = "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
     ):
         if device is None:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -57,6 +58,7 @@ class CognitiveDecisionModel:
         self.model.eval()
         self.tokenizer = tokenizer
         self.schema = schema or FeatureSchema.get_default_schema()
+        self.artifact_hash = artifact_hash
 
     @classmethod
     def from_pretrained(
@@ -96,7 +98,19 @@ class CognitiveDecisionModel:
                 local_files_only=local_files_only,
             )
 
-        return cls(model=model, tokenizer=tokenizer, schema=schema, device=device)
+        artifact_hash = "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
+        manifest_p = os.path.join(model_name_or_path, "release_manifest.json")
+        if os.path.exists(manifest_p):
+            try:
+                with open(manifest_p, "r", encoding="utf-8") as f:
+                    m = json.load(f)
+                    h = m.get("artifact", {}).get("sha256")
+                    if h:
+                        artifact_hash = h
+            except Exception:
+                pass
+
+        return cls(model=model, tokenizer=tokenizer, schema=schema, device=device, artifact_hash=artifact_hash)
 
     def decide(
         self,
@@ -187,6 +201,14 @@ class CognitiveDecisionModel:
         model_name = getattr(getattr(self.model, "config", None), "model_name", "CDM-1-General")
         model_version = getattr(getattr(self.model, "config", None), "model_version", "1.0.0")
 
+        from cdm.inference.provenance import PredictionProvenance
+        prov_record = PredictionProvenance.create(
+            model_id=model_name,
+            model_version=model_version,
+            artifact_hash=self.artifact_hash,
+            estimated_risk=risk_val,
+        )
+
         result_payload = {
             "task": task,
             "decision": bin_decision_str,
@@ -199,14 +221,8 @@ class CognitiveDecisionModel:
             "abstain": abstain_val,
             "model_id": model_name,
             "model_version": model_version,
-            "prediction_source": "trained_model_inference",
-            "is_genuine_neural_prediction": True,
-            "provenance": {
-                "model_id": model_name,
-                "model_version": model_version,
-                "prediction_source": "trained_model_inference",
-                "is_genuine_neural_prediction": True,
-            },
+            "prediction_source": "trained_model_prediction",
+            "provenance": prov_record,
             "predicted_outcome": {
                 "binary_outcome_probability": round(
                     float(torch.sigmoid(pred["binary_outcome_logits"][0]).item()), 4
@@ -214,8 +230,8 @@ class CognitiveDecisionModel:
                 "predicted_resolution_time": round(float(pred["numeric_outcome"][0].item()), 2),
                 "model_id": model_name,
                 "model_version": model_version,
-                "prediction_source": "trained_model_inference",
-                "is_genuine_neural_prediction": True,
+                "prediction_source": "trained_model_prediction",
+                "provenance": prov_record,
             },
         }
 

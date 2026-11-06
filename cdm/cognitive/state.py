@@ -138,17 +138,34 @@ class PlanStep(BaseModel):
     is_reversible: bool = True
 
 
+class ExecutedActionStep(BaseModel):
+    """Represents an action step that has been physically executed with observed real-world telemetry."""
+    step_number: int
+    action_name: str
+    executed_at: float = Field(default_factory=time.time)
+    execution_status: str = "success"  # 'success', 'failed', 'timeout'
+    observed_outcome: Dict[str, Any] = Field(default_factory=dict)
+    observed_state_metrics: Dict[str, float] = Field(default_factory=dict)
+    verified_goal_completion: bool = False
+
+
 class Plan(BaseModel):
-    """Multi-step plan evaluated against World Model transitions and verified goal conditions."""
+    """Multi-step plan evaluated against World Model transitions and verified goal conditions.
+    Distinguishes proposed plans, executed actions, observed outcomes, and verified goal completion.
+    """
     plan_id: str = Field(default_factory=lambda: f"plan_{uuid.uuid4().hex[:8]}")
     target_goal_id: str
+    plan_stage: str = "proposed"  # 'proposed', 'dispatched', 'in_progress', 'completed', 'failed'
     steps: List[PlanStep] = Field(default_factory=list)
+    executed_steps: List[ExecutedActionStep] = Field(default_factory=list)
+    observed_outcomes: List[Dict[str, Any]] = Field(default_factory=list)
     cumulative_risk: float = 0.0
     risk_source: str = "trained_model_prediction"
     risk_provenance: Dict[str, Any] = Field(default_factory=dict)
     plan_efficiency_score: float = 1.0
     constraint_compliance: bool = True
     goal_satisfied: bool = False
+    is_verified_goal_completion: bool = False
     goal_satisfaction_details: Dict[str, Any] = Field(default_factory=dict)
     alternative_plans: List[Dict[str, Any]] = Field(default_factory=list)
 

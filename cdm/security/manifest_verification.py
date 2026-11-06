@@ -1,27 +1,31 @@
 """Cryptographic Release Manifest Verification & Checkpoint Authenticity Gate.
-Provides HMAC-SHA256 digital signature signing and verification for release manifests,
+Implements Ed25519 asymmetric digital signature verification for release manifests,
 strict offline model artifact hash checking, and tamper detection against modified weights or manifests.
+Private signing keys are kept strictly outside the repository; only the trusted public verification key
+is embedded in the application runtime.
 """
 
 import os
 import json
-import hmac
 import hashlib
 from typing import Dict, Any, Optional, Union
 
+from cryptography.hazmat.primitives.asymmetric import ed25519
+from cryptography.exceptions import InvalidSignature
 
-DEFAULT_TRUSTED_SIGNING_KEY = b"cdm-v8-trusted-release-root-2026-c9a7"
-KEY_ID = "cdm-release-root-2026"
+
+# Embedded trusted public verification key (32 bytes raw Ed25519 public key in hex)
+TRUSTED_RELEASE_PUBLIC_KEY = "6765c115e21dd648b1ac1d12a3183357e407deeb6d554a5caad1b8ab9dc0334d"
+KEY_ID = "cdm-release-public-v9"
 
 
 class SecurityVerificationError(RuntimeError):
-    """Raised when release manifest or model artifact tampering/corruption is detected."""
+    """Raised when release manifest or model artifact tampering, forgery, or corruption is detected."""
     pass
 
 
 def get_canonical_manifest_bytes(manifest_dict: Dict[str, Any]) -> bytes:
     """Serializes canonical manifest fields for cryptographic signing."""
-    # Canonical subset of fields that define release integrity
     canonical_payload = {
         "release_version": manifest_dict.get("release_version"),
         "model_name": manifest_dict.get("model_name"),
@@ -31,25 +35,45 @@ def get_canonical_manifest_bytes(manifest_dict: Dict[str, Any]) -> bytes:
     return json.dumps(canonical_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def sign_manifest(manifest_dict: Dict[str, Any], key: Optional[bytes] = None) -> Dict[str, Any]:
-    """Appends an HMAC-SHA256 digital signature to the release manifest."""
-    signing_key = key or os.environ.get("CDM_RELEASE_SIGNING_KEY", "").encode("utf-8") or DEFAULT_TRUSTED_SIGNING_KEY
+def sign_manifest(
+    manifest_dict: Dict[str, Any],
+    private_key_hex: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Signs the release manifest using an Ed25519 private key.
+    The private key must be provided via parameter or environment variable CDM_RELEASE_SIGNING_PRIVATE_KEY.
+    Private keys are NEVER hardcoded or embedded in the codebase.
+    """
+    priv_hex = private_key_hex or os.environ.get("CDM_RELEASE_SIGNING_PRIVATE_KEY")
+    if not priv_hex:
+        raise ValueError(
+            "Cannot sign release manifest: Ed25519 private key not provided. "
+            "Set CDM_RELEASE_SIGNING_PRIVATE_KEY in environment or pass private_key_hex explicitly."
+        )
+
+    try:
+        priv_bytes = bytes.fromhex(priv_hex.strip())
+        private_key = ed25519.Ed25519PrivateKey.from_private_bytes(priv_bytes)
+    except Exception as e:
+        raise ValueError(f"Invalid Ed25519 private key format: {e}")
+
     canonical_bytes = get_canonical_manifest_bytes(manifest_dict)
-    signature = hmac.new(signing_key, canonical_bytes, hashlib.sha256).hexdigest()
+    sig_bytes = private_key.sign(canonical_bytes)
 
     signed_manifest = dict(manifest_dict)
     signed_manifest["manifest_signature"] = {
-        "algorithm": "HMAC-SHA256",
+        "algorithm": "Ed25519",
         "key_id": KEY_ID,
-        "signature": signature,
+        "public_key": TRUSTED_RELEASE_PUBLIC_KEY,
+        "signature": sig_bytes.hex(),
     }
     return signed_manifest
 
 
 def verify_manifest_signature(
-    manifest_data: Union[str, Dict[str, Any]], key: Optional[bytes] = None
+    manifest_data: Union[str, Dict[str, Any]],
+    trusted_public_key_hex: Optional[str] = None,
 ) -> bool:
-    """Verifies that the release manifest has not been modified or tampered with."""
+    """Verifies that the release manifest is signed with a trusted Ed25519 key and has not been altered."""
     if isinstance(manifest_data, str):
         if not os.path.isfile(manifest_data):
             raise FileNotFoundError(f"Manifest file not found: {manifest_data}")
@@ -61,22 +85,36 @@ def verify_manifest_signature(
     sig_block = manifest_dict.get("manifest_signature")
     if not sig_block or not isinstance(sig_block, dict):
         raise SecurityVerificationError(
-            "Release manifest lacks required cryptographic signature block ('manifest_signature')."
+            "Release manifest is unsigned: missing required 'manifest_signature' block."
         )
 
-    expected_sig = sig_block.get("signature")
-    if not expected_sig:
+    algorithm = sig_block.get("algorithm")
+    if algorithm != "Ed25519":
+        raise SecurityVerificationError(
+            f"Unsupported manifest signature algorithm: '{algorithm}'. Expected 'Ed25519'."
+        )
+
+    signature_hex = sig_block.get("signature")
+    if not signature_hex:
         raise SecurityVerificationError("Manifest signature field is empty.")
 
-    signing_key = key or os.environ.get("CDM_RELEASE_SIGNING_KEY", "").encode("utf-8") or DEFAULT_TRUSTED_SIGNING_KEY
-    canonical_bytes = get_canonical_manifest_bytes(manifest_dict)
-    computed_sig = hmac.new(signing_key, canonical_bytes, hashlib.sha256).hexdigest()
+    pub_hex = trusted_public_key_hex or os.environ.get("CDM_RELEASE_PUBLIC_KEY") or TRUSTED_RELEASE_PUBLIC_KEY
+    try:
+        pub_bytes = bytes.fromhex(pub_hex.strip())
+        public_key = ed25519.Ed25519PublicKey.from_public_bytes(pub_bytes)
+    except Exception as e:
+        raise SecurityVerificationError(f"Invalid Ed25519 public verification key: {e}")
 
-    if not hmac.compare_digest(expected_sig.lower(), computed_sig.lower()):
+    canonical_bytes = get_canonical_manifest_bytes(manifest_dict)
+    try:
+        sig_bytes = bytes.fromhex(signature_hex)
+        public_key.verify(sig_bytes, canonical_bytes)
+    except InvalidSignature:
         raise SecurityVerificationError(
-            f"Release manifest signature mismatch! The manifest has been modified or tampered with. "
-            f"(Expected: {expected_sig[:12]}..., Computed: {computed_sig[:12]}...)"
+            "Ed25519 signature verification failed: the release manifest has been modified, forged, or corrupted."
         )
+    except Exception as e:
+        raise SecurityVerificationError(f"Ed25519 manifest signature verification error: {e}")
 
     return True
 
@@ -93,10 +131,10 @@ def compute_file_sha256(path: str) -> str:
 def verify_checkpoint_authenticity(
     model_dir: str,
     verify_signature: bool = True,
-    key: Optional[bytes] = None,
+    trusted_public_key_hex: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Authenticates model checkpoint directory:
-    1. Verifies release manifest exists and its digital signature is intact.
+    1. Verifies release manifest exists and its Ed25519 asymmetric signature is valid.
     2. Validates physical weights file exists, verifies size, and calculates actual streaming SHA-256.
     3. Guarantees tamper detection on both manifest and physical SafeTensors weights.
     """
@@ -112,9 +150,9 @@ def verify_checkpoint_authenticity(
     with open(manifest_path, "r", encoding="utf-8") as f:
         manifest = json.load(f)
 
-    # 1. Cryptographic signature check on the manifest
+    # 1. Asymmetric Ed25519 signature check on the manifest
     if verify_signature:
-        verify_manifest_signature(manifest, key=key)
+        verify_manifest_signature(manifest, trusted_public_key_hex=trusted_public_key_hex)
 
     trusted_hash = (
         manifest.get("artifact", {}).get("sha256")
@@ -155,5 +193,6 @@ def verify_checkpoint_authenticity(
         "sha256": actual_hash,
         "size_bytes": actual_size,
         "signature_verified": verify_signature,
+        "signature_algorithm": "Ed25519",
         "release_version": manifest.get("release_version", "1.0.0"),
     }

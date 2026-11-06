@@ -323,8 +323,8 @@ class CognitiveEngine:
                 pred_for_planning["candidate_scores"] = cdm_result.candidate_scores
                 pred_for_planning["model_id"] = getattr(cdm_result, "model_id", "CDM-1-General")
                 pred_for_planning["model_version"] = getattr(cdm_result, "model_version", "1.0.0")
-                pred_for_planning["prediction_source"] = "trained_model_inference"
-                pred_for_planning["is_genuine_neural_prediction"] = True
+                pred_for_planning["prediction_source"] = "trained_model_prediction"
+                pred_for_planning["provenance"] = getattr(cdm_result, "provenance", {})
                 generated_plan = self.planning_engine.generate_plan(
                     target_goal=primary_goal,
                     available_actions=candidate_list,

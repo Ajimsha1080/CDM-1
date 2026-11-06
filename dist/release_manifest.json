@@ -5,24 +5,25 @@
       "file_name": "CDM-1-Project.zip",
       "file_path": "dist/CDM-1-Project.zip",
       "size_mb": 0.89,
-      "size_bytes": 928644,
-      "sha256": "2fc7ce6f2adfe32cc64151ec346c0ffa4facadbabe856e1fc01e9281f1337cfc",
+      "size_bytes": 932803,
+      "sha256": "11ca445fce019cac8d2f2bb851042d9680a7c7857dbbbcf3b97b3d85883d7be6",
       "include_weights": false,
-      "packaged_file_count": 118
+      "packaged_file_count": 117
     },
     {
       "file_name": "CDM-1-Complete-With-Weights.zip",
       "file_path": "dist/CDM-1-Complete-With-Weights.zip",
-      "size_mb": 1120.94,
-      "size_bytes": 1175394530,
-      "sha256": "9be6c63f6e57714506268a602daa823a46e552305c59d337ed161e87b94633de",
+      "size_mb": 1120.95,
+      "size_bytes": 1175398689,
+      "sha256": "a1264b4be070e0e10fc8b10d4eb191deb1cd04d35919f01f0e7d6dd8f8aefee1",
       "include_weights": true,
-      "packaged_file_count": 120
+      "packaged_file_count": 119
     }
   ],
   "manifest_signature": {
-    "algorithm": "HMAC-SHA256",
-    "key_id": "cdm-release-root-2026",
-    "signature": "965e8a9644a4d2ba3116e836207a93503ee6376759ab103f086fe6b6be77aaa8"
+    "algorithm": "Ed25519",
+    "key_id": "cdm-release-public-v9",
+    "public_key": "6765c115e21dd648b1ac1d12a3183357e407deeb6d554a5caad1b8ab9dc0334d",
+    "signature": "48e6b0edb2597c18917034aa065be1ba9349b8c1fe93052bc1d7b55d8d0b4c7cc3866ff6185ade18f60bf275ce03383a9626dd9b04d2ecf32c2a5f6abccc6207"
   }
 }

@@ -189,7 +189,7 @@ class CognitiveEngine:
             procedural_workflows = self.procedural_memory.get_workflows_for_domain(domain=domain, tenant_id=tenant_id)
 
             # Grounded semantic vector embedding for memory retrieval
-            query_vector = self.memory_embedder.embed(text=text, structured_features=struct_feats)
+            query_vector, emb_mode = self.memory_embedder.embed_with_metadata(text=text, structured_features=struct_feats)
             episodic_cases = []
             try:
                 episodic_cases = self.episodic_memory.search_similar(
@@ -352,6 +352,7 @@ class CognitiveEngine:
                 world_state=world_model.get_state(),
                 reasoning=reasoning_trace,
                 plan=generated_plan,
+                embedding_mode=emb_mode,
                 episodic_context=episodic_cases,
                 semantic_rules=semantic_rules,
                 procedural_workflows=procedural_workflows,
@@ -379,6 +380,7 @@ class CognitiveEngine:
                 abstention_reason=abstention_reason,
                 alternatives=alternatives,
                 execution_recommendation=recommendation,
+                embedding_mode=emb_mode,
                 latency_ms=round(latency_ms, 2),
             )
 

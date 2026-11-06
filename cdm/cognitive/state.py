@@ -128,6 +128,7 @@ class PlanStep(BaseModel):
     preconditions: List[str] = Field(default_factory=list)
     postconditions: List[str] = Field(default_factory=list)
     risk_estimate: float = 0.0
+    risk_source: str = "trained_model_prediction"  # 'trained_model_prediction' vs 'world_state_uncertainty_heuristic'
     is_reversible: bool = True
 
 
@@ -137,8 +138,10 @@ class Plan(BaseModel):
     target_goal_id: str
     steps: List[PlanStep] = Field(default_factory=list)
     cumulative_risk: float = 0.0
+    risk_source: str = "trained_model_prediction"
     plan_efficiency_score: float = 1.0
     constraint_compliance: bool = True
+    goal_satisfied: bool = True
     alternative_plans: List[Dict[str, Any]] = Field(default_factory=list)
 
 
@@ -151,6 +154,7 @@ class SharedCognitiveState(BaseModel):
     world_state: WorldState
     reasoning: ReasoningTrace
     plan: Optional[Plan] = None
+    embedding_mode: str = "structured_fallback"  # 'transformer' vs 'structured_fallback'
     episodic_context: List[Dict[str, Any]] = Field(default_factory=list)
     semantic_rules: List[Dict[str, Any]] = Field(default_factory=list)
     procedural_workflows: List[Dict[str, Any]] = Field(default_factory=list)
@@ -174,4 +178,5 @@ class CognitiveEngineResult(BaseModel):
     abstention_reason: Optional[str] = None
     alternatives: List[Dict[str, Any]] = Field(default_factory=list)
     execution_recommendation: str
+    embedding_mode: str = "structured_fallback"  # 'transformer' vs 'structured_fallback'
     latency_ms: float = 0.0

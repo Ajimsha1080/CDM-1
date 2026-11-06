@@ -4,20 +4,20 @@
     {
       "file_name": "CDM-1-Project.zip",
       "file_path": "dist/CDM-1-Project.zip",
-      "size_mb": 0.87,
-      "size_bytes": 913600,
-      "sha256": "84d49c27827fac53b1c5d3962127e62e060426e50af8e05998b3a8bbbfb32771",
+      "size_mb": 0.88,
+      "size_bytes": 918848,
+      "sha256": "ed3a5e65afaa520fd8e6a65f87ae3a054dbc6ac8cfb526978ea6b4ff613dca97",
       "include_weights": false,
-      "packaged_file_count": 112
+      "packaged_file_count": 113
     },
     {
       "file_name": "CDM-1-Complete-With-Weights.zip",
       "file_path": "dist/CDM-1-Complete-With-Weights.zip",
       "size_mb": 1120.93,
-      "size_bytes": 1175379486,
-      "sha256": "3e17b4653dbbc982da5214f7e5512d6287a1d515e8da3609abb1b883bbc5e1fd",
+      "size_bytes": 1175384734,
+      "sha256": "9e150c6dbe47809bea9edeeadb3587193bc6766571debe030103fe7edbb241d3",
       "include_weights": true,
-      "packaged_file_count": 114
+      "packaged_file_count": 115
     }
   ]
 }

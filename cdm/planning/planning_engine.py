@@ -20,9 +20,10 @@ class PlanningEngine:
         action: str,
         current_world_state: WorldState,
         predicted_outcome: Optional[Dict[str, Any]] = None,
-    ) -> float:
-        """Computes dynamic risk derived from learned outcome predictions and world state uncertainty,
-        avoiding hardcoded static lookup tables.
+    ) -> Tuple[float, str]:
+        """Computes dynamic risk derived from learned outcome predictions vs world state uncertainty heuristics.
+        Returns a tuple of (risk_value, risk_source) where risk_source explicitly distinguishes
+        'trained_model_prediction' from 'world_state_uncertainty_heuristic'.
         """
         state_unc = float(getattr(current_world_state, "overall_state_uncertainty", 0.05))
 
@@ -46,13 +47,15 @@ class PlanningEngine:
                 pred_risk = pred_fut.get("predicted_risk")
 
         if pred_risk is not None:
-            return round(float(pred_risk) * 0.7 + state_unc * 0.3, 4)
+            combined = round(float(pred_risk) * 0.7 + state_unc * 0.3, 4)
+            return combined, "trained_model_prediction"
 
-        # 2. Dynamic environmental risk calculation derived from observed facts & metrics
+        # 2. Dynamic environmental risk calculation derived from observed facts & metrics heuristic
         monetary = float(current_world_state.environment_metrics.get("monetary_value_usd", 50.0))
         sla = float(current_world_state.environment_metrics.get("sla_remaining_hours", 24.0))
         env_pressure = min(1.0, (monetary / 250.0) * 0.5 + max(0.0, 1.0 - sla / 48.0) * 0.5)
-        return round(0.05 + 0.4 * env_pressure + 0.3 * state_unc, 4)
+        heuristic_risk = round(0.05 + 0.4 * env_pressure + 0.3 * state_unc, 4)
+        return heuristic_risk, "world_state_uncertainty_heuristic"
 
     def _evaluate_preconditions(
         self,
@@ -114,8 +117,8 @@ class PlanningEngine:
             # Simulate forward transition consequence in World Model
             simulated_next_state = self.world_model.simulate_transition(action)
 
-            # Determine dynamic learned risk estimate
-            step_risk = self._compute_action_risk(
+            # Determine dynamic risk estimate and its provenance source
+            step_risk, step_risk_src = self._compute_action_risk(
                 action=action,
                 current_world_state=current_world_state,
                 predicted_outcome=predicted_outcome,
@@ -133,6 +136,7 @@ class PlanningEngine:
                 preconditions=preconditions,
                 postconditions=[f"action_executed_{action}", f"goal_advanced_{target_goal.goal_id}"],
                 risk_estimate=step_risk,
+                risk_source=step_risk_src,
                 is_reversible="refund" not in action.lower(),
             )
             plan_steps.append(step)
@@ -147,7 +151,7 @@ class PlanningEngine:
                 alt_score = 0.5
                 if predicted_outcome and "candidate_scores" in predicted_outcome:
                     alt_score = predicted_outcome["candidate_scores"].get(alt_act, 0.5)
-                alt_risk = self._compute_action_risk(
+                alt_risk, alt_risk_src = self._compute_action_risk(
                     action=alt_act,
                     current_world_state=current_world_state,
                     predicted_outcome=predicted_outcome,
@@ -157,15 +161,26 @@ class PlanningEngine:
                     "first_action": alt_act,
                     "predicted_outcome_score": round(float(alt_score), 4),
                     "expected_risk": alt_risk,
+                    "risk_source": alt_risk_src,
                     "rationale": f"Contingency plan executing '{alt_act}' evaluated with prospective outcome forecasting.",
                 })
+
+        plan_risk_sources = [s.risk_source for s in plan_steps]
+        dominant_risk_source = (
+            "trained_model_prediction"
+            if any(src == "trained_model_prediction" for src in plan_risk_sources)
+            else "world_state_uncertainty_heuristic"
+        )
+        goal_satisfied = (len(plan_steps) > 0) and constraint_compliance
 
         return Plan(
             target_goal_id=target_goal.goal_id,
             steps=plan_steps,
             cumulative_risk=round(cumulative_risk, 3),
+            risk_source=dominant_risk_source,
             plan_efficiency_score=round(efficiency, 2),
             constraint_compliance=constraint_compliance,
+            goal_satisfied=goal_satisfied,
             alternative_plans=alternatives,
         )
 

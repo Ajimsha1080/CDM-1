@@ -11,6 +11,7 @@ import os
 import json
 import uuid
 import sqlite3
+import threading
 from pydantic import BaseModel, Field
 
 
@@ -34,6 +35,7 @@ class FeedbackCollector:
 
     def __init__(self, db_path: Optional[str] = None):
         self.db_path = db_path
+        self._lock = threading.Lock()
         self.events: List[FeedbackEvent] = []
         if self.db_path:
             os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
@@ -151,57 +153,102 @@ class FeedbackCollector:
                 reviewer_id=reviewer_id,
             )
 
-        # Duplicate check: prevent silent overwrite of existing records
-        if any(e.event_id == event.event_id for e in self.events):
-            raise ValueError(
-                f"Duplicate feedback event ID '{event.event_id}' already exists in memory. "
-                "Silent overwrites are forbidden."
-            )
+        # Thread-safe duplicate check and insertion
+        with self._lock:
+            # Duplicate check: prevent silent overwrite of existing records
+            if any(e.event_id == event.event_id for e in self.events):
+                raise ValueError(
+                    f"Duplicate feedback event ID '{event.event_id}' already exists in memory. "
+                    "Silent overwrites are forbidden."
+                )
 
-        # Persist to durable SQLite database if configured
-        if self.db_path:
-            conn = sqlite3.connect(self.db_path)
-            try:
-                with conn:
-                    # Strict INSERT without OR REPLACE to prevent silent collision overwrites
-                    try:
-                        conn.execute(
-                            """
-                            INSERT INTO feedback_events
-                            (event_id, tenant_id, decision_id, predicted_decision_json, predicted_outcome_json,
-                             verified_actual_outcome_json, decision_success, discrepancy_score, timestamp, review_status, reviewer_id)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                event.event_id,
-                                event.tenant_id,
-                                event.decision_id,
-                                json.dumps(event.predicted_decision),
-                                json.dumps(event.predicted_outcome),
-                                json.dumps(event.verified_actual_outcome),
-                                1 if event.decision_success else 0,
-                                event.discrepancy_score,
-                                event.timestamp,
-                                event.review_status,
-                                event.reviewer_id,
-                            ),
-                        )
-                    except sqlite3.IntegrityError as err:
-                        raise ValueError(
-                            f"Duplicate feedback event ID '{event.event_id}' already exists in SQLite storage: {err}"
-                        )
-            finally:
-                conn.close()
+            # Persist to durable SQLite database if configured
+            if self.db_path:
+                conn = sqlite3.connect(self.db_path)
+                try:
+                    with conn:
+                        # Strict INSERT without OR REPLACE to prevent silent collision overwrites
+                        try:
+                            conn.execute(
+                                """
+                                INSERT INTO feedback_events
+                                (event_id, tenant_id, decision_id, predicted_decision_json, predicted_outcome_json,
+                                 verified_actual_outcome_json, decision_success, discrepancy_score, timestamp, review_status, reviewer_id)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    event.event_id,
+                                    event.tenant_id,
+                                    event.decision_id,
+                                    json.dumps(event.predicted_decision),
+                                    json.dumps(event.predicted_outcome),
+                                    json.dumps(event.verified_actual_outcome),
+                                    1 if event.decision_success else 0,
+                                    event.discrepancy_score,
+                                    event.timestamp,
+                                    event.review_status,
+                                    event.reviewer_id,
+                                ),
+                            )
+                        except sqlite3.IntegrityError as err:
+                            raise ValueError(
+                                f"Duplicate feedback event ID '{event.event_id}' already exists in SQLite storage: {err}"
+                            )
+                finally:
+                    conn.close()
 
-        self.events.append(event)
-        return event
+            self.events.append(event)
+            return event
+
+    def _row_to_event(self, r: Any) -> FeedbackEvent:
+        return FeedbackEvent(
+            event_id=r["event_id"],
+            tenant_id=r["tenant_id"],
+            decision_id=r["decision_id"],
+            predicted_decision=json.loads(r["predicted_decision_json"]),
+            predicted_outcome=json.loads(r["predicted_outcome_json"]),
+            verified_actual_outcome=json.loads(r["verified_actual_outcome_json"]),
+            decision_success=bool(r["decision_success"]),
+            discrepancy_score=float(r["discrepancy_score"]),
+            timestamp=float(r["timestamp"]),
+            review_status=r["review_status"],
+            reviewer_id=r["reviewer_id"] if "reviewer_id" in r.keys() else None,
+        )
 
     def get_failure_cases(self, tenant_id: Optional[str] = None) -> List[FeedbackEvent]:
-        """Isolate instances where decisions produced negative or unexpected outcomes."""
-        candidates = self.events
-        if tenant_id:
-            candidates = [e for e in candidates if e.tenant_id == tenant_id]
-        return [e for e in candidates if not e.decision_success or e.discrepancy_score > 0]
+        """Isolate instances where decisions produced negative or unexpected outcomes.
+        Reads directly from persistent SQLite storage when configured, ensuring accuracy across
+        process restarts and concurrent worker writes.
+        """
+        if self.db_path and os.path.exists(self.db_path):
+            with self._lock:
+                conn = sqlite3.connect(self.db_path)
+                conn.row_factory = sqlite3.Row
+                try:
+                    with conn:
+                        if tenant_id:
+                            query = """
+                                SELECT * FROM feedback_events
+                                WHERE tenant_id = ? AND (decision_success = 0 OR discrepancy_score > 0)
+                                ORDER BY timestamp ASC
+                            """
+                            rows = conn.execute(query, (tenant_id,)).fetchall()
+                        else:
+                            query = """
+                                SELECT * FROM feedback_events
+                                WHERE (decision_success = 0 OR discrepancy_score > 0)
+                                ORDER BY timestamp ASC
+                            """
+                            rows = conn.execute(query).fetchall()
+                        return [self._row_to_event(r) for r in rows]
+                finally:
+                    conn.close()
+
+        with self._lock:
+            candidates = self.events
+            if tenant_id:
+                candidates = [e for e in candidates if e.tenant_id == tenant_id]
+            return [e for e in candidates if not e.decision_success or e.discrepancy_score > 0]
 
     def update_review_status(
         self,
@@ -210,45 +257,79 @@ class FeedbackCollector:
         tenant_id: Optional[str] = None,
         reviewer_id: Optional[str] = None,
     ) -> bool:
-        """Controlled human-in-the-loop review status update ('verified' or 'rejected_for_training')."""
-        updated = False
-        rev_id = reviewer_id or "human_auditor"
-        for e in self.events:
-            if e.event_id == event_id and (tenant_id is None or e.tenant_id == tenant_id):
-                e.review_status = new_status
-                if new_status == "verified":
-                    e.reviewer_id = rev_id
-                updated = True
+        """Controlled human-in-the-loop review status update ('verified' or 'rejected_for_training').
+        Thread-safe and durable across database-backed multi-process/restart environments.
+        """
+        with self._lock:
+            updated = False
+            rev_id = reviewer_id or "human_auditor"
 
-        if self.db_path:
-            conn = sqlite3.connect(self.db_path)
-            try:
-                with conn:
-                    if tenant_id:
-                        cur = conn.execute(
-                            "UPDATE feedback_events SET review_status = ?, reviewer_id = ? WHERE event_id = ? AND tenant_id = ?",
-                            (new_status, rev_id if new_status == "verified" else None, event_id, tenant_id),
-                        )
-                    else:
-                        cur = conn.execute(
-                            "UPDATE feedback_events SET review_status = ?, reviewer_id = ? WHERE event_id = ?",
-                            (new_status, rev_id if new_status == "verified" else None, event_id),
-                        )
-                    if cur.rowcount > 0:
-                        updated = True
-            finally:
-                conn.close()
+            if self.db_path and os.path.exists(self.db_path):
+                conn = sqlite3.connect(self.db_path)
+                try:
+                    with conn:
+                        if tenant_id:
+                            cur = conn.execute(
+                                "UPDATE feedback_events SET review_status = ?, reviewer_id = ? WHERE event_id = ? AND tenant_id = ?",
+                                (new_status, rev_id if new_status == "verified" else None, event_id, tenant_id),
+                            )
+                        else:
+                            cur = conn.execute(
+                                "UPDATE feedback_events SET review_status = ?, reviewer_id = ? WHERE event_id = ?",
+                                (new_status, rev_id if new_status == "verified" else None, event_id),
+                            )
+                        if cur.rowcount > 0:
+                            updated = True
+                finally:
+                    conn.close()
 
-        return updated
+            for e in self.events:
+                if e.event_id == event_id and (tenant_id is None or e.tenant_id == tenant_id):
+                    e.review_status = new_status
+                    if new_status == "verified":
+                        e.reviewer_id = rev_id
+                    updated = True
+
+            return updated
 
     def stage_approved_fine_tuning_batch(
         self, min_events: int = 10, tenant_id: Optional[str] = None
     ) -> Optional[List[FeedbackEvent]]:
-        """Extracts validated events that have been verified by human review for scheduled fine-tuning."""
-        candidates = self.events
-        if tenant_id:
-            candidates = [e for e in candidates if e.tenant_id == tenant_id]
-        approved = [e for e in candidates if e.review_status == "verified" and e.reviewer_id]
-        if len(approved) >= min_events:
-            return approved
-        return None
+        """Extracts validated events that have been verified by human review for scheduled fine-tuning.
+        Queries persistent storage directly when available.
+        """
+        if self.db_path and os.path.exists(self.db_path):
+            with self._lock:
+                conn = sqlite3.connect(self.db_path)
+                conn.row_factory = sqlite3.Row
+                try:
+                    with conn:
+                        if tenant_id:
+                            query = """
+                                SELECT * FROM feedback_events
+                                WHERE tenant_id = ? AND review_status = 'verified' AND reviewer_id IS NOT NULL
+                                ORDER BY timestamp ASC
+                            """
+                            rows = conn.execute(query, (tenant_id,)).fetchall()
+                        else:
+                            query = """
+                                SELECT * FROM feedback_events
+                                WHERE review_status = 'verified' AND reviewer_id IS NOT NULL
+                                ORDER BY timestamp ASC
+                            """
+                            rows = conn.execute(query).fetchall()
+                        approved = [self._row_to_event(r) for r in rows]
+                        if len(approved) >= min_events:
+                            return approved
+                        return None
+                finally:
+                    conn.close()
+
+        with self._lock:
+            candidates = self.events
+            if tenant_id:
+                candidates = [e for e in candidates if e.tenant_id == tenant_id]
+            approved = [e for e in candidates if e.review_status == "verified" and e.reviewer_id]
+            if len(approved) >= min_events:
+                return approved
+            return None

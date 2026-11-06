@@ -96,17 +96,14 @@ class ContextEngine:
         return contradictions
 
     def get_latest_context(self, session_id: str, tenant_id: str = "default_tenant") -> Optional[ContextFrame]:
-        """Retrieves the most recent context frame for a tenant's session."""
+        """Retrieves the most recent context frame for a tenant's session.
+        Strictly requires exact (tenant_id, session_id) matching; no fallback scanning across other tenants.
+        """
         with self._lock:
             key = (tenant_id, session_id)
             frames = self.sessions.get(key)
             if frames:
                 return frames[-1]
-            # Fallback scan only if default_tenant
-            if tenant_id == "default_tenant":
-                for (t_id, s_id), f_list in self.sessions.items():
-                    if s_id == session_id and f_list:
-                        return f_list[-1]
             return None
 
     def clear_session(self, session_id: str, tenant_id: str = "default_tenant") -> bool:

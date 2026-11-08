@@ -2,8 +2,8 @@
 
 **Auditor**: Independent AI Research Auditor & Experimental Validation Engineer  
 **Date**: November 6, 2026  
-**Implementation Tested**: [`cdm/cognitive/engine.py`](file:///c:/Users/91730/Downloads/CDM%20!/cdm/cognitive/engine.py)  
-**Test Suite Reference**: [`tests/test_cognitive_engine.py`](file:///c:/Users/91730/Downloads/CDM%20!/tests/test_cognitive_engine.py)  
+**Implementation Tested**: [`cdm/cognitive/engine.py`](../../../cdm/cognitive/engine.py)  
+**Test Suite Reference**: [`tests/test_cognitive_engine.py`](../../../tests/test_cognitive_engine.py)  
 
 ---
 

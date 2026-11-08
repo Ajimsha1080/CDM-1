@@ -31,7 +31,7 @@ All evaluations are conducted on strictly partitioned JSONL datasets with determ
 ### Partitioning Rules:
 - **Zero Entity Overlap**: No customer ID, session ID, or transaction ID appears in more than one partition.
 - **Stratified Distribution**: In-domain classes (`customer_support`, `business_operations`, `finance_and_credit`, `communication`, `retail`) are strictly balanced across training, validation, and test sets.
-- **Partition Manifest**: Recorded in [`datasets/split_manifest.json`](file:///c:/Users/91730/Downloads/CDM%20!/datasets/split_manifest.json).
+- **Partition Manifest**: Recorded in [`datasets/split_manifest.json`](../../../datasets/split_manifest.json).
 
 ---
 

@@ -5,12 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "cdm-1"
 version = "0.1.0"
-description = "CDM-1 — Cognitive Decision Model: Independent Hybrid Neural Decision Architecture"
+description = "CDM-1 — Cognitive Decision Model: LLM + CDM Control Loop Agent Product"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [
-    { name = "CDM Research & Engineering Team" }
+    { name = "The CDM-1 Project Contributors", email = "security-cdm@proton.me" }
+]
+maintainers = [
+    { name = "The CDM-1 Maintainers", email = "security-cdm@proton.me" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Security",
 ]
 dependencies = [
     "torch>=2.0.0",
@@ -31,7 +46,8 @@ api = [
 ]
 dev = [
     "pytest>=7.4.0",
-    "ruff>=0.1.0"
+    "ruff>=0.1.0",
+    "pip-licenses>=4.3.0"
 ]
 redis = [
     "redis>=5.0.0"
@@ -41,12 +57,28 @@ anthropic = [
 ]
 agent = [
     "anthropic>=0.30.0",
-    "redis>=5.0.0"
+    "redis>=5.0.0",
+    "psutil>=5.9.0"
 ]
+all = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "httpx>=0.24.0",
+    "redis>=5.0.0",
+    "anthropic>=0.30.0",
+    "psutil>=5.9.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/cdm-project/cdm-1"
+Repository = "https://github.com/cdm-project/cdm-1.git"
+Documentation = "https://github.com/cdm-project/cdm-1/tree/main/docs"
+Issues = "https://github.com/cdm-project/cdm-1/issues"
+Changelog = "https://github.com/cdm-project/cdm-1/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["cdm*", "sdk*"]
+include = ["cdm*", "sdk*", "api*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

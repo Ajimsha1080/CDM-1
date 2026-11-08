@@ -3,7 +3,7 @@
 **Auditor**: Independent AI Research Auditor & Experimental Validation Engineer  
 **Date**: November 6, 2026  
 **Evaluation Partition**: Canonical Holdout Test Set ($N=58$), Multi-Seed Evaluations (`[42, 123, 999]`)  
-**Data Reference**: [`benchmarks/benchmark_results.json`](file:///c:/Users/91730/Downloads/CDM%20!/benchmarks/benchmark_results.json)  
+**Data Reference**: [`benchmarks/benchmark_results.json`](../../../benchmarks/benchmark_results.json)  
 
 ---
 

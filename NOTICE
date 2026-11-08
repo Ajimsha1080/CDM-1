@@ -1,0 +1,50 @@
+Cognitive Decision Model (CDM-1)
+Copyright 2026 The CDM-1 Project Contributors
+
+This product includes software developed by the CDM-1 Project and its contributors.
+
+===============================================================================
+Third-Party Software Acknowledgments and Notices
+===============================================================================
+
+1. ModernBERT
+   This product incorporates architectures and pre-trained representations from
+   ModernBERT (answerdotai/ModernBERT-base).
+   Copyright (c) 2024 Answer.AI and LightOn.
+   Licensed under the Apache License, Version 2.0.
+   https://github.com/AnswerDotAI/ModernBERT
+
+2. Hugging Face Transformers & Safetensors
+   Copyright (c) 2018-present Hugging Face, Inc.
+   Licensed under the Apache License, Version 2.0.
+   https://github.com/huggingface/transformers
+   https://github.com/huggingface/safetensors
+
+3. PyTorch
+   Copyright (c) 2016-present Meta Platforms, Inc. and contributors.
+   Licensed under the BSD 3-Clause License.
+   https://github.com/pytorch/pytorch
+
+4. FastAPI & Starlette
+   Copyright (c) 2018 Sebastián Ramírez
+   Licensed under the MIT License.
+   https://github.com/tiangolo/fastapi
+
+5. Pydantic
+   Copyright (c) 2017 Samuel Colvin
+   Licensed under the MIT License.
+   https://github.com/pydantic/pydantic
+
+6. NumPy & SciPy & Scikit-learn
+   Copyright (c) 2005-present NumPy Developers, SciPy Developers, and Scikit-learn Developers.
+   Licensed under BSD 3-Clause Licenses.
+
+7. Cryptography (pyca/cryptography)
+   Copyright (c) Individual contributors.
+   Dual-licensed under the Apache License, Version 2.0 and the BSD 3-Clause License.
+   https://github.com/pyca/cryptography
+
+8. Anthropic Python SDK
+   Copyright (c) 2023 Anthropic, PBC.
+   Licensed under the MIT License.
+   https://github.com/anthropics/anthropic-sdk-python

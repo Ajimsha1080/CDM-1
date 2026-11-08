@@ -3,7 +3,7 @@
 **Auditor**: Independent AI Research Auditor & Experimental Validation Engineer  
 **Date**: November 6, 2026  
 **Artifact Evaluated**: `experiments/release/cdm-1-general/model.safetensors`  
-**Manifest Reference**: [`dist/release_manifest.json`](file:///c:/Users/91730/Downloads/CDM%20!/dist/release_manifest.json)  
+**Manifest Reference**: [`dist/release_manifest.json`](../../../dist/release_manifest.json)  
 
 ---
 

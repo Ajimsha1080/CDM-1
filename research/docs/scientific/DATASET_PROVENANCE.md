@@ -3,7 +3,7 @@
 **Auditor**: Independent AI Research Auditor & Experimental Validation Engineer  
 **Date**: November 6, 2026  
 **Evaluation Scope**: Provenance Taxonomy, Data Splits, Synthetic Proportions, and Leakage Prevention  
-**Manifest Reference**: [`datasets/split_manifest.json`](file:///c:/Users/91730/Downloads/CDM%20!/datasets/split_manifest.json)  
+**Manifest Reference**: [`datasets/split_manifest.json`](../../../datasets/split_manifest.json)  
 
 ---
 

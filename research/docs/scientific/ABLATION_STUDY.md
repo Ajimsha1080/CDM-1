@@ -3,7 +3,7 @@
 **Auditor**: Independent AI Research Auditor & Experimental Validation Engineer  
 **Date**: November 6, 2026  
 **Evaluation Partition**: Canonical Holdout Test Set ($N=58$)  
-**Experimental Run Data**: [`benchmarks/cognitive_validation_results.json`](file:///c:/Users/91730/Downloads/CDM%20!/benchmarks/cognitive_validation_results.json)  
+**Experimental Run Data**: [`benchmarks/cognitive_validation_results.json`](../../../benchmarks/cognitive_validation_results.json)  
 
 ---
 

@@ -92,9 +92,21 @@ def generate_manifest(release_dir: Path) -> dict:
 
 
 def main():
-    priv_key = os.environ.get("CDM_RELEASE_SIGNING_PRIVATE_KEY")
+    import argparse
+    parser = argparse.ArgumentParser(description="Regenerate and sign CDM-1 release manifest.")
+    parser.add_argument("--private-key", help="64-character hex Ed25519 private key")
+    parser.add_argument("--key-file", help="Path to file containing raw or hex Ed25519 private key")
+    args = parser.parse_args()
+
+    priv_key = args.private_key or os.environ.get("CDM_RELEASE_SIGNING_PRIVATE_KEY")
+    if not priv_key and args.key_file:
+        key_path = Path(args.key_file)
+        if key_path.exists():
+            content = key_path.read_text(encoding="utf-8").strip()
+            priv_key = content
+
     if not priv_key:
-        print("ERROR: CDM_RELEASE_SIGNING_PRIVATE_KEY environment variable is not set.", file=sys.stderr)
+        print("ERROR: CDM_RELEASE_SIGNING_PRIVATE_KEY environment variable or --private-key/--key-file is required.", file=sys.stderr)
         print("Provide the 64-character hex Ed25519 private key to sign the manifest.", file=sys.stderr)
         sys.exit(1)
 

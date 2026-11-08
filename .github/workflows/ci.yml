@@ -63,7 +63,7 @@ jobs:
           python scripts/check_manifest_integrity.py
 
   test-and-verify:
-    needs: [lint-and-compliance]
+    needs: [lint-and-compliance, manifest-integrity]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code

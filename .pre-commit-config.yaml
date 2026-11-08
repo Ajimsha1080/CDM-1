@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: check-manifest-integrity
+        name: check-manifest-integrity
+        entry: python scripts/check_manifest_integrity.py
+        language: system
+        files: ^experiments/release/
+        pass_filenames: false

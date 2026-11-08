@@ -4,9 +4,9 @@ Executes the CDM Benchmark Suite against the test dataset and outputs benchmark 
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from benchmarks.benchmark_suite import CDMBenchmarkSuite
+from research.benchmarks.benchmark_suite import CDMBenchmarkSuite
 
 
 def main():

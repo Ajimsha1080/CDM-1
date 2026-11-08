@@ -30,7 +30,7 @@ class AdaptationGatekeeper:
         return snapshot_dir
 
     def stage_feedback_dataset(
-        self, feedback_events: List[Any], output_path: str = "datasets/staged_feedback.jsonl"
+        self, feedback_events: List[Any], output_path: str = "research/datasets/staged_feedback.jsonl"
     ) -> int:
         """Stages verified feedback events into standardized JSONL training samples.
         Strictly validates review status, human reviewer provenance, and verified target labels.

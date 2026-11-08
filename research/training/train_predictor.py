@@ -1,10 +1,11 @@
-"""STAGES 4 & 5: Multi-Head Decision Network & Candidate Ranking Training.
-Trains binary, continuous score, priority, risk, and candidate ranking heads.
+"""STAGE 6: Predictive Network Training.
+Trains binary outcome, multiclass outcome, resolution time regression, and risk estimation
+heads using actual verified outcome data.
 """
 
 import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import torch
 import torch.nn as nn
@@ -17,10 +18,10 @@ from cdm.data.preprocessor import DecisionPreprocessor
 from cdm.utils.training_utils import set_seed
 
 
-def train_decision_heads(epochs: int = 10, lr: float = 1e-3, batch_size: int = 16):
+def train_predictive_network(epochs: int = 10, lr: float = 1e-3, batch_size: int = 16):
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"=== STAGES 4 & 5: Training Decision Heads & Candidate Selection on {device} ===")
+    print(f"=== STAGE 6: Training Predictive Network on {device} ===")
 
     train_data = load_dataset_from_disk("datasets/train.jsonl")
     val_data = load_dataset_from_disk("datasets/val.jsonl")
@@ -34,12 +35,10 @@ def train_decision_heads(epochs: int = 10, lr: float = 1e-3, batch_size: int = 1
     model = CDMModel().to(device)
     model.language_encoder.freeze_backbone()
 
-    # Optimize decision network and candidate scorer
     optimizer = torch.optim.AdamW(
         list(model.structured_encoder.parameters())
         + list(model.fusion.parameters())
-        + list(model.decision_network.parameters())
-        + list(model.candidate_scorer.parameters()),
+        + list(model.predictive_network.parameters()),
         lr=lr,
     )
 
@@ -76,17 +75,17 @@ def train_decision_heads(epochs: int = 10, lr: float = 1e-3, batch_size: int = 1
                 candidate_attention_mask=cand_att,
                 candidate_masks=cand_masks,
             )
-            loss, _ = model.compute_multitask_loss(outputs, targets)
+            loss, loss_dict = model.compute_multitask_loss(outputs, targets)
             loss.backward()
             optimizer.step()
             total_loss += loss.item()
 
         avg_loss = total_loss / len(train_loader)
-        print(f"Epoch {epoch+1}/{epochs} | Decision Heads Loss: {avg_loss:.4f}")
+        print(f"Epoch {epoch+1}/{epochs} | Predictive Loss: {avg_loss:.4f}")
 
-    print("Stages 4 & 5 decision heads trained successfully.")
+    print("Stage 6 predictive network trained successfully.")
     return model
 
 
 if __name__ == "__main__":
-    train_decision_heads()
+    train_predictive_network()

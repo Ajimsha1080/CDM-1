@@ -12,4 +12,6 @@ build/
 experiments/checkpoints/
 experiments/*.sqlite
 experiments/*.db
+research/
+tests/
 !experiments/release/cdm-1-general/

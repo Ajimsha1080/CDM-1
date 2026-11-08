@@ -6,7 +6,7 @@ import json
 import hashlib
 from collections import Counter
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from cdm.data.curated_corpus import (
     build_curated_decision_corpus,

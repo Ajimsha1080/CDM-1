@@ -13,7 +13,7 @@ import math
 import numpy as np
 
 # Ensure project root in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from cdm.cognitive.engine import CognitiveEngine
 from cdm.cognitive.state import CognitiveEngineResult

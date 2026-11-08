@@ -3,7 +3,7 @@
 ## 1. Experimental Methodology
 - **Holdout Test Set**: 58 distinct, audited holdout decision cases systematically balanced across 5 in-domain domains (`customer_support`, `business_operations`, `finance_and_credit`, `communication`, and `retail`).
 - **Domain-Held-Out Evaluation Set**: 4 verified cross-domain cases in unseen operational areas (`healthcare_triage`, `compliance_legal`).
-- **Partitioning Method**: Stratified group-aware temporal partition with zero entity/customer overlap verified by SHA-256 fingerprint audit. Split manifest: `datasets/split_manifest.json`.
+- **Partitioning Method**: Stratified group-aware temporal partition with zero entity/customer overlap verified by SHA-256 fingerprint audit. Split manifest: `research/datasets/split_manifest.json`.
 - **Multi-Seed Tabular Baselines Evaluated on Identical Test Partition** (Seeds: 42, 123, 999):
   - Logistic Regression (L2 penalty, lbfgs solver, max_iter=500)
   - Random Forest (100 estimators, Gini impurity, max_depth=5)

@@ -7,7 +7,7 @@ import os
 import sys
 import json
 import shutil
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from transformers import AutoTokenizer
 from cdm.models.cdm_model import CDMModel

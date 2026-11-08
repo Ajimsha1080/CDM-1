@@ -10,7 +10,7 @@ The CDM-1 decision dataset is standardized according to the `DecisionExample` sc
 - **Held-Out Generalization Examples**: 8
 - **Out-of-Distribution Safety Examples**: 6
 - **Total Deduplicated Examples**: 322
-- **Manifest**: [`datasets/split_manifest.json`](../datasets/split_manifest.json)
+- **Manifest**: [`research/datasets/split_manifest.json`](../research/datasets/split_manifest.json)
 
 | Split | Example Count | Partition Ratio | File Checksum (SHA-256) |
 |---|---|---|---|

@@ -48,13 +48,13 @@ from sklearn.metrics import (
     classification_report,
 )
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from cdm.models.cdm_model import CDMModel
 from cdm.data.dataset_loader import DecisionDataset, collate_decision_batch
 from cdm.data.curated_corpus import load_dataset_from_disk
 from cdm.data.preprocessor import DecisionPreprocessor
-from training.calibrate import compute_ece
+from research.training.calibrate import compute_ece
 
 
 def safe_auroc(y_true: np.ndarray, y_prob: np.ndarray) -> Tuple[Optional[float], Optional[str]]:
@@ -683,7 +683,7 @@ class CDMBenchmarkSuite:
         print("6. Evaluating out-of-distribution (OOD) constraint safety...", flush=True)
         ood_eval = self.evaluate_ood_constraints()
 
-        ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
         def get_file_sha256(p):
             abs_p = os.path.join(ROOT_DIR, p) if not os.path.isabs(p) else p
             if not os.path.exists(abs_p):

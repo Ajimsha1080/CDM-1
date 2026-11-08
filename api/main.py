@@ -8,6 +8,7 @@ import os
 import sys
 import time
 import json
+import uuid
 import logging
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
@@ -22,6 +23,7 @@ import uvicorn
 from cdm.inference.pipeline import CognitiveDecisionModel
 from cdm.cognitive.engine import CognitiveEngine
 from cdm.cognitive.state import CognitiveEngineResult
+from cdm.agent.loop import AgentControlLoop, AgentRunState, AgentStore
 
 # Structured Logging Configuration
 logging.basicConfig(
@@ -116,15 +118,51 @@ class CognitiveProcessResponse(BaseModel):
     latency_ms: float
 
 
+class CreateAgentRunRequest(BaseModel):
+    goal: str = Field(..., max_length=2048, description="Primary goal or inquiry for autonomous agent")
+    task_description: str = Field(default="", max_length=4096, description="Operational instructions and details")
+    step_budget: int = Field(default=10, ge=1, le=50, description="Maximum execution step budget")
+    cost_budget_usd: float = Field(default=1.0, ge=0.01, le=50.0, description="Cost budget cap in USD")
+    tenant_policies: Optional[List[str]] = Field(default=None, max_length=20, description="Specific tenant policy rules")
+    prohibited_actions: Optional[List[str]] = Field(default=None, max_length=50, description="Hard prohibited actions")
+    verification_spec: Optional[Dict[str, Any]] = Field(default=None, description="Ground truth verification spec")
+    auto_run: bool = Field(default=True, description="Whether to execute until completion or required pause")
+
+
+class AgentRejectRequest(BaseModel):
+    reason: str = Field(default="Rejected by human operator", max_length=1024)
+
+
+class AgentRunResponse(BaseModel):
+    run_id: str
+    tenant_id: str
+    session_id: str
+    goal: str
+    task_description: str
+    status: str
+    step_count: int
+    step_budget: int
+    cost_budget_usd: float
+    accumulated_cost_usd: float
+    accumulated_tokens: int
+    tool_call_count: int
+    history: List[Dict[str, Any]]
+    pending_action: Optional[Dict[str, Any]] = None
+    pending_reason: Optional[str] = None
+    created_at: float
+    updated_at: float
+
+
 # Global model & cognitive engine container
 runtime_model: Optional[CognitiveDecisionModel] = None
 runtime_cognitive_engine: Optional[CognitiveEngine] = None
+runtime_agent_loop: Optional[AgentControlLoop] = None
 model_load_error: Optional[str] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global runtime_model, runtime_cognitive_engine, model_load_error
+    global runtime_model, runtime_cognitive_engine, runtime_agent_loop, model_load_error
 
     # Fail startup in production if secrets are missing or default
     KEY_MANAGER.check_production_safety()
@@ -139,6 +177,10 @@ async def lifespan(app: FastAPI):
         runtime_cognitive_engine = CognitiveEngine(
             decision_model=runtime_model,
             db_path=os.environ.get("CDM_MEMORY_DB", "experiments/cognitive_memory.db"),
+        )
+        runtime_agent_loop = AgentControlLoop(
+            cognitive_engine=runtime_cognitive_engine,
+            store=AgentStore(os.environ.get("CDM_AGENT_DB", "experiments/agent_runs.sqlite")),
         )
         if getattr(runtime_model, "is_fallback", False):
             logger.warning("CDM-1 Model initialized in deterministic rule-based fallback mode (weights absent).")
@@ -354,7 +396,7 @@ def create_decision(
     )
 
     return DecisionResponse(
-        decision_id=f"dec_{int(time.time()*1000)}",
+        decision_id=f"dec_{uuid.uuid4().hex}",
         model="CDM-1-general",
         task=req.task,
         decision=data["decision"],
@@ -432,6 +474,16 @@ def cognitive_process(
             tenant_id=tenant["tenant_id"],
         )
         plan_dict = res.selected_plan.model_dump() if res.selected_plan else None
+
+        # Durable usage metering for cognitive process
+        USAGE_METER.record_request(
+            tenant_id=tenant["tenant_id"],
+            endpoint="/v1/cognitive/process",
+            task=req.task,
+            latency_ms=res.latency_ms,
+            status_code=200,
+        )
+
         return CognitiveProcessResponse(
             execution_id=res.execution_id,
             decision=res.decision,
@@ -463,11 +515,174 @@ def batch_decisions(
     batch_req: BatchDecisionRequest,
     tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
 ):
+    """Processes batch decision requests charging and enforcing rate limit per individual item."""
+    batch_count = len(batch_req.requests)
+    rpm_limit = tenant.get("rate_limit_rpm", 120)
+
+    # Check capacity for full batch against durable meter
+    allowed, current_count = USAGE_METER.check_rate_limit(tenant["tenant_id"], max_rpm=rpm_limit)
+    if not allowed or (current_count + batch_count > rpm_limit):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Batch size ({batch_count}) exceeds available rate limit capacity ({rpm_limit - current_count} remaining).",
+            headers={"Retry-After": "60"},
+        )
+
     results = []
     for req in batch_req.requests:
         res = create_decision(req, tenant)
         results.append(res)
     return {"results": results, "count": len(results)}
+
+
+# =====================================================================
+# CDM-1 Agent Control Loop REST Endpoints (Phase 4)
+# =====================================================================
+
+@app.post("/v1/agent/runs", response_model=AgentRunResponse)
+def create_agent_run(
+    req: CreateAgentRunRequest,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Initializes and optionally executes a CDM-1 autonomous agent control loop run."""
+    if runtime_agent_loop is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent control loop runtime not initialized.",
+        )
+
+    start_t = time.time()
+    run = runtime_agent_loop.create_run(
+        goal=req.goal,
+        task_description=req.task_description,
+        tenant_id=tenant["tenant_id"],
+        step_budget=req.step_budget,
+        cost_budget_usd=req.cost_budget_usd,
+        tenant_policies=req.tenant_policies,
+        prohibited_actions=req.prohibited_actions,
+        verification_spec=req.verification_spec,
+    )
+
+    if req.auto_run:
+        run = runtime_agent_loop.run_until_pause_or_finish(run.run_id)
+
+    latency = round((time.time() - start_t) * 1000, 2)
+    USAGE_METER.record_request(
+        tenant_id=tenant["tenant_id"],
+        endpoint="/v1/agent/runs",
+        task="agent_run",
+        latency_ms=latency,
+        status_code=200,
+    )
+    return AgentRunResponse(**run.model_dump())
+
+
+@app.get("/v1/agent/runs/{run_id}", response_model=AgentRunResponse)
+def get_agent_run(
+    run_id: str,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Retrieves current state, history, and approval requirements for an agent run."""
+    if runtime_agent_loop is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent control loop runtime not initialized.",
+        )
+
+    run = runtime_agent_loop.store.load_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent run '{run_id}' not found.",
+        )
+
+    # Strict tenant isolation
+    if run.tenant_id != tenant["tenant_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: cannot access agent run belonging to another tenant.",
+        )
+
+    return AgentRunResponse(**run.model_dump())
+
+
+@app.post("/v1/agent/runs/{run_id}/approve", response_model=AgentRunResponse)
+def approve_agent_run(
+    run_id: str,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Human approval gate: approves suspended high-risk action and resumes the agent loop."""
+    if runtime_agent_loop is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent control loop runtime not initialized.",
+        )
+
+    run = runtime_agent_loop.store.load_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent run '{run_id}' not found.",
+        )
+
+    if run.tenant_id != tenant["tenant_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: cannot operate on another tenant's agent run.",
+        )
+
+    try:
+        updated_run = runtime_agent_loop.approve_pending(run_id)
+        USAGE_METER.record_request(
+            tenant_id=tenant["tenant_id"],
+            endpoint="/v1/agent/runs/approve",
+            task="agent_approve",
+            latency_ms=10.0,
+            status_code=200,
+        )
+        return AgentRunResponse(**updated_run.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.post("/v1/agent/runs/{run_id}/reject", response_model=AgentRunResponse)
+def reject_agent_run(
+    run_id: str,
+    req: AgentRejectRequest = AgentRejectRequest(),
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Human approval gate: rejects suspended action with an operator reason."""
+    if runtime_agent_loop is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent control loop runtime not initialized.",
+        )
+
+    run = runtime_agent_loop.store.load_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent run '{run_id}' not found.",
+        )
+
+    if run.tenant_id != tenant["tenant_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: cannot operate on another tenant's agent run.",
+        )
+
+    try:
+        updated_run = runtime_agent_loop.reject_pending(run_id, rejection_reason=req.reason)
+        USAGE_METER.record_request(
+            tenant_id=tenant["tenant_id"],
+            endpoint="/v1/agent/runs/reject",
+            task="agent_reject",
+            latency_ms=10.0,
+            status_code=200,
+        )
+        return AgentRunResponse(**updated_run.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @app.get("/v1/metering")

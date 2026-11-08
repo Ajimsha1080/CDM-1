@@ -44,3 +44,4 @@ Thumbs.db
 # Secrets and keys
 *.key
 experiments/*.key
+experiments/agent_runs/

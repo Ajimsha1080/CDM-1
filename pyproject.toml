@@ -83,3 +83,7 @@ include = ["cdm*", "sdk*", "api*"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "requires_docker: Tests that require a running Docker daemon",
+    "requires_weights: Tests that require physical neural model weights",
+]

@@ -87,19 +87,21 @@ def test_sandboxed_file_tools_jail_enforcement():
         assert "escapes sandbox root" in evil_res.error
 
 
-def test_sandboxed_shell_tool_timeout_and_execution():
-    """Verify shell tool execution and timeout limits."""
+def test_sandboxed_shell_tool_disabled_by_default_and_no_host_execution():
+    """Verify shell tool is disabled by default and refuses host execution."""
     tool = SandboxedShellTool(timeout_seconds=2.0)
-    # Fast successful command
+    assert tool.enabled is False
     res = tool.execute({"command": "echo 'cdm_test'"})
-    assert res.success is True
-    assert "cdm_test" in res.output["stdout"]
-    assert res.output["exit_code"] == 0
+    assert res.success is False
+    assert "disabled by default" in res.error.lower()
 
-    # Prohibited command caught before execution
-    res_bad = tool.execute({"command": "rm -rf / --no-preserve-root"})
-    assert res_bad.success is False
-    assert "prohibited" in res_bad.error.lower()
+    # Enabled tool without Docker refuses execution
+    tool_enabled = SandboxedShellTool(enabled=True, timeout_seconds=2.0)
+    # Ensure it refuses when Docker is unavailable
+    if not tool_enabled.is_docker_available():
+        res_no_docker = tool_enabled.execute({"command": "echo 'cdm_test'"})
+        assert res_no_docker.success is False
+        assert "docker is unavailable" in res_no_docker.error.lower()
 
 
 def test_sandboxed_http_tool_domain_allowlist():

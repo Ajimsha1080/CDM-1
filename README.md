@@ -142,12 +142,16 @@ python scripts/create_api_key.py --create --tenant tenant_ops --tier developer -
 ```
 This prints your plaintext key (e.g., `sk_live_...`). Store it securely.
 
-### 4. Optional: Download Neural Model Weights
+### 4. Optional: Download Neural Model Weights & Pre-Cache Backbone
 The service operates cleanly out of the box in deterministic fallback mode. If you wish to use the auxiliary neural risk head:
 ```bash
+# 1. Download and verify signed weights
 python scripts/download_weights.py
+
+# 2. Pre-cache pinned ModernBERT backbone for offline operation (local_files_only=True)
+python scripts/cache_backbone.py
 ```
-This streams `model.safetensors` from Hugging Face Hub, computes the SHA-256 hash in real time, and verifies the Ed25519 manifest signature. See [docs/HOSTING_ON_HUGGINGFACE.md](docs/HOSTING_ON_HUGGINGFACE.md) for hosting details.
+This streams `model.safetensors` from Hugging Face Hub, computes the SHA-256 hash in real time, verifies the Ed25519 manifest signature, and pre-caches the pinned ModernBERT backbone. See [docs/HOSTING_ON_HUGGINGFACE.md](docs/HOSTING_ON_HUGGINGFACE.md) for hosting details.
 
 ### 5. Start the REST API Service
 ```bash

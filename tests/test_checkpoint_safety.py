@@ -48,3 +48,15 @@ def test_trained_checkpoint_loads_strictly_offline():
     runtime = CognitiveDecisionModel.from_pretrained(release_path, local_files_only=True)
     assert runtime.model is not None
     assert runtime.schema is not None
+
+
+def test_missing_backbone_with_local_files_only_raises_clear_error():
+    from cdm.models.language_encoder import LanguageEncoder
+    from cdm.config.model_config import LanguageEncoderConfig
+
+    cfg = LanguageEncoderConfig(
+        model_name_or_path="nonexistent-org/missing-backbone-model-xyz",
+        local_files_only=True,
+    )
+    with pytest.raises(RuntimeError, match="missing from local files/cache with local_files_only=True"):
+        LanguageEncoder(cfg)

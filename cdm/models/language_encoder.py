@@ -52,10 +52,19 @@ class LanguageEncoder(nn.Module):
         if getattr(self.config, "local_files_only", False):
             model_kwargs["local_files_only"] = True
 
-        self.transformer = AutoModel.from_pretrained(
-            self.config.model_name_or_path,
-            **model_kwargs,
-        )
+        try:
+            self.transformer = AutoModel.from_pretrained(
+                self.config.model_name_or_path,
+                **model_kwargs,
+            )
+        except Exception as e:
+            if getattr(self.config, "local_files_only", False):
+                raise RuntimeError(
+                    f"ModernBERT backbone '{self.config.model_name_or_path}' is missing from local files/cache "
+                    f"with local_files_only=True. Run 'python scripts/cache_backbone.py' to pre-cache the pinned "
+                    f"backbone (revision: {getattr(self.config, 'revision', 'pinned')}) before starting offline: {e}"
+                ) from e
+            raise
         
         actual_hidden = getattr(self.transformer.config, "hidden_size", self.config.encoder_hidden_size)
         self.config.encoder_hidden_size = actual_hidden

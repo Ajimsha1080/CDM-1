@@ -4,6 +4,16 @@ from cdm.execution.tools.base import BaseTool, ToolResult
 from cdm.execution.tools.shell_tool import SandboxedShellTool
 from cdm.execution.tools.file_tool import FileReadTool, FileWriteTool, FileEditTool
 from cdm.execution.tools.http_tool import HttpCallTool
+from cdm.execution.tools.engineering_tools import (
+    RepoSearchTool,
+    EnhancedFileReadTool,
+    EnhancedFileEditTool,
+    FileCreateTool,
+    RunTestsTool,
+    GitDiffTool,
+    GitStatusTool,
+    ListDirectoryTool,
+)
 
 __all__ = [
     "BaseTool",
@@ -13,4 +23,12 @@ __all__ = [
     "FileWriteTool",
     "FileEditTool",
     "HttpCallTool",
+    "RepoSearchTool",
+    "EnhancedFileReadTool",
+    "EnhancedFileEditTool",
+    "FileCreateTool",
+    "RunTestsTool",
+    "GitDiffTool",
+    "GitStatusTool",
+    "ListDirectoryTool",
 ]

@@ -1,0 +1,53 @@
+{
+  "release_version": "cdm-1-final-v1.0.0",
+  "release_status": "CDM-1 \u2014 FINAL VERIFIED RELEASE CANDIDATE",
+  "model_name": "CDM-1 Unified Hybrid Cognitive Decision Model",
+  "generated_at": "2026-11-08T13:30:00Z",
+  "git": {
+    "commit": "31689bc93632482113d87d26355f62800df1f9be",
+    "branch": "main",
+    "remote": "https://github.com/Ajimsha1080/CDM-1.git"
+  },
+  "artifact": {
+    "file_name": "model.safetensors",
+    "file_size_bytes": 633465536,
+    "sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
+    "tensor_count": 215,
+    "format": "safetensors",
+    "total_parameters": 158360004,
+    "trainable_parameters": 9345732,
+    "frozen_parameters": 149014272
+  },
+  "packaged_files": {
+    "model.safetensors": {
+      "size_bytes": 633465536,
+      "sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
+    },
+    "CDM-1-Project.zip": {
+      "size_bytes": 941672,
+      "sha256": "548dc3472806ef83aac7d865be5b9363c63bf428e59772b51dd508210c38f949"
+    },
+    "CDM-1-Complete-With-Weights.zip": {
+      "size_bytes": 1175407558,
+      "sha256": "58cd47db238c0d41fc4e550f859bc2cdff1e074f34089e54deaebf2ef65150ac"
+    }
+  },
+  "acceptance_gates": {
+    "gate_1_model": "PASSED",
+    "gate_2_planning": "PASSED",
+    "gate_3_execution": "PASSED",
+    "gate_4_regression_and_release": "PASSED"
+  },
+  "test_suite": {
+    "total_tests": 105,
+    "passed_tests": 105,
+    "failed_tests": 0,
+    "pass_rate_percent": 100.0
+  },
+  "manifest_signature": {
+    "algorithm": "Ed25519",
+    "key_id": "cdm-release-public-v9",
+    "public_key": "6765c115e21dd648b1ac1d12a3183357e407deeb6d554a5caad1b8ab9dc0334d",
+    "signature": "4260e6591f7d5af95f90f78a240aa34c08c1ff442757e8a05902ce38a6efd87e3a0b862d273b7154ac979342f02e4261f42ef14507652e721ad83ba535539a07"
+  }
+}

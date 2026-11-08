@@ -1,4 +1,5 @@
 {
+  "_data_notice": "NOTICE: All benchmark data and metrics in this file are synthetic and self-generated for simulation, algorithmic validation, and methodology research.",
   "harness_version": "2.0.0",
   "timestamp": 1793966559.883805,
   "model_audited": "CDM-1 Unified Hybrid Cognitive Decision Model & AI Engine",

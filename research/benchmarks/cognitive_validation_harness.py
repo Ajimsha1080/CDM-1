@@ -1,3 +1,5 @@
+"""NOTICE: The data and experimental baselines in this benchmark are synthetic and self-generated for simulation, methodology evaluation, and reproducibility testing only.
+"""
 """CDM-1 Scientific Validation & Cognitive AI Proof Harness.
 Executes capability-specific benchmarks across real holdout test datasets (N=58),
 held-out domains (N=8), and OOD partitions (N=5), with genuine 6-arm ablation studies,

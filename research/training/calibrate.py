@@ -40,7 +40,7 @@ def compute_ece(probs: np.ndarray, labels: np.ndarray, n_bins: int = 10) -> floa
 
 def calibrate_model(
     checkpoint_dir: str = "experiments/checkpoints/cdm-1-general",
-    output_report: str = "experiments/calibration_report.json",
+    output_report: str = "research/calibration_report.json",
 ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"=== STAGE 8: Calibrating Model Probabilities & Abstention on {device} ===")

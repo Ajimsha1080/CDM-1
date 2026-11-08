@@ -337,7 +337,7 @@ def train_multitask(
     assert weight_diff > 1e-5, "Candidate scorer parameters failed to update during training!"
 
     os.makedirs("experiments", exist_ok=True)
-    with open("experiments/training_history.json", "w", encoding="utf-8") as f:
+    with open("research/training_history.json", "w", encoding="utf-8") as f:
         json.dump({
             "model": "CDM-1",
             "parameters": param_stats,

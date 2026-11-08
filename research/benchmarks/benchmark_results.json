@@ -1,4 +1,5 @@
 {
+  "_data_notice": "NOTICE: All benchmark data and metrics in this file are synthetic and self-generated for simulation, algorithmic validation, and methodology research.",
   "benchmark_suite_version": "4.0.0",
   "model_tested": "CDM-1 (Hybrid Cognitive Architecture)",
   "test_sample_count": 58,

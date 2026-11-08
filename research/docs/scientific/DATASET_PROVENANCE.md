@@ -1,3 +1,6 @@
+> [!NOTE]
+> **Synthetic Data Notice**: All benchmark figures, experimental evaluation runs, and datasets referenced in this document are synthetic and self-generated for simulation, algorithmic validation, and methodology research only.
+
 # CDM-1 — Dataset Provenance & Research Quality Audit
 
 **Auditor**: Independent AI Research Auditor & Experimental Validation Engineer  

@@ -1,3 +1,5 @@
+"""NOTICE: The data and experimental baselines in this benchmark are synthetic and self-generated for simulation, methodology evaluation, and reproducibility testing only.
+"""
 """CDM-1 Independent Research Benchmark Suite (Corrected Metric Handling & Multi-Domain Evaluation).
 
 Performs independent, statistically sound benchmark evaluations across:

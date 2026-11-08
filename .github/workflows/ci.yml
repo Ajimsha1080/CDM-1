@@ -86,7 +86,8 @@ jobs:
           CDM_ENV: production
         run: |
           # Zero-skips rule: fail if any test is skipped unless carrying requires_docker or requires_weights
-          pytest -rs --strict-markers -m "not requires_docker and not requires_weights"
+          pytest -rs --strict-markers -m "not requires_docker and not requires_weights" --junitxml=test-results.xml
+          python scripts/check_no_skips.py test-results.xml
 
   docker-tests:
     needs: [lint-and-compliance]
@@ -110,7 +111,8 @@ jobs:
       - name: Run Docker-Dependent Sandbox Security Tests
         run: |
           # Runs containerized isolation tests requiring active Linux Docker daemon
-          pytest -rs --strict-markers -m "requires_docker"
+          pytest -rs --strict-markers -m "requires_docker" --junitxml=docker-results.xml
+          python scripts/check_no_skips.py docker-results.xml
 
   neural-weights-tests:
     # Manual workflow dispatch: downloads weights from remote Hugging Face repository
@@ -139,7 +141,8 @@ jobs:
 
       - name: Run Neural Checkpoint Verification Tests
         run: |
-          pytest -rs --strict-markers -m "requires_weights"
+          pytest -rs --strict-markers -m "requires_weights" --junitxml=weights-results.xml
+          python scripts/check_no_skips.py weights-results.xml
 
   docker-build-and-live-api:
     needs: [lint-and-compliance]

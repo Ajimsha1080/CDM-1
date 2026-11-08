@@ -163,12 +163,10 @@ def test_durable_feedback_tenant_isolation():
                 pass
 
 
+@pytest.mark.requires_weights
 def test_concurrent_multithreaded_cognitive_processing():
     """Verifies that concurrent requests from different tenants do not corrupt shared state."""
     model_path = "experiments/release/cdm-1-general"
-    if not os.path.exists(model_path):
-        pytest.skip("Release checkpoint required for integration test")
-
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = tmp.name
 
@@ -219,12 +217,10 @@ def test_concurrent_multithreaded_cognitive_processing():
                 pass
 
 
+@pytest.mark.requires_weights
 def test_simultaneous_requests_same_session():
     """Requirement 12: Verifies simultaneous concurrent requests against the EXACT same session are synchronized."""
     model_path = "experiments/release/cdm-1-general"
-    if not os.path.exists(model_path):
-        pytest.skip("Release checkpoint required for integration test")
-
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = tmp.name
 

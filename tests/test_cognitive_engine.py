@@ -187,12 +187,10 @@ def test_planning_intelligence_generation_and_replanning():
     assert "exposure" in reason2.lower()
 
 
+@pytest.mark.requires_weights
 def test_integrated_cognitive_engine_end_to_end():
     """Verifies the complete coordinated Cognitive AI Engine with real CDM-1 checkpoint decision core."""
     model_path = "experiments/release/cdm-1-general"
-    if not os.path.exists(model_path):
-        pytest.skip("Release checkpoint not found")
-
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = tmp.name
 
@@ -242,12 +240,10 @@ def test_integrated_cognitive_engine_end_to_end():
                 pass
 
 
+@pytest.mark.requires_weights
 def test_integrated_cognitive_engine_metacognitive_abstention():
     """Verifies that high contradiction and low confidence trigger metacognitive abstention."""
     model_path = "experiments/release/cdm-1-general"
-    if not os.path.exists(model_path):
-        pytest.skip("Release checkpoint not found")
-
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
         db_path = tmp.name
 

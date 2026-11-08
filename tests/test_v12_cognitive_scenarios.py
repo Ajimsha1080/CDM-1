@@ -34,12 +34,15 @@ from cdm.inference.pipeline import CognitiveDecisionModel
 
 MODEL_PATH = "experiments/release/cdm-1-general"
 
+pytestmark = pytest.mark.requires_weights
+
 
 @pytest.fixture(scope="module")
 def shared_decision_model():
     """Loads genuine trained model checkpoint once for the integration scenarios."""
-    if not os.path.exists(os.path.join(MODEL_PATH, "model.safetensors")):
-        pytest.skip("Release model checkpoint not found for cognitive scenarios")
+    safetensors_file = os.path.join(MODEL_PATH, "model.safetensors")
+    if not os.path.exists(safetensors_file):
+        raise FileNotFoundError(f"Model checkpoint required for requires_weights test: {safetensors_file}")
     return CognitiveDecisionModel.from_pretrained(model_name_or_path=MODEL_PATH, local_files_only=True)
 
 

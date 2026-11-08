@@ -48,8 +48,10 @@ def is_blocked_ip_address(ip_str: str) -> bool:
     return False
 
 
-def validate_hostname_and_dns(hostname: str) -> None:
-    """Resolve hostname and verify that no resolved IP is private or metadata."""
+def validate_hostname_and_dns(hostname: str) -> str:
+    """Resolve hostname once and verify that no resolved IP is private or metadata.
+    Returns the validated IP address to prevent DNS rebinding.
+    """
     if not hostname:
         raise ValueError("Empty hostname.")
 
@@ -57,7 +59,7 @@ def validate_hostname_and_dns(hostname: str) -> None:
     if is_blocked_ip_address(clean_host):
         raise PermissionError(f"Target host '{hostname}' is a prohibited private, loopback, or metadata address.")
 
-    # Resolve all DNS A and AAAA records
+    # Resolve all DNS A and AAAA records once
     try:
         addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as e:
@@ -66,12 +68,32 @@ def validate_hostname_and_dns(hostname: str) -> None:
     if not addr_info:
         raise PermissionError(f"No IP addresses resolved for host '{hostname}'.")
 
+    validated_ip = None
     for family, socktype, proto, canonname, sockaddr in addr_info:
         resolved_ip = sockaddr[0]
         if is_blocked_ip_address(resolved_ip):
             raise PermissionError(
                 f"Host '{hostname}' resolved to prohibited address '{resolved_ip}' (SSRF violation)."
             )
+        if validated_ip is None:
+            validated_ip = resolved_ip
+
+    return validated_ip
+
+
+class PinnedHostSSLAdapter(requests.adapters.HTTPAdapter):
+    """HTTPAdapter that pins the TLS server_hostname and certificate hostname check
+    to the original domain while connecting directly to a pre-validated IP address.
+    """
+
+    def __init__(self, server_hostname: str, **kwargs):
+        self.server_hostname = server_hostname
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        pool_kwargs["server_hostname"] = self.server_hostname
+        pool_kwargs["assert_hostname"] = self.server_hostname
+        super().init_poolmanager(connections, maxsize, block=block, **pool_kwargs)
 
 
 class HttpCallTool(BaseTool):
@@ -99,8 +121,8 @@ class HttpCallTool(BaseTool):
             return self.tenant_allowlists[tenant_id]
         return self.default_allowed_domains
 
-    def _validate_target_url(self, url: str, tenant_id: str) -> urllib.parse.ParseResult:
-        """Validate URL scheme, tenant domain allowlist, and resolve DNS against SSRF."""
+    def _validate_target_url(self, url: str, tenant_id: str) -> tuple[urllib.parse.ParseResult, str]:
+        """Validate URL scheme, tenant domain allowlist, and resolve DNS once against SSRF/DNS-rebinding."""
         if not url or not isinstance(url, str):
             raise ValueError("Parameter 'url' is required and must be a string.")
 
@@ -119,15 +141,42 @@ class HttpCallTool(BaseTool):
                 f"Approved domains: {sorted(list(allowed))}"
             )
 
-        validate_hostname_and_dns(hostname)
-        return parsed
+        validated_ip = validate_hostname_and_dns(hostname)
+        return parsed, validated_ip
+
+    def _build_pinned_request(
+        self,
+        parsed: urllib.parse.ParseResult,
+        validated_ip: str,
+        custom_headers: Optional[Dict[str, str]] = None,
+    ) -> tuple[str, Dict[str, str]]:
+        """Constructs an IP-pinned request URL and Host header to prevent DNS rebinding."""
+        hostname = parsed.hostname.lower()
+        ip_for_url = f"[{validated_ip}]" if ":" in validated_ip else validated_ip
+        port_suffix = f":{parsed.port}" if parsed.port else ""
+        netloc = f"{ip_for_url}{port_suffix}"
+
+        # Build direct IP URL
+        pinned_url = urllib.parse.urlunparse((
+            parsed.scheme,
+            netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment,
+        ))
+
+        # Set Host header to original domain
+        headers = dict(custom_headers or {})
+        headers["Host"] = f"{hostname}{port_suffix}"
+        return pinned_url, headers
 
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         url = args.get("url")
-        self._validate_target_url(url, tenant_id)
+        parsed, validated_ip = self._validate_target_url(url, tenant_id)
 
         method = args.get("method", "GET").upper()
-        headers = args.get("headers", {})
+        orig_headers = args.get("headers", {})
         body = args.get("body")
 
         current_url = url
@@ -136,9 +185,18 @@ class HttpCallTool(BaseTool):
         session = requests.Session()
 
         while True:
+            pinned_url, headers = self._build_pinned_request(parsed, validated_ip, orig_headers)
+
+            if parsed.scheme.lower() == "https":
+                session.mount(f"https://{parsed.netloc}", PinnedHostSSLAdapter(server_hostname=parsed.hostname))
+                # Also mount direct IP prefix
+                ip_for_url = f"[{validated_ip}]" if ":" in validated_ip else validated_ip
+                port_suffix = f":{parsed.port}" if parsed.port else ""
+                session.mount(f"https://{ip_for_url}{port_suffix}", PinnedHostSSLAdapter(server_hostname=parsed.hostname))
+
             resp = session.request(
                 method=method,
-                url=current_url,
+                url=pinned_url,
                 headers=headers,
                 json=body if method in ("POST", "PUT", "PATCH") and body else None,
                 timeout=self.timeout_seconds,
@@ -158,7 +216,7 @@ class HttpCallTool(BaseTool):
 
                 # Form new URL and re-validate against tenant allowlist and SSRF
                 next_url = urllib.parse.urljoin(current_url, location)
-                self._validate_target_url(next_url, tenant_id)
+                parsed, validated_ip = self._validate_target_url(next_url, tenant_id)
                 current_url = next_url
                 # On 303 or 302/301, typical HTTP behavior switches method to GET
                 if resp.status_code in (301, 302, 303):

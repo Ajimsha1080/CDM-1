@@ -167,3 +167,56 @@ def test_response_size_limit_enforced(monkeypatch):
     res = tool.execute({"url": "https://api.trusted.com/bigfile"})
     assert res.success is False
     assert "response size exceeded limit" in res.error.lower()
+
+
+def test_dns_rebinding_resolver_public_first_private_second(monkeypatch):
+    """Verify DNS rebinding prevention: resolver returns a public IP first, and a private IP second.
+    The tool resolves the target host once, validates the resolved IP, and connects directly to that
+    validated IP with Host header and TLS SNI configured, preventing requests from resolving again.
+    """
+    call_count = 0
+    resolved_hosts = []
+
+    def rebinding_resolver(host, port, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        resolved_hosts.append(host)
+        if call_count == 1:
+            # First resolution: legitimate public IP
+            return [(2, 1, 6, "", ("93.184.216.34", 443))]
+        else:
+            # Second resolution attempt: simulated DNS rebinding returning private loopback IP
+            return [(2, 1, 6, "", ("127.0.0.1", 80))]
+
+    monkeypatch.setattr("socket.getaddrinfo", rebinding_resolver)
+
+    captured_requests = []
+
+    def mock_request(*args, **kwargs):
+        url = kwargs.get("url") or (args[1] if len(args) > 1 else args[0])
+        headers = kwargs.get("headers")
+        captured_requests.append((url, headers))
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.iter_content = lambda chunk_size=8192: [b'{"status": "ok"}']
+        return mock_resp
+
+    monkeypatch.setattr("requests.Session.request", mock_request)
+
+    tool = HttpCallTool(allowed_domains={"rebinding-target.com"})
+    res = tool.execute({"url": "https://rebinding-target.com/api/v1/resource"})
+
+    assert res.success is True
+    assert len(captured_requests) == 1
+    target_url, headers = captured_requests[0]
+
+    # Invariant 1: The connection must connect directly to the pre-validated IP
+    assert "93.184.216.34" in target_url
+
+    # Invariant 2: The Host header must match the original approved domain
+    assert headers.get("Host") == "rebinding-target.com"
+
+    # Invariant 3: The resolver must be called only ONCE during target validation;
+    # it was never re-resolved by the HTTP connection layer, neutralising DNS rebinding.
+    assert call_count == 1
+

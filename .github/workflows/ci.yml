@@ -1,0 +1,79 @@
+name: CDM-1 Continuous Integration
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-and-verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Clean Install Locked Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-lock.txt
+
+      - name: Run Full Test Suite (Zero Skips Required)
+        env:
+          CDM_ENV: production
+        run: |
+          pytest -v --strict-markers
+
+      - name: Run Agent Benchmark Suite
+        run: |
+          python research/agent_eval/eval_runner.py
+
+      - name: Build Docker Container
+        run: |
+          docker build -t cdm-1-api:latest .
+
+      - name: Start Service via Docker Compose
+        run: |
+          docker compose up -d
+
+      - name: Verify Container Readiness Probe (/v1/ready)
+        run: |
+          python - << 'EOF'
+          import urllib.request
+          import time
+          import sys
+
+          url = "http://localhost:8000/v1/ready"
+          timeout_sec = 60
+          start = time.time()
+          ready = False
+
+          print(f"Polling {url} for readiness...")
+          while time.time() - start < timeout_sec:
+              try:
+                  with urllib.request.urlopen(url, timeout=5) as response:
+                      if response.status == 200:
+                          print("SUCCESS: /v1/ready returned HTTP 200 OK")
+                          print(response.read().decode())
+                          ready = True
+                          break
+              except Exception as e:
+                  print(f"Waiting for container to become ready ({e})...")
+                  time.sleep(3)
+
+          if not ready:
+              print("FATAL: Container failed to respond 200 on /v1/ready within 60s", file=sys.stderr)
+              sys.exit(1)
+          EOF
+
+      - name: Stop Docker Compose Services
+        if: always()
+        run: |
+          docker compose down

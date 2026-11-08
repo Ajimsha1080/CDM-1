@@ -1,0 +1,58 @@
+{
+  "timestamp": 1794128667.8692148,
+  "checks": {
+    "root_release_manifest_signature": {
+      "status": "PASS",
+      "path": "FINAL_RELEASE_MANIFEST.json",
+      "verified": true
+    },
+    "checkpoint_authenticity_gate": {
+      "status": "PASS",
+      "model_dir": "experiments/release/cdm-1-general",
+      "sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
+      "size_bytes": 633465536,
+      "signature_verified": true
+    },
+    "tamper_resistance": {
+      "status": "PASS",
+      "tampered_manifest_rejected": true,
+      "wrong_public_key_rejected": true
+    },
+    "api_readiness": {
+      "status": "PASS",
+      "ready_http_status": 200,
+      "ready_response": {
+        "status": "ready",
+        "model_loaded": true,
+        "weights_verified": true,
+        "manifest_signature_verified": true,
+        "weights_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
+        "parameters": "158M",
+        "timestamp": 1794128674.8887804
+      },
+      "health_http_status": 200
+    },
+    "packaged_distributions": {
+      "status": "PASS",
+      "archives": {
+        "CDM-1-Complete-With-Weights.zip": {
+          "size_bytes": 1175407558,
+          "sha256": "58cd47db238c0d41fc4e550f859bc2cdff1e074f34089e54deaebf2ef65150ac"
+        },
+        "CDM-1-Project.zip": {
+          "size_bytes": 941672,
+          "sha256": "548dc3472806ef83aac7d865be5b9363c63bf428e59772b51dd508210c38f949"
+        },
+        "FINAL_RELEASE_MANIFEST.json": {
+          "size_bytes": 1874,
+          "sha256": "00ec8df7c0a55dceeac0517d21457ef7ff13c97fd25c4d3a617430cd84ebc39b"
+        },
+        "release_manifest.json": {
+          "size_bytes": 1041,
+          "sha256": "432ddb9985abd7e8714fafb4e15954283262b2461e49c38dfc18a75d0f353299"
+        }
+      }
+    }
+  },
+  "passed": true
+}

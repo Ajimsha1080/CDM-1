@@ -52,7 +52,7 @@ class GoalNode(BaseModel):
     subgoal_ids: List[str] = Field(default_factory=list)
     success_criteria: Dict[str, Any] = Field(default_factory=dict)
     required_postconditions: List[str] = Field(default_factory=list)
-    target_state_metrics: Dict[str, float] = Field(default_factory=dict)
+    target_state_metrics: Dict[str, Any] = Field(default_factory=dict)
 
 
 class WorkingMemoryState(BaseModel):
@@ -91,7 +91,7 @@ class WorldState(BaseModel):
     session_id: str = "default_session"
     entities: Dict[str, WorldEntity] = Field(default_factory=dict)
     relations: List[WorldRelation] = Field(default_factory=list)
-    environment_metrics: Dict[str, float] = Field(default_factory=dict)
+    environment_metrics: Dict[str, Any] = Field(default_factory=dict)
     active_constraints: List[str] = Field(default_factory=list)
     observed_facts: Dict[str, Any] = Field(default_factory=dict)
     inferred_state: Dict[str, Any] = Field(default_factory=dict)
@@ -145,7 +145,7 @@ class ExecutedActionStep(BaseModel):
     executed_at: float = Field(default_factory=time.time)
     execution_status: str = "success"  # 'success', 'failed', 'timeout'
     observed_outcome: Dict[str, Any] = Field(default_factory=dict)
-    observed_state_metrics: Dict[str, float] = Field(default_factory=dict)
+    observed_state_metrics: Dict[str, Any] = Field(default_factory=dict)
     verified_goal_completion: bool = False
 
 

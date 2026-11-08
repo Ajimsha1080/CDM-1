@@ -584,6 +584,81 @@ class PlanningEngine:
             alternative_plans=alternatives,
         )
 
+    def approve_plan(self, plan: Plan, approver_id: str = "system_safety_controller") -> Plan:
+        """Explicit plan lifecycle transition: separates proposed plan from approved plan.
+        Only approved plans may be dispatched for execution.
+        """
+        if plan.plan_stage != "proposed":
+            raise ValueError(
+                f"Cannot approve plan in '{plan.plan_stage}' stage. Only 'proposed' plans can be approved."
+            )
+        plan.plan_stage = "approved"
+        return plan
+
+    def _evaluate_metric_condition(self, metric_name: str, obs_val: Any, target_condition: Any) -> Tuple[bool, str]:
+        """Compares actual observed metric value against numeric or non-numeric target conditions.
+        Supports:
+        - Dict-based condition operators: {"<=": 0.05}, {">=": 10}, {"==": "stable"}, {"!=": "offline"}
+        - Categorical / non-numeric string comparisons: "stable", "isolated", "closed"
+        - Boolean flags: True, False
+        - Standard numeric threshold and bound checks
+        """
+        # Dict condition specification: e.g. {"<=": 0.1}, {">=": 12.0}, {"==": "stable"}
+        if isinstance(target_condition, dict):
+            for op, expected in target_condition.items():
+                if op == "<=":
+                    if not (float(obs_val) <= float(expected)):
+                        return False, f"Expected <= {expected}, observed {obs_val}"
+                elif op == "<":
+                    if not (float(obs_val) < float(expected)):
+                        return False, f"Expected < {expected}, observed {obs_val}"
+                elif op == ">=":
+                    if not (float(obs_val) >= float(expected)):
+                        return False, f"Expected >= {expected}, observed {obs_val}"
+                elif op == ">":
+                    if not (float(obs_val) > float(expected)):
+                        return False, f"Expected > {expected}, observed {obs_val}"
+                elif op in ("==", "eq"):
+                    if str(obs_val).strip().lower() != str(expected).strip().lower():
+                        return False, f"Expected == '{expected}', observed '{obs_val}'"
+                elif op in ("!=", "neq"):
+                    if str(obs_val).strip().lower() == str(expected).strip().lower():
+                        return False, f"Expected != '{expected}', observed '{obs_val}'"
+            return True, "Dict condition satisfied"
+
+        # Boolean comparison
+        if isinstance(target_condition, bool) or isinstance(obs_val, bool):
+            ok = (bool(obs_val) == bool(target_condition))
+            return ok, ("Boolean matched" if ok else f"Expected {target_condition}, observed {obs_val}")
+
+        # Non-numeric string condition (e.g. status == "stable")
+        if isinstance(target_condition, str) and not target_condition.replace(".", "", 1).replace("-", "", 1).isdigit():
+            ok = (str(obs_val).strip().lower() == target_condition.strip().lower())
+            return ok, ("Categorical condition met" if ok else f"Expected '{target_condition}', observed '{obs_val}'")
+
+        # Numeric float/int comparison
+        try:
+            num_obs = float(obs_val)
+            num_target = float(target_condition)
+
+            m_lower = metric_name.lower()
+            # Metrics representing risk, instability, exposure, latency, or error must be <= target
+            if any(k in m_lower for k in ("risk", "exposure", "instability", "error", "disruption", "latency")):
+                ok = (num_obs <= num_target)
+                return ok, (f"Upper bound met ({num_obs} <= {num_target})" if ok else f"Exceeded limit ({num_obs} > {num_target})")
+
+            # Metrics representing SLA, uptime, availability, score, or balance must be >= target
+            if any(k in m_lower for k in ("sla", "uptime", "availability", "score", "balance", "health")):
+                ok = (num_obs >= num_target)
+                return ok, (f"Lower bound met ({num_obs} >= {num_target})" if ok else f"Below threshold ({num_obs} < {num_target})")
+
+            # Default exact numerical matching with tolerance
+            ok = (abs(num_obs - num_target) <= 1e-4)
+            return ok, (f"Metric matched ({num_obs} == {num_target})" if ok else f"Value mismatch ({num_obs} != {num_target})")
+        except (ValueError, TypeError):
+            ok = (str(obs_val).strip().lower() == str(target_condition).strip().lower())
+            return ok, ("String fallback matched" if ok else f"Expected '{target_condition}', observed '{obs_val}'")
+
     def record_step_execution(
         self,
         plan: Plan,
@@ -593,10 +668,47 @@ class PlanningEngine:
         execution_status: str = "success",
     ) -> ExecutedActionStep:
         """Explicit action execution and outcome observation interface.
-        Records telemetry from an executed plan step without mistaking proposed steps for executed outcomes.
+        Enforces step ID legitimacy, sequential ordering, record completeness,
+        and records real observed telemetry without mistaking proposed steps for outcomes.
         """
+        # Validate plan lifecycle stage
+        if plan.plan_stage not in ["proposed", "approved", "in_progress", "executing"]:
+            raise ValueError(
+                f"Cannot record execution for plan in '{plan.plan_stage}' stage."
+            )
+
+        # Validate step completeness
+        if observed_outcome is None or not isinstance(observed_outcome, dict):
+            raise ValueError(
+                f"Incomplete execution record: observed_outcome must be a valid dictionary for step {step_number}."
+            )
+        if execution_status not in ["success", "failed", "timeout"]:
+            raise ValueError(
+                f"Incomplete execution record: invalid execution_status '{execution_status}' for step {step_number}."
+            )
+
+        # Validate legitimate step ID
         matching_step = next((s for s in plan.steps if s.step_number == step_number), None)
-        action_name = matching_step.action_name if matching_step else f"step_{step_number}"
+        if not matching_step:
+            planned_ids = [s.step_number for s in plan.steps]
+            raise ValueError(
+                f"Unknown execution step ID: step {step_number} is not in plan (expected one of {planned_ids})."
+            )
+
+        # Reject duplicate step execution
+        if any(s.step_number == step_number for s in plan.executed_steps):
+            raise ValueError(
+                f"Duplicate execution step ID: step {step_number} has already been recorded."
+            )
+
+        # Validate sequential ordering and dependencies
+        expected_step = len(plan.executed_steps) + 1
+        if step_number != expected_step:
+            raise ValueError(
+                f"Execution order violation: step {step_number} executed out of sequence (expected step {expected_step})."
+            )
+
+        action_name = matching_step.action_name
         metrics = (observed_state.environment_metrics if observed_state else {}).copy()
 
         executed_step = ExecutedActionStep(
@@ -610,7 +722,12 @@ class PlanningEngine:
         )
         plan.executed_steps.append(executed_step)
         plan.observed_outcomes.append(observed_outcome)
-        plan.plan_stage = "in_progress"
+
+        if len(plan.executed_steps) == len(plan.steps):
+            plan.plan_stage = "executed"
+        else:
+            plan.plan_stage = "in_progress"
+
         return executed_step
 
     def verify_plan_execution_completion(
@@ -620,19 +737,77 @@ class PlanningEngine:
         final_observed_world_state: WorldState,
     ) -> Tuple[bool, Dict[str, Any]]:
         """Verifies actual execution completion against real observed outcomes and final world state.
-        Never grants verified goal completion for merely proposed plans.
+        Strictly enforces:
+        1. Removal of automatic planned-postcondition copying: only observed evidence is accepted.
+        2. Rejection of duplicate, missing, unknown, or out-of-order execution step IDs.
+        3. Rejection of incomplete execution records.
+        4. Independent comparison of every numeric and non-numeric target metric against actual observed values.
+        5. Verification that successful execution with unsuccessful outcomes fails goal verification.
         """
         if not plan.executed_steps:
-            return False, {"verified": False, "reason": "No actions have been executed."}
-
-        # Check that all planned steps have been executed
-        if len(plan.executed_steps) < len(plan.steps):
             return False, {
                 "verified": False,
-                "reason": f"Partial execution: {len(plan.executed_steps)} of {len(plan.steps)} steps executed.",
+                "reason": "No actions have been executed.",
+                "error_code": "NO_EXECUTED_STEPS",
             }
 
-        # Check for any execution failures
+        planned_step_numbers = [s.step_number for s in plan.steps]
+        executed_step_numbers = [s.step_number for s in plan.executed_steps]
+
+        # 1. Reject duplicate step IDs
+        if len(executed_step_numbers) != len(set(executed_step_numbers)):
+            plan.is_verified_goal_completion = False
+            plan.plan_stage = "failed"
+            return False, {
+                "verified": False,
+                "reason": "Duplicate execution step IDs detected.",
+                "error_code": "DUPLICATE_STEP_ID",
+            }
+
+        # 2. Reject unknown step IDs
+        unknown_ids = [n for n in executed_step_numbers if n not in planned_step_numbers]
+        if unknown_ids:
+            plan.is_verified_goal_completion = False
+            plan.plan_stage = "failed"
+            return False, {
+                "verified": False,
+                "reason": f"Unknown execution step IDs: {unknown_ids}",
+                "error_code": "UNKNOWN_STEP_ID",
+            }
+
+        # 3. Reject missing step IDs (partial execution)
+        missing_ids = [n for n in planned_step_numbers if n not in executed_step_numbers]
+        if missing_ids:
+            plan.is_verified_goal_completion = False
+            plan.plan_stage = "failed"
+            return False, {
+                "verified": False,
+                "reason": f"Missing execution steps: {missing_ids} ({len(plan.executed_steps)} of {len(plan.steps)} steps executed).",
+                "error_code": "MISSING_STEP_ID",
+            }
+
+        # 4. Reject execution ordering violations
+        if executed_step_numbers != planned_step_numbers:
+            plan.is_verified_goal_completion = False
+            plan.plan_stage = "failed"
+            return False, {
+                "verified": False,
+                "reason": f"Execution ordering mismatch: expected {planned_step_numbers}, got {executed_step_numbers}",
+                "error_code": "ORDERING_MISMATCH",
+            }
+
+        # 5. Reject incomplete execution records
+        for s in plan.executed_steps:
+            if s.observed_outcome is None or not isinstance(s.observed_outcome, dict) or s.execution_status not in ["success", "failed", "timeout"]:
+                plan.is_verified_goal_completion = False
+                plan.plan_stage = "failed"
+                return False, {
+                    "verified": False,
+                    "reason": f"Incomplete execution record in step {s.step_number}.",
+                    "error_code": "INCOMPLETE_RECORD",
+                }
+
+        # 6. Check for any execution status failures
         failed_steps = [s for s in plan.executed_steps if s.execution_status != "success"]
         if failed_steps:
             plan.is_verified_goal_completion = False
@@ -640,40 +815,78 @@ class PlanningEngine:
             return False, {
                 "verified": False,
                 "reason": f"Execution failures in steps: {[s.step_number for s in failed_steps]}",
+                "error_code": "STEP_EXECUTION_FAILURE",
             }
 
-        # Collect observed outcomes and metrics
+        # 7. Collect observed postconditions STRICTLY from observed telemetry
+        # (NO automatic copying of planned postconditions!)
         observed_postconditions = set()
         for s in plan.executed_steps:
-            posts = s.observed_outcome.get("observed_postconditions", [])
-            observed_postconditions.update(posts)
-            matching = next((ps for ps in plan.steps if ps.step_number == s.step_number), None)
-            if matching and s.execution_status == "success":
-                observed_postconditions.update(matching.postconditions)
+            # Check observed_postconditions list
+            obs_posts = s.observed_outcome.get("observed_postconditions", [])
+            if isinstance(obs_posts, (list, tuple, set)):
+                observed_postconditions.update(obs_posts)
 
-        # Check target goal criteria against real final observed world state and observed postconditions
+            # Check explicit positive factual evidence in observed_outcome
+            for k, v in s.observed_outcome.items():
+                if v is True and isinstance(k, str) and (
+                    k.startswith("action_executed_")
+                    or "resolved" in k
+                    or "stabilized" in k
+                    or "isolated" in k
+                    or "completed" in k
+                ):
+                    observed_postconditions.add(k)
+
+        # 8. Target-Metric Validation: compare every target metric against actual observed value
         target_metrics = getattr(target_goal, "target_state_metrics", {}) or {}
         metrics_satisfied = True
         failed_metrics = []
-        for metric, target_val in target_metrics.items():
-            obs_val = final_observed_world_state.environment_metrics.get(metric)
+        metric_eval_details = {}
+
+        for metric_name, target_condition in target_metrics.items():
+            obs_val = None
+            if hasattr(final_observed_world_state, "environment_metrics") and metric_name in final_observed_world_state.environment_metrics:
+                obs_val = final_observed_world_state.environment_metrics[metric_name]
+            elif hasattr(final_observed_world_state, "observed_facts") and metric_name in final_observed_world_state.observed_facts:
+                obs_val = final_observed_world_state.observed_facts[metric_name]
+            else:
+                for s in reversed(plan.executed_steps):
+                    if metric_name in s.observed_state_metrics:
+                        obs_val = s.observed_state_metrics[metric_name]
+                        break
+                    if metric_name in s.observed_outcome:
+                        obs_val = s.observed_outcome[metric_name]
+                        break
+
             if obs_val is None:
                 metrics_satisfied = False
-                failed_metrics.append(f"Missing observed metric: {metric}")
-            elif "risk" in metric.lower() or "exposure" in metric.lower():
-                if obs_val > target_val:
-                    metrics_satisfied = False
-                    failed_metrics.append(f"Metric {metric}={obs_val} > target {target_val}")
+                failed_metrics.append(f"Missing target metric: '{metric_name}' not found in observed telemetry.")
+                metric_eval_details[metric_name] = {"satisfied": False, "reason": "Metric not found"}
+                continue
 
+            is_ok, eval_reason = self._evaluate_metric_condition(metric_name, obs_val, target_condition)
+            metric_eval_details[metric_name] = {
+                "observed": obs_val,
+                "target": target_condition,
+                "satisfied": is_ok,
+                "reason": eval_reason,
+            }
+            if not is_ok:
+                metrics_satisfied = False
+                failed_metrics.append(f"Metric '{metric_name}': observed {obs_val} violates target condition {target_condition} ({eval_reason})")
+
+        # 9. Verify required postconditions
         required_posts = getattr(target_goal, "required_postconditions", []) or []
         missing_posts = [p for p in required_posts if p not in observed_postconditions]
 
-        is_completed = metrics_satisfied and len(missing_posts) == 0
+        is_completed = (len(failed_steps) == 0) and metrics_satisfied and (len(missing_posts) == 0)
 
         verification_details = {
             "verified": is_completed,
             "executed_steps_count": len(plan.executed_steps),
             "observed_postconditions": list(observed_postconditions),
+            "metric_evaluations": metric_eval_details,
             "failed_metrics": failed_metrics,
             "missing_required_postconditions": missing_posts,
         }

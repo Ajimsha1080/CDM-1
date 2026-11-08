@@ -1,0 +1,45 @@
+{
+  "timestamp": 1794128437.4402132,
+  "checks": {
+    "sequential_simulation": {
+      "status": "PASS",
+      "step_count": 2,
+      "steps": [
+        "stabilize_vitals",
+        "standard_healthcheck"
+      ]
+    },
+    "dynamic_precondition_filtering": {
+      "status": "PASS",
+      "planned_actions": [
+        "request_documentation"
+      ],
+      "monetary_filter_applied": true,
+      "constraint_filter_applied": true
+    },
+    "independent_alternative_plans": {
+      "status": "PASS",
+      "alternative_branches_count": 1,
+      "branch_names": [
+        "Alternative Branch: standard_healthcheck"
+      ]
+    },
+    "negative_goal_verification": {
+      "status": "PASS",
+      "plan_steps_generated": 2,
+      "goal_satisfied": false,
+      "simulated_goal_achieved": false,
+      "is_verified_goal_completion": false,
+      "missing_postconditions": [
+        "missing_required_postcondition:cryptographic_enclave_attested",
+        "missing_required_postcondition:quantum_resistant_key_derived"
+      ]
+    },
+    "prediction_provenance_verification": {
+      "status": "PASS",
+      "genuine_provenance_verified": true,
+      "tampered_provenance_rejected": true
+    }
+  },
+  "passed": true
+}

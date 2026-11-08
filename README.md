@@ -80,22 +80,37 @@ To maintain full transparency for adopters and researchers, the operational boun
 
 ---
 
-## 3. Measured Benchmark Results
+## 3. Empirical Benchmark Methodology & Live Evaluation
 
-The system was evaluated against 30 operational tasks in a Customer Support and Refund Management environment (`research/agent_eval/`):
-- **10 Standard Tasks**: Routine valid support workflows (damaged item refunds < $50, order status queries).
-- **10 Adversarial Tasks**: Prompt injection, destructive file deletion (`rm -rf /`), unauthorized financial transfers.
-- **10 High-Risk Tasks**: Sensitive operations (refunds > $500, GDPR account deletions, fraud lockouts).
+> [!NOTE]
+> **Live Benchmark Status**: *No live benchmark yet* (requires user-provided `ANTHROPIC_API_KEY` for live execution across external foundation models). Scripted unit tests for gate behavior are located in `tests/test_scripted_gate.py`.
 
-### Measured Comparison
+### Benchmark Methodology
 
-| Configuration | Overall Success Rate (95% Wilson CI) | Adversarial Attacks Blocked | Human Approvals Triggered | Mean Steps |
-|---|---|---|---|---|
-| **(a) LLM Alone** (Ungated Baseline) | **33.3%** [19.2%, 51.2%] (10/30) | 0 / 10 (10 Unsafe Executions) | 0 / 10 (10 Breaches) | 1.00 |
-| **(b) LLM + Policy Gate** | **100.0%** [88.6%, 100.0%] (30/30) | 10 / 10 (100% Blocked) | 10 / 10 (100% Paused) | 0.67 |
-| **(c) LLM + Gate + Cognitive Memory** | **100.0%** [88.6%, 100.0%] (30/30) | 10 / 10 (100% Blocked) | 10 / 10 (100% Paused) | 0.67 |
+The evaluation harness in `research/agent_eval/` benchmarks CDM-1 against 52 realistic operational tasks in customer support and financial operations across three configurations:
 
-*Benchmark reproduction command: `python research/agent_eval/eval_runner.py`.*
+1. **(a) LLM Alone (Ungated Baseline)**: External foundation model prompts unconstrained tool actions without policy gating or episodic memory.
+2. **(b) LLM + CDM Policy Gate**: Actions proposed by the LLM are evaluated against tenant policies, prohibited tool rules, and neural/deterministic risk thresholds (blocking unsafe actions or pausing for human approval).
+3. **(c) LLM + CDM Control Loop (Gate + Memory)**: Full cognitive control loop with episodic state tracking, environmental observations, and outcome feedback.
+
+### Task Distribution (52 Tasks)
+- **16 Standard Tasks**: Multi-step workflows, diagnostic parsing, RMA generation, and fulfillment backtracking.
+- **18 Adversarial Tasks**: Destructive command injections, prompt injections in scraped HTML/tool outputs, unicode homoglyph bypasses, and data exfiltration directives.
+- **18 High-Risk / Approval Tasks**: Operations exceeding monetary quotas ($500 - $45,000), bulk database queries, MFA overrides, and PCI-DSS data access requiring human sign-off.
+
+### How to Run the Benchmark
+
+To execute live benchmarking with 3 repeats per task using your own Anthropic Claude API key:
+
+```bash
+export ANTHROPIC_API_KEY="your-anthropic-api-key"
+export ANTHROPIC_MODEL="claude-3-5-sonnet-20241022"  # optional, default
+
+# Run all 52 tasks x 3 repeats
+python research/agent_eval/eval_runner.py --runs 3
+```
+
+Results containing mean success rates, 95% Wilson confidence intervals, safety block rates, and step standard deviations are written to `research/agent_eval/benchmark_results.json`. Without a valid API key, the runner exits immediately without generating results.
 
 ---
 

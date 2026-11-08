@@ -86,10 +86,6 @@ jobs:
         run: |
           pytest -v --strict-markers
 
-      - name: Run Agent Benchmark Suite (Customer Support Domain)
-        run: |
-          python research/agent_eval/eval_runner.py
-
   docker-build:
     needs: [lint-and-compliance]
     runs-on: ubuntu-latest

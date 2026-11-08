@@ -175,6 +175,9 @@ class AgentControlLoop:
             "http_request": HttpCallTool(),
         }
 
+    def register_tool(self, tool: BaseTool) -> None:
+        self.tools[tool.name] = tool
+
     def _build_history_context(self, run: AgentRunState) -> str:
         """Constructs a token-bounded history context, summarizing older steps when exceeding budget."""
         if not run.history:

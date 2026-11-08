@@ -1,0 +1,46 @@
+name: Auto-Verify and Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auto-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-lock.txt
+          pip install -e .
+
+      - name: Verify Manifest Integrity
+        run: |
+          python scripts/check_manifest_integrity.py
+
+      - name: Run Pytest Suite with JUnit XML
+        env:
+          CDM_ENV: production
+        run: |
+          pytest -rs --strict-markers -m "not requires_docker and not requires_weights" --junitxml=test-results.xml
+
+      - name: Enforce Zero-Skips Verification Gate
+        run: |
+          python scripts/check_no_skips.py test-results.xml
+
+      - name: Run End-to-End Verification Smoke Test
+        run: |
+          python scripts/smoke_test.py

@@ -1,7 +1,7 @@
 {
   "release_version": "cdm-1-general-v1.0.0",
   "model_name": "CDM-1 Unified Hybrid Cognitive Decision Model",
-  "created_at": "2026-11-06T12:00:00Z",
+  "created_at": "2026-11-09T00:00:00Z",
   "artifact": {
     "file_name": "model.safetensors",
     "file_size_bytes": 633465536,
@@ -15,19 +15,15 @@
     }
   },
   "architecture": {
-    "language_encoder": "ModernBERT-base (frozen backbone)",
-    "language_projection_dim": 128,
-    "structured_encoder_dim": 128,
+    "language_encoder": "answerdotai/ModernBERT-base (frozen backbone)",
+    "language_projection_dim": 256,
+    "structured_encoder_dim": 256,
     "cross_modal_fusion_dim": 256,
     "candidate_cross_attention_scorer": "trainable",
-    "predictive_network_heads": 2,
+    "predictive_network_heads": 4,
     "decision_network_heads": 4
   },
   "packaged_files": {
-    "model.safetensors": {
-      "size_bytes": 633465536,
-      "sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
-    },
     "config.json": {
       "size_bytes": 1428,
       "sha256": "b500ede84dd307ec59729b9a30873191f1a5e042c285f00a5fc8c8eb4b31e9fe"
@@ -35,6 +31,10 @@
     "feature_schema.json": {
       "size_bytes": 2839,
       "sha256": "3e5e8f4e7c58786c6fd34e3fe5370e171bca89cdf9737fca9db943f20cf29c04"
+    },
+    "model.safetensors": {
+      "size_bytes": 633465536,
+      "sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
     },
     "tokenizer.json": {
       "size_bytes": 3583228,
@@ -50,13 +50,13 @@
     "strict_safetensors_reload": true,
     "temperature_scaling_calibrated": true,
     "temperature_parameter": 0.7957,
-    "test_suite_status": "72/72 passing",
+    "test_suite_status": "149/149 passing",
     "tenant_isolation_verified": true
   },
   "manifest_signature": {
     "algorithm": "Ed25519",
-    "key_id": "cdm-release-public-v9",
-    "public_key": "6765c115e21dd648b1ac1d12a3183357e407deeb6d554a5caad1b8ab9dc0334d",
-    "signature": "acef4ee98f9fb9d63999f350ae6a7671b095ac9e324d00edcacd196b69da2302d15f751a7d7be3ea54b7ed127acf3452ee3da628479a87288874d33d95f5e304"
+    "key_id": "cdm-release-public-v10",
+    "public_key": "bf02342a8f2a5ac2defdd1cc9398464ebff22b9face378398cb343b58e0200a9",
+    "signature": "57628ab3338b6cef498699fe979936363ed07567c41cdecb7f3657a1ef853439052f9f6a4c34cdfdf0d7d08e7a1bcaa24bd851ea034ab062b03c87c413762306"
   }
 }

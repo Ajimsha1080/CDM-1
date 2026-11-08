@@ -15,8 +15,8 @@ from cryptography.exceptions import InvalidSignature
 
 
 # Embedded trusted public verification key (32 bytes raw Ed25519 public key in hex)
-TRUSTED_RELEASE_PUBLIC_KEY = "6765c115e21dd648b1ac1d12a3183357e407deeb6d554a5caad1b8ab9dc0334d"
-KEY_ID = "cdm-release-public-v9"
+TRUSTED_RELEASE_PUBLIC_KEY = "bf02342a8f2a5ac2defdd1cc9398464ebff22b9face378398cb343b58e0200a9"
+KEY_ID = "cdm-release-public-v10"
 
 
 class SecurityVerificationError(RuntimeError):
@@ -29,6 +29,7 @@ def get_canonical_manifest_bytes(manifest_dict: Dict[str, Any]) -> bytes:
     canonical_payload = {
         "release_version": manifest_dict.get("release_version"),
         "model_name": manifest_dict.get("model_name"),
+        "architecture": manifest_dict.get("architecture"),
         "artifact": manifest_dict.get("artifact"),
         "packaged_files": manifest_dict.get("packaged_files"),
     }
@@ -40,8 +41,8 @@ def sign_manifest(
     private_key_hex: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Signs the release manifest using an Ed25519 private key.
-    The private key must be provided via parameter or environment variable CDM_RELEASE_SIGNING_PRIVATE_KEY.
-    Private keys are NEVER hardcoded or embedded in the codebase.
+    The private key must come from an environment variable (CDM_RELEASE_SIGNING_PRIVATE_KEY) only,
+    or explicitly passed in tests. Private keys are NEVER hardcoded or embedded in the codebase.
     """
     priv_hex = private_key_hex or os.environ.get("CDM_RELEASE_SIGNING_PRIVATE_KEY")
     if not priv_hex:
@@ -59,11 +60,14 @@ def sign_manifest(
     canonical_bytes = get_canonical_manifest_bytes(manifest_dict)
     sig_bytes = private_key.sign(canonical_bytes)
 
+    # Derive public key hex from the private key
+    pub_hex = private_key.public_key().public_bytes_raw().hex()
+
     signed_manifest = dict(manifest_dict)
     signed_manifest["manifest_signature"] = {
         "algorithm": "Ed25519",
         "key_id": KEY_ID,
-        "public_key": TRUSTED_RELEASE_PUBLIC_KEY,
+        "public_key": pub_hex,
         "signature": sig_bytes.hex(),
     }
     return signed_manifest
@@ -135,8 +139,9 @@ def verify_checkpoint_authenticity(
 ) -> Dict[str, Any]:
     """Authenticates model checkpoint directory:
     1. Verifies release manifest exists and its Ed25519 asymmetric signature is valid.
-    2. Validates physical weights file exists, verifies size, and calculates actual streaming SHA-256.
-    3. Guarantees tamper detection on both manifest and physical SafeTensors weights.
+    2. Validates EVERY file listed in packaged_files: checks size_bytes and computes actual SHA-256.
+    3. Guarantees no unlisted extra files exist in the model directory (excluding release_manifest.json).
+    4. Guarantees no missing files from packaged_files.
     """
     if not os.path.isdir(model_dir):
         raise FileNotFoundError(f"Model checkpoint directory not found: {model_dir}")
@@ -154,44 +159,81 @@ def verify_checkpoint_authenticity(
     if verify_signature:
         verify_manifest_signature(manifest, trusted_public_key_hex=trusted_public_key_hex)
 
-    trusted_hash = (
-        manifest.get("artifact", {}).get("sha256")
-        or manifest.get("packaged_files", {}).get("model.safetensors", {}).get("sha256")
-    )
-    if not trusted_hash:
+    packaged_files = manifest.get("packaged_files")
+    artifact = manifest.get("artifact")
+
+    all_expected = dict(packaged_files) if isinstance(packaged_files, dict) else {}
+    if isinstance(artifact, dict) and artifact.get("file_name"):
+        art_name = artifact["file_name"]
+        if art_name not in all_expected:
+            all_expected[art_name] = {
+                "size_bytes": artifact.get("file_size_bytes"),
+                "sha256": artifact.get("sha256"),
+            }
+
+    if not all_expected:
         raise SecurityVerificationError(
-            "Authentication failed: release manifest lacks trusted SHA-256 for model.safetensors"
+            "Authentication failed: release manifest lacks required 'packaged_files' or 'artifact' declarations."
         )
 
-    expected_size = (
-        manifest.get("artifact", {}).get("file_size_bytes")
-        or manifest.get("packaged_files", {}).get("model.safetensors", {}).get("size_bytes")
+    # 2. Check for unlisted extra files and missing files
+    ignored_patterns = {"release_manifest.json", ".DS_Store", "Thumbs.db"}
+    actual_files = set(
+        f for f in os.listdir(model_dir)
+        if f not in ignored_patterns and not f.startswith(".") and os.path.isfile(os.path.join(model_dir, f))
     )
+    expected_files = set(all_expected.keys())
 
-    weights_path = os.path.join(model_dir, "model.safetensors")
-    if not os.path.isfile(weights_path):
+    extra_files = actual_files - expected_files
+    if extra_files:
+        raise SecurityVerificationError(
+            f"Authentication failed: unlisted extra file(s) found in model directory: {sorted(list(extra_files))}"
+        )
+
+    missing_files = expected_files - actual_files
+    if missing_files:
         raise FileNotFoundError(
-            f"Authentication failed: physical checkpoint weights missing at {weights_path}"
+            f"Authentication failed: required packaged file(s) missing: {sorted(list(missing_files))}"
         )
 
-    actual_size = os.path.getsize(weights_path)
-    if expected_size and actual_size != expected_size:
-        raise SecurityVerificationError(
-            f"Checkpoint size mismatch: expected {expected_size} bytes, got {actual_size} bytes."
-        )
+    # 3. Verify EVERY file in all_expected
+    file_hashes = {}
+    for file_name, file_meta in all_expected.items():
+        file_path = os.path.join(model_dir, file_name)
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"Packaged file not found: {file_path}")
 
-    actual_hash = compute_file_sha256(weights_path)
-    if actual_hash.lower() != trusted_hash.lower():
-        raise SecurityVerificationError(
-            f"Model checkpoint tampering detected! Physical SHA-256 does not match signed manifest. "
-            f"Expected: {trusted_hash}, Got: {actual_hash}"
-        )
+        expected_size = file_meta.get("size_bytes")
+        actual_size = os.path.getsize(file_path)
+        if expected_size is not None and actual_size != expected_size:
+            raise SecurityVerificationError(
+                f"Checkpoint size mismatch for '{file_name}': expected {expected_size} bytes, got {actual_size} bytes."
+            )
+
+        expected_hash = file_meta.get("sha256")
+        if not expected_hash:
+            raise SecurityVerificationError(f"Manifest missing expected SHA-256 for '{file_name}'.")
+
+        actual_hash = compute_file_sha256(file_path)
+        if actual_hash.lower() != expected_hash.lower():
+            raise SecurityVerificationError(
+                f"File tampering detected for '{file_name}'! Physical SHA-256 does not match signed manifest. "
+                f"Expected: {expected_hash}, Got: {actual_hash}"
+            )
+        file_hashes[file_name] = actual_hash
+
+    model_sha256 = None
+    if isinstance(artifact, dict) and artifact.get("sha256"):
+        model_sha256 = artifact.get("sha256")
+    elif "model.safetensors" in file_hashes:
+        model_sha256 = file_hashes["model.safetensors"]
 
     return {
         "status": "authenticated",
         "model_dir": model_dir,
-        "sha256": actual_hash,
-        "size_bytes": actual_size,
+        "files_verified": list(all_expected.keys()),
+        "file_hashes": file_hashes,
+        "sha256": model_sha256,
         "signature_verified": verify_signature,
         "signature_algorithm": "Ed25519",
         "release_version": manifest.get("release_version", "1.0.0"),

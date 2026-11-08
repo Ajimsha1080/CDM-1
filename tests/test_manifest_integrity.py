@@ -1,40 +1,132 @@
-"""Verification test ensuring every packaged release file strictly matches its signed manifest SHA-256."""
+"""Tests for release manifest integrity, Ed25519 digital signature, and multi-file tamper detection.
+"""
 
 import os
 import json
-import hashlib
 import pytest
-from cdm.security.manifest_verification import compute_file_sha256, verify_manifest_signature
+from pathlib import Path
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+from cdm.security.manifest_verification import (
+    sign_manifest,
+    verify_manifest_signature,
+    verify_checkpoint_authenticity,
+    compute_file_sha256,
+    SecurityVerificationError,
+    TRUSTED_RELEASE_PUBLIC_KEY,
+)
 
 
-def test_packaged_files_sha256_match_manifest():
-    """Verify that every file listed in release_manifest.json packaged_files exists and matches exact SHA-256."""
-    release_dir = "experiments/release/cdm-1-general"
-    manifest_path = os.path.join(release_dir, "release_manifest.json")
-    assert os.path.isfile(manifest_path), f"Missing release manifest at {manifest_path}"
+@pytest.fixture
+def mock_release_dir(tmp_path):
+    """Creates a temporary valid release directory signed with a fresh Ed25519 keypair."""
+    priv = ed25519.Ed25519PrivateKey.generate()
+    priv_hex = priv.private_bytes_raw().hex()
+    pub_hex = priv.public_key().public_bytes_raw().hex()
 
-    with open(manifest_path, "r", encoding="utf-8") as f:
-        manifest = json.load(f)
+    files = {
+        "config.json": json.dumps({"language_encoder": {"projection_dim": 256}}).encode("utf-8"),
+        "feature_schema.json": json.dumps({"numeric_features": ["val"]}).encode("utf-8"),
+        "tokenizer_config.json": json.dumps({"model_type": "modernbert"}).encode("utf-8"),
+        "tokenizer.json": json.dumps({"version": "1.0"}).encode("utf-8"),
+        "model.safetensors": b"FAKETENSORS_DATA_12345",
+    }
 
-    # 1. Verify Ed25519 digital signature of the manifest itself
-    assert verify_manifest_signature(manifest) is True
+    packaged_files = {}
+    for filename, content in files.items():
+        fpath = tmp_path / filename
+        fpath.write_bytes(content)
+        packaged_files[filename] = {
+            "size_bytes": len(content),
+            "sha256": compute_file_sha256(str(fpath)),
+        }
 
-    # 2. Verify all packaged files
-    packaged_files = manifest.get("packaged_files", {})
-    assert len(packaged_files) > 0, "No packaged_files declared in release manifest"
+    manifest = {
+        "release_version": "1.0.0",
+        "model_name": "Test-Model",
+        "architecture": {
+            "language_projection_dim": 256,
+            "structured_encoder_dim": 256,
+        },
+        "packaged_files": packaged_files,
+        "artifact": {
+            "file_name": "model.safetensors",
+            "sha256": packaged_files["model.safetensors"]["sha256"],
+            "file_size_bytes": packaged_files["model.safetensors"]["size_bytes"],
+        },
+    }
 
-    for rel_path, meta in packaged_files.items():
-        full_path = os.path.join(release_dir, rel_path)
-        assert os.path.isfile(full_path), f"Packaged file not found on disk: {full_path}"
+    signed_manifest = sign_manifest(manifest, private_key_hex=priv_hex)
+    manifest_path = tmp_path / "release_manifest.json"
+    manifest_path.write_text(json.dumps(signed_manifest, indent=2), encoding="utf-8")
 
-        expected_size = meta.get("size_bytes")
-        if expected_size is not None:
-            actual_size = os.path.getsize(full_path)
-            assert actual_size == expected_size, f"Size mismatch for {rel_path}: expected {expected_size}, got {actual_size}"
+    return tmp_path, pub_hex, priv_hex
 
-        expected_hash = meta.get("sha256")
-        assert expected_hash, f"Missing sha256 for packaged file {rel_path}"
-        actual_hash = compute_file_sha256(full_path)
-        assert actual_hash.lower() == expected_hash.lower(), (
-            f"SHA-256 mismatch for {rel_path}! Expected {expected_hash}, got {actual_hash}"
-        )
+
+def test_manifest_verification_success(mock_release_dir):
+    release_dir, pub_hex, _ = mock_release_dir
+    res = verify_checkpoint_authenticity(str(release_dir), trusted_public_key_hex=pub_hex)
+    assert res["status"] == "authenticated"
+    assert len(res["files_verified"]) == 5
+
+
+@pytest.mark.parametrize(
+    "tampered_file",
+    ["config.json", "feature_schema.json", "tokenizer_config.json", "tokenizer.json", "model.safetensors"],
+)
+def test_manifest_fails_on_file_content_tampering(mock_release_dir, tampered_file):
+    release_dir, pub_hex, _ = mock_release_dir
+    target = release_dir / tampered_file
+    orig_content = target.read_bytes()
+    target.write_bytes(orig_content + b"_CORRUPTED")
+
+    with pytest.raises(SecurityVerificationError, match=rf"(Checkpoint size mismatch|tampering detected) for '{tampered_file}'"):
+        verify_checkpoint_authenticity(str(release_dir), trusted_public_key_hex=pub_hex)
+
+
+def test_manifest_fails_on_unlisted_extra_file(mock_release_dir):
+    release_dir, pub_hex, _ = mock_release_dir
+    extra = release_dir / "unlisted_trojan.exe"
+    extra.write_text("malicious payload", encoding="utf-8")
+
+    with pytest.raises(SecurityVerificationError, match="unlisted extra file"):
+        verify_checkpoint_authenticity(str(release_dir), trusted_public_key_hex=pub_hex)
+
+
+def test_manifest_fails_on_missing_file(mock_release_dir):
+    release_dir, pub_hex, _ = mock_release_dir
+    (release_dir / "tokenizer.json").unlink()
+
+    with pytest.raises(FileNotFoundError, match="required packaged file.*missing"):
+        verify_checkpoint_authenticity(str(release_dir), trusted_public_key_hex=pub_hex)
+
+
+def test_manifest_fails_on_forged_signature(mock_release_dir):
+    release_dir, pub_hex, _ = mock_release_dir
+    manifest_path = release_dir / "release_manifest.json"
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    # Tamper with architecture without re-signing
+    data["architecture"]["language_projection_dim"] = 9999
+    manifest_path.write_text(json.dumps(data), encoding="utf-8")
+
+    with pytest.raises(SecurityVerificationError, match="Ed25519 signature verification failed"):
+        verify_checkpoint_authenticity(str(release_dir), trusted_public_key_hex=pub_hex)
+
+
+def test_manifest_signing_requires_private_key(monkeypatch):
+    monkeypatch.delenv("CDM_RELEASE_SIGNING_PRIVATE_KEY", raising=False)
+    with pytest.raises(ValueError, match="Ed25519 private key not provided"):
+        sign_manifest({"release_version": "1.0.0"})
+
+
+def test_actual_release_directory_verifies():
+    """Verify that experiments/release/cdm-1-general verifies cleanly against the embedded public key."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    if (actual_release_dir / "model.safetensors").exists():
+        res = verify_checkpoint_authenticity(str(actual_release_dir))
+        assert res["status"] == "authenticated"
+        assert "model.safetensors" in res["files_verified"]
+        assert "config.json" in res["files_verified"]
+        assert "feature_schema.json" in res["files_verified"]
+        assert "tokenizer_config.json" in res["files_verified"]

@@ -11,8 +11,58 @@ import hmac
 import hashlib
 from typing import Dict, Any, Tuple, Optional
 
-# Process-private secret generated when process starts; cannot be forged by external callers
-_RUNTIME_PROVENANCE_SECRET = os.urandom(32)
+
+def _load_runtime_secrets() -> Tuple[bytes, str, Dict[str, bytes]]:
+    """Loads HMAC secret and key ID from environment or persistent secret store.
+    Supports key rotation across processes and restarts.
+    """
+    key_id = os.environ.get("CDM_PROVENANCE_KEY_ID", "cdm-prov-v1")
+    env_secret = os.environ.get("CDM_PROVENANCE_SECRET")
+
+    key_store: Dict[str, bytes] = {}
+
+    if env_secret:
+        active_secret = env_secret.encode("utf-8") if len(env_secret) >= 32 else hashlib.sha256(env_secret.encode("utf-8")).digest()
+    else:
+        key_file = os.environ.get("CDM_PROVENANCE_KEY_FILE", os.path.join("experiments", "provenance_secret.key"))
+        if os.path.exists(key_file):
+            try:
+                with open(key_file, "rb") as f:
+                    active_secret = f.read()
+            except Exception:
+                active_secret = os.urandom(32)
+        else:
+            active_secret = os.urandom(32)
+            try:
+                os.makedirs(os.path.dirname(os.path.abspath(key_file)), exist_ok=True)
+                with open(key_file, "wb") as f:
+                    f.write(active_secret)
+            except Exception:
+                pass
+
+    key_store[key_id] = active_secret
+
+    # Check for additional keys in rotation keyring
+    keyring_json = os.environ.get("CDM_PROVENANCE_KEY_RING")
+    if keyring_json:
+        try:
+            parsed = json.loads(keyring_json)
+            for kid, val in parsed.items():
+                if isinstance(val, str):
+                    key_store[kid] = bytes.fromhex(val) if len(val) == 64 else val.encode("utf-8")
+        except Exception:
+            pass
+
+    return active_secret, key_id, key_store
+
+
+_ACTIVE_SECRET, _ACTIVE_KEY_ID, _KEY_STORE = _load_runtime_secrets()
+
+
+def reload_runtime_secrets():
+    """Refreshes runtime secrets from environment/disk (useful for rotation and restarts)."""
+    global _ACTIVE_SECRET, _ACTIVE_KEY_ID, _KEY_STORE
+    _ACTIVE_SECRET, _ACTIVE_KEY_ID, _KEY_STORE = _load_runtime_secrets()
 
 
 class PredictionProvenance:
@@ -45,23 +95,28 @@ class PredictionProvenance:
         task: str = "binary",
         prediction_output: Optional[Any] = None,
         estimated_risk: Optional[float] = None,
+        key_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Creates an authenticated provenance record signed by the trusted inference runtime,
-        cryptographically bound to model ID, model version, loaded artifact hash, execution ID,
+        cryptographically bound to key ID, model ID, model version, loaded artifact hash, execution ID,
         tenant ID, task, and the prediction output digest.
         """
+        active_kid = key_id or _ACTIVE_KEY_ID
+        signing_secret = _KEY_STORE.get(active_kid, _ACTIVE_SECRET)
+
         exec_id = execution_id or f"exec_{uuid.uuid4().hex}"
         timestamp = time.time()
         pred_digest = cls.compute_prediction_digest(prediction_output) if prediction_output is not None else ""
 
         canonical_data = (
-            f"{model_id}:{model_version}:{artifact_hash}:{exec_id}:{tenant_id}:{task}:{pred_digest}:{timestamp:.4f}"
+            f"{active_kid}:{model_id}:{model_version}:{artifact_hash}:{exec_id}:{tenant_id}:{task}:{pred_digest}:{timestamp:.4f}"
         )
         signature = hmac.new(
-            _RUNTIME_PROVENANCE_SECRET, canonical_data.encode("utf-8"), hashlib.sha256
+            signing_secret, canonical_data.encode("utf-8"), hashlib.sha256
         ).hexdigest()
 
         return {
+            "key_id": active_kid,
             "model_id": model_id,
             "model_version": model_version,
             "artifact_hash": artifact_hash,
@@ -102,6 +157,7 @@ class PredictionProvenance:
         pred_digest = provenance_dict.get("prediction_digest", "")
         timestamp = provenance_dict.get("timestamp")
         signature = provenance_dict.get("provenance_signature")
+        record_kid = provenance_dict.get("key_id", _ACTIVE_KEY_ID)
 
         if not all([model_id, model_version, artifact_hash, execution_id, timestamp, signature]):
             return False, "unverified_caller_input", {
@@ -112,16 +168,29 @@ class PredictionProvenance:
                 ],
             }
 
-        # 1. Verify cryptographic signature against runtime session secret
+        # 1. Verify cryptographic signature against key store secret
+        secret_to_use = _KEY_STORE.get(record_kid, _ACTIVE_SECRET)
         try:
+            # First try canonical data with key_id
             canonical_data = (
-                f"{model_id}:{model_version}:{artifact_hash}:{execution_id}:{tenant_id}:{task}:{pred_digest}:{float(timestamp):.4f}"
+                f"{record_kid}:{model_id}:{model_version}:{artifact_hash}:{execution_id}:{tenant_id}:{task}:{pred_digest}:{float(timestamp):.4f}"
             )
             expected_sig = hmac.new(
-                _RUNTIME_PROVENANCE_SECRET, canonical_data.encode("utf-8"), hashlib.sha256
+                secret_to_use, canonical_data.encode("utf-8"), hashlib.sha256
             ).hexdigest()
 
-            if not hmac.compare_digest(signature, expected_sig):
+            sig_matches = hmac.compare_digest(signature, expected_sig)
+            if not sig_matches:
+                # Fallback to legacy format without key_id for backward compatibility
+                legacy_canonical = (
+                    f"{model_id}:{model_version}:{artifact_hash}:{execution_id}:{tenant_id}:{task}:{pred_digest}:{float(timestamp):.4f}"
+                )
+                legacy_expected = hmac.new(
+                    secret_to_use, legacy_canonical.encode("utf-8"), hashlib.sha256
+                ).hexdigest()
+                sig_matches = hmac.compare_digest(signature, legacy_expected)
+
+            if not sig_matches:
                 return False, "unverified_caller_input", {
                     "reason": "Cryptographic provenance signature mismatch: forged or tampered provenance.",
                 }
@@ -157,6 +226,7 @@ class PredictionProvenance:
                 }
 
         return True, "trained_model_prediction", {
+            "key_id": record_kid,
             "model_id": model_id,
             "model_version": model_version,
             "artifact_hash": artifact_hash,

@@ -9,6 +9,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      - CDM_ENV=production
       - CDM_MODEL_PATH=/app/experiments/release/cdm-1-general
       - CDM_KEY_DB=/app/experiments/api_keys.sqlite
       - CDM_METER_DB=/app/experiments/api_usage_meter.sqlite

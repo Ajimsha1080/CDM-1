@@ -2,8 +2,15 @@
 
 import pytest
 from fastapi.testclient import TestClient
-from api.main import app
+from api.main import app, KEY_MANAGER
 from sdk.cdm_sdk import CDM, CDMAuthenticationError, CDMError
+
+TEST_API_KEY = "cdm_test_runner_valid_suite_key"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_test_credentials():
+    KEY_MANAGER.register_key(TEST_API_KEY, "tenant_dev_default", tier="developer", rate_limit_rpm=500)
 
 
 @pytest.fixture(scope="module")
@@ -34,7 +41,7 @@ def test_auth_rejection_missing_and_invalid(client):
 
 
 def test_post_decision_authenticated(client):
-    headers = {"Authorization": "Bearer sk_test_developer_key"}
+    headers = {"Authorization": f"Bearer {TEST_API_KEY}"}
     payload = {
         "text": "Production server memory leak detected on payment cluster.",
         "structured_features": {
@@ -59,7 +66,7 @@ def test_post_decision_authenticated(client):
 
 
 def test_candidate_choice_with_constraint(client):
-    headers = {"Authorization": "Bearer sk_test_developer_key"}
+    headers = {"Authorization": f"Bearer {TEST_API_KEY}"}
     payload = {
         "text": "Customer requests full refund on order delivered 80 days ago.",
         "task": "choice",
@@ -74,7 +81,7 @@ def test_candidate_choice_with_constraint(client):
 
 
 def test_payload_limits_validation(client):
-    headers = {"Authorization": "Bearer sk_test_developer_key"}
+    headers = {"Authorization": f"Bearer {TEST_API_KEY}"}
     # Exceed candidate count (max 32)
     too_many_cands = [f"cand_{i}" for i in range(35)]
     payload = {
@@ -103,7 +110,7 @@ def test_sdk_explicit_mode_enforcement():
 def test_api_and_sdk_cognitive_process(client):
     """Verifies the new /v1/cognitive/process REST endpoint and SDK .process() method."""
     # 1. REST API endpoint
-    headers = {"Authorization": "Bearer sk_test_developer_key"}
+    headers = {"Authorization": f"Bearer {TEST_API_KEY}"}
     payload = {
         "text": "Customer reports critical security breach on server ACC-99212.",
         "structured_features": {

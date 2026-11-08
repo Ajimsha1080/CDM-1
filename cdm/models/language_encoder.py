@@ -5,6 +5,7 @@ and freezing/fine-tuning controls.
 """
 
 from typing import Optional, Dict, Any
+import os
 import torch
 import torch.nn as nn
 from transformers import AutoModel, AutoTokenizer, AutoConfig
@@ -44,6 +45,12 @@ class LanguageEncoder(nn.Module):
         model_kwargs: Dict[str, Any] = {}
         if "modernbert" not in self.config.model_name_or_path.lower() and "bert" in self.config.model_name_or_path.lower():
             model_kwargs["add_pooling_layer"] = False
+
+        if not os.path.isdir(self.config.model_name_or_path):
+            if getattr(self.config, "revision", None):
+                model_kwargs["revision"] = self.config.revision
+        if getattr(self.config, "local_files_only", False):
+            model_kwargs["local_files_only"] = True
 
         self.transformer = AutoModel.from_pretrained(
             self.config.model_name_or_path,

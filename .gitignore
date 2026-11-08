@@ -40,3 +40,7 @@ Thumbs.db
 
 # Archives
 *.zip
+
+# Secrets and keys
+*.key
+experiments/*.key

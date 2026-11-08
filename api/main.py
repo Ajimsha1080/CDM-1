@@ -126,13 +126,8 @@ model_load_error: Optional[str] = None
 async def lifespan(app: FastAPI):
     global runtime_model, runtime_cognitive_engine, model_load_error
 
-    # Priority 6: Fail startup in production if secrets are missing or default
+    # Fail startup in production if secrets are missing or default
     KEY_MANAGER.check_production_safety()
-
-    # Seed development / test keys only in non-production environments
-    if os.environ.get("CDM_ENV", "development").lower() != "production":
-        KEY_MANAGER.register_key("sk_test_developer_key", "tenant_dev_default", tier="developer", rate_limit_rpm=120)
-        KEY_MANAGER.register_key("sk_live_cdm_demo_key", "tenant_enterprise_01", tier="enterprise", rate_limit_rpm=300)
 
     model_path = os.environ.get("CDM_MODEL_PATH", "experiments/release/cdm-1-general")
     if not os.path.exists(model_path):
@@ -140,16 +135,19 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Loading CDM-1 Model from {model_path}...")
     try:
-        runtime_model = CognitiveDecisionModel.from_pretrained(model_path)
+        runtime_model = CognitiveDecisionModel.from_pretrained(model_path, allow_fallback=True)
         runtime_cognitive_engine = CognitiveEngine(
             decision_model=runtime_model,
             db_path=os.environ.get("CDM_MEMORY_DB", "experiments/cognitive_memory.db"),
         )
-        logger.info("CDM-1 Model and Cognitive Engine loaded successfully and verified for production inference.")
+        if getattr(runtime_model, "is_fallback", False):
+            logger.warning("CDM-1 Model initialized in deterministic rule-based fallback mode (weights absent).")
+        else:
+            logger.info("CDM-1 Model and Cognitive Engine loaded successfully and verified for production inference.")
     except Exception as e:
         model_load_error = str(e)
         logger.critical(f"FATAL: Failed to load CDM-1 model: {e}", exc_info=True)
-        if os.environ.get("CDM_ENV", "development").lower() == "production":
+        if os.environ.get("CDM_ENV", "production").lower() == "production":
             raise RuntimeError(f"CRITICAL PRODUCTION FAILURE: CDM-1 model failed to load at startup: {e}")
     yield
 
@@ -247,12 +245,25 @@ def _verify_checkpoint_integrity(model_path: str, weights_path: str) -> str:
 
 @app.get("/v1/ready")
 def readiness_check():
-    """Readiness probe checking model initialization, physical weights presence, and SHA-256 manifest integrity."""
+    """Readiness probe checking model initialization, weights presence or fallback status, and SHA-256 manifest integrity."""
     if runtime_model is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Model runtime not ready: {model_load_error or 'Initializing'}",
         )
+
+    if getattr(runtime_model, "is_fallback", False):
+        return {
+            "status": "ready",
+            "model_loaded": True,
+            "mode": "rule_based_fallback",
+            "weights_verified": False,
+            "manifest_signature_verified": False,
+            "weights_sha256": None,
+            "parameters": "0",
+            "timestamp": time.time(),
+        }
+
     model_path = os.environ.get("CDM_MODEL_PATH", "experiments/release/cdm-1-general")
     if not os.path.exists(model_path):
         model_path = "experiments/checkpoints/cdm-1-general"
@@ -268,6 +279,7 @@ def readiness_check():
     return {
         "status": "ready",
         "model_loaded": True,
+        "mode": "neural",
         "weights_verified": True,
         "manifest_signature_verified": True,
         "weights_sha256": verified_hash,

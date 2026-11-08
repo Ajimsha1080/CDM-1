@@ -415,18 +415,21 @@ class CDMModel(nn.Module):
         model = cls(config)
         state_dict = load_file(weights_path)
 
-        # Strict state dictionary validation
-        model_keys = set(model.state_dict().keys())
-        loaded_keys = set(state_dict.keys())
-
-        missing_keys = model_keys - loaded_keys
-        if strict and len(missing_keys) > 0:
-            # Check if any missing keys are critical custom neural components
-            critical_missing = [k for k in missing_keys if not k.startswith("language_encoder.transformer.")]
-            if len(critical_missing) > 0:
-                raise ValueError(
-                    f"Checkpoint verification failed! Critical keys missing from state_dict: {critical_missing[:5]}"
-                )
-
         load_result = model.load_state_dict(state_dict, strict=False)
+        
+        # Rigorously verify load_state_dict results - never ignore missing or unexpected keys
+        critical_missing = [k for k in load_result.missing_keys if not k.startswith("language_encoder.transformer.")]
+        if critical_missing:
+            raise ValueError(
+                f"Checkpoint verification failed! Critical keys missing from state_dict: {critical_missing[:5]}"
+            )
+        if strict and load_result.missing_keys:
+            raise ValueError(
+                f"Checkpoint verification failed! Missing keys in strict mode: {load_result.missing_keys[:5]}"
+            )
+        if len(load_result.unexpected_keys) > 0:
+            raise ValueError(
+                f"Checkpoint verification failed! Unexpected keys found in state_dict: {load_result.unexpected_keys[:5]}"
+            )
+
         return model

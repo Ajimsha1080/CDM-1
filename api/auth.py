@@ -108,7 +108,7 @@ class PersistentApiKeyManager:
             return None
 
         clean_key = raw_key.strip()
-        env = os.environ.get("CDM_ENV", "development").lower()
+        env = os.environ.get("CDM_ENV", "production").lower()
 
         # In production, immediately reject all demo / default credentials
         if env == "production" and clean_key in self.PROHIBITED_DEMO_KEYS:
@@ -162,7 +162,7 @@ class PersistentApiKeyManager:
         """Enforces P1: Production requires registered credentials in the persistent store.
         Prohibits satisfying auth checks via arbitrary environment variables or demo keys.
         """
-        env = os.environ.get("CDM_ENV", "development").lower()
+        env = os.environ.get("CDM_ENV", "production").lower()
         if env == "production":
             with self._lock:
                 conn = self._get_connection()

@@ -1,11 +1,8 @@
-# CDM-1 Pinned Reproducible Dependency Lockfile
+# Pinned dependency lock file for CDM-1 (CPU and Linux/Container compatibility)
 torch==2.12.1
-torchaudio==2.11.0
-torchvision==0.27.1
 transformers==5.17.0
 safetensors==0.8.0
 pydantic==2.13.4
-pydantic-settings==2.15.0
 fastapi==0.143.0
 uvicorn==0.49.0
 scikit-learn==1.9.0
@@ -15,4 +12,6 @@ psutil==7.2.2
 requests==2.34.2
 pytest==9.1.1
 httpx==0.28.1
-xgboost==3.4.1
+cryptography==49.0.0
+redis==8.0.1
+anthropic==0.116.0

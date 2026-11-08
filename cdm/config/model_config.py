@@ -11,6 +11,14 @@ class LanguageEncoderConfig(BaseModel):
         default="answerdotai/ModernBERT-base",
         description="Pretrained transformer encoder model identifier or local path."
     )
+    revision: Optional[str] = Field(
+        default="8949b909ec900327062f0ebf497f51aef5e6f0c8",
+        description="Pinned git commit revision of the model."
+    )
+    local_files_only: bool = Field(
+        default=False,
+        description="Whether to only use local files and avoid downloading from remote hub."
+    )
     freeze_encoder: bool = Field(
         default=True,
         description="Whether to freeze transformer weights during initial training stages."

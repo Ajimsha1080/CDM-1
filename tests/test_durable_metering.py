@@ -6,7 +6,7 @@ import pytest
 from concurrent.futures import ThreadPoolExecutor
 from api.metering import DurableUsageMeter
 from fastapi.testclient import TestClient
-from api.main import app
+from api.main import app, KEY_MANAGER
 
 
 @pytest.fixture
@@ -75,8 +75,10 @@ def test_concurrent_request_accounting(temp_meter):
 
 
 def test_api_metering_endpoint():
+    test_key = "cdm_test_metering_valid_key"
+    KEY_MANAGER.register_key(test_key, "tenant_dev_default", tier="developer", rate_limit_rpm=500)
     with TestClient(app) as client:
-        headers = {"Authorization": "Bearer sk_test_developer_key"}
+        headers = {"Authorization": f"Bearer {test_key}"}
         # Make a decision to record usage
         r_post = client.post(
             "/v1/decisions",

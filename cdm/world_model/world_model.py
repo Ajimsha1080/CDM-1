@@ -80,14 +80,18 @@ class WorldModel:
         if constraint not in self.state.active_constraints:
             self.state.active_constraints.append(constraint)
 
-    def simulate_transition(self, action: str, action_params: Optional[Dict[str, Any]] = None) -> WorldState:
+    def simulate_transition(
+        self,
+        action: str,
+        action_params: Optional[Dict[str, Any]] = None,
+        base_state: Optional[WorldState] = None,
+    ) -> WorldState:
         """Counterfactual forward transition model: S_{t+1} = T(S_t, Action).
         Simulates how taking a candidate action alters the environment state without mutating ground truth.
-        Note: This is a discrete domain transition rule evaluating immediate impact, strictly separated
-        from the learned neural outcome predictions produced by the decision core.
+        Accepts an optional base_state for sequential multi-step transition chaining.
         """
         params = action_params or {}
-        simulated = self.state.model_copy(deep=True)
+        simulated = (base_state or self.state).model_copy(deep=True)
 
         action_clean = action.lower()
         transition_delta = {"action": action, "parameters": params}
@@ -101,16 +105,29 @@ class WorldModel:
             # Refund adjusts monetary risk to settled
             simulated.environment_metrics["refund_issued"] = 1.0
             simulated.environment_metrics["monetary_risk"] = 0.0
+            simulated.environment_metrics["monetary_value_usd"] = 0.0
             transition_delta["monetary_settlement"] = True
         elif "block" in action_clean or "quarantine" in action_clean:
             # Security quarantine protects system integrity
             simulated.environment_metrics["system_exposure"] = 0.0
             simulated.environment_metrics["service_disruption_risk"] = 0.8
             transition_delta["quarantine_enforced"] = True
+        elif "isolate" in action_clean:
+            # Cluster isolation isolates network and lowers exposure
+            simulated.environment_metrics["system_exposure"] = 0.1
+            simulated.environment_metrics["cluster_isolated"] = 1.0
+            transition_delta["cluster_isolated"] = True
         elif "auto_resolve" in action_clean:
             # Resolution decreases pending queue
             simulated.environment_metrics["resolved"] = 1.0
             transition_delta["queue_resolved"] = True
+        elif "stabilize" in action_clean:
+            simulated.environment_metrics["vital_instability"] = 0.0
+            simulated.environment_metrics["patient_stable"] = 1.0
+            transition_delta["vital_stabilized"] = True
+        elif "triage" in action_clean:
+            simulated.environment_metrics["triage_completed"] = 1.0
+            transition_delta["triage_completed"] = True
 
         simulated.simulated_state[f"transition_{action}"] = transition_delta
         return simulated

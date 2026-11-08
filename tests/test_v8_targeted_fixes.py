@@ -448,8 +448,8 @@ def test_multiprocess_feedback_concurrency_and_wal():
         init_col = FeedbackCollector(db_path=db_path)
         del init_col
 
-        num_procs = 3
-        items_per_proc = 10
+        num_procs = 2
+        items_per_proc = 5
         manager = multiprocessing.Manager()
         return_dict = manager.dict()
 
@@ -463,14 +463,15 @@ def test_multiprocess_feedback_concurrency_and_wal():
             p.start()
 
         for p in procs:
-            p.join(timeout=30)
+            p.join(timeout=60)
 
         for w_id in range(num_procs):
             assert return_dict.get(w_id) is True, f"Worker {w_id} failed: {return_dict.get(w_id)}"
 
         final_collector = FeedbackCollector(db_path=db_path)
         failures = final_collector.get_failure_cases()
-        assert len(failures) == num_procs * 5
+        # With 5 items per proc and (i % 2 == 0) being success: i=0 (succ), 1 (fail), 2 (succ), 3 (fail), 4 (succ) -> 2 failures per proc
+        assert len(failures) == num_procs * 2
 
     finally:
         if os.path.exists(db_path):

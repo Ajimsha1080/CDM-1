@@ -26,6 +26,7 @@ class DecisionResult:
         self.priority = data.get("priority")
         self.risk = data.get("risk")
         self.predicted_outcome = data.get("predicted_outcome")
+        self.provenance = data.get("provenance")
         self.abstain = data.get("abstain", False)
         self.abstention_reason = data.get("abstention_reason")
         self.selected_candidate = data.get("selected_candidate")
@@ -119,6 +120,7 @@ class CognitiveDecisionModel:
         task: str = "binary",
         candidates: Optional[List[str]] = None,
         prohibited_actions: Optional[List[str]] = None,
+        tenant_id: str = "default_tenant",
     ) -> DecisionResult:
         """Run single inference decision."""
         features = structured_features or {}
@@ -201,11 +203,22 @@ class CognitiveDecisionModel:
         model_name = getattr(getattr(self.model, "config", None), "model_name", "CDM-1-General")
         model_version = getattr(getattr(self.model, "config", None), "model_version", "1.0.0")
 
+        pred_output_summary = {
+            "decision": bin_decision_str,
+            "binary_prediction": bin_pred_val,
+            "confidence": confidence_val,
+            "risk": risk_val,
+            "priority": priority_str,
+        }
+
         from cdm.inference.provenance import PredictionProvenance
         prov_record = PredictionProvenance.create(
             model_id=model_name,
             model_version=model_version,
             artifact_hash=self.artifact_hash,
+            tenant_id=tenant_id,
+            task=task,
+            prediction_output=pred_output_summary,
             estimated_risk=risk_val,
         )
 

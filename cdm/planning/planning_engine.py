@@ -5,8 +5,9 @@ cryptographic prediction provenance verification, independent alternative plan e
 measurable goal condition verification, and clear separation of proposed plans from executed outcomes.
 """
 
+import time
 from typing import Dict, List, Optional, Any, Tuple
-from cdm.cognitive.state import Plan, PlanStep, GoalNode, WorldState, ReasoningTrace
+from cdm.cognitive.state import Plan, PlanStep, ExecutedActionStep, GoalNode, WorldState, ReasoningTrace
 from cdm.world_model.world_model import WorldModel
 from cdm.inference.provenance import PredictionProvenance
 
@@ -119,6 +120,8 @@ class PlanningEngine:
         action: str,
         current_world_state: WorldState,
         predicted_outcome: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+        task: Optional[str] = None,
     ) -> Tuple[float, str, Optional[str], Optional[str], Dict[str, Any]]:
         """Computes dynamic action risk with cryptographic provenance validation.
         Strictly rejects caller-controlled claims of neural authenticity.
@@ -135,7 +138,16 @@ class PlanningEngine:
                 predicted_outcome if "provenance_signature" in predicted_outcome else None
             )
 
-        is_valid, classification_source, diag = PredictionProvenance.validate(prov_dict)
+        verify_pred_output = None
+        if prov_dict and prov_dict.get("prediction_digest"):
+            verify_pred_output = predicted_outcome.get("prediction_output") or predicted_outcome
+
+        is_valid, classification_source, diag = PredictionProvenance.validate(
+            prov_dict,
+            expected_tenant_id=tenant_id,
+            expected_task=task,
+            prediction_output=verify_pred_output,
+        )
 
         pred_risk = None
         if predicted_outcome and isinstance(predicted_outcome, dict):
@@ -370,8 +382,14 @@ class PlanningEngine:
         reasoning_trace: ReasoningTrace,
         prohibited_actions: Optional[List[str]] = None,
         predicted_outcome: Optional[Dict[str, Any]] = None,
+        tenant_id: Optional[str] = None,
+        task: Optional[str] = None,
     ) -> Plan:
-        """Constructs and evaluates a proposed multi-step plan to achieve the target goal while adhering to constraints."""
+        """Constructs and evaluates a proposed multi-step plan to achieve the target goal while adhering to constraints.
+        Executes sequential forward world-state simulation: S_{t+1} = T(S_t, A_t), passing resulting state
+        to subsequent steps, re-evaluating preconditions at each intermediate state, and evaluating alternatives independently.
+        Never marks proposed plans as verified complete.
+        """
         forbidden = set(prohibited_actions or [])
         for v in reasoning_trace.violated_constraints:
             for act in available_actions:
@@ -380,25 +398,29 @@ class PlanningEngine:
 
         valid_actions = [a for a in available_actions if a not in forbidden]
 
+        # Sequential world-state simulation for proposed plan
+        current_sim_state = current_world_state.model_copy(deep=True)
         plan_steps: List[PlanStep] = []
         cumulative_risk = 0.0
 
         for idx, action in enumerate(valid_actions[:4], start=1):
             preconditions, preconditions_met = self._evaluate_preconditions(
                 action=action,
-                current_world_state=current_world_state,
+                current_world_state=current_sim_state,
                 forbidden_actions=forbidden,
             )
 
             if not preconditions_met:
                 continue
 
-            simulated_next_state = self.world_model.simulate_transition(action)
+            simulated_next_state = self.world_model.simulate_transition(action, base_state=current_sim_state)
 
             step_risk, step_risk_src, model_id, model_version, prov = self._compute_action_risk(
                 action=action,
-                current_world_state=current_world_state,
+                current_world_state=current_sim_state,
                 predicted_outcome=predicted_outcome,
+                tenant_id=tenant_id,
+                task=task,
             )
             cumulative_risk += step_risk
 
@@ -425,6 +447,8 @@ class PlanningEngine:
                 is_reversible=action_spec.get("is_reversible", "refund" not in action.lower()),
             )
             plan_steps.append(step)
+            # Advance sequential simulation state to next step
+            current_sim_state = simulated_next_state
 
         efficiency = max(0.2, 1.0 - (len(plan_steps) * 0.1))
 
@@ -436,23 +460,26 @@ class PlanningEngine:
             forbidden_actions=forbidden,
         )
 
-        # Independently evaluate alternative plans
+        # Independently evaluate alternative plans with sequential world-state simulation
         alternatives = []
         if len(valid_actions) > 1:
             for alt_act in valid_actions[1:]:
+                alt_sim_state = current_world_state.model_copy(deep=True)
                 alt_plan_steps: List[PlanStep] = []
                 alt_cum_risk = 0.0
                 candidate_sequence = [alt_act] + [a for a in valid_actions if a != alt_act][:2]
 
                 for s_idx, a_name in enumerate(candidate_sequence, start=1):
-                    p_conds, p_met = self._evaluate_preconditions(a_name, current_world_state, forbidden)
+                    p_conds, p_met = self._evaluate_preconditions(a_name, alt_sim_state, forbidden)
                     if not p_met:
                         continue
-                    sim_state = self.world_model.simulate_transition(a_name)
+                    sim_state = self.world_model.simulate_transition(a_name, base_state=alt_sim_state)
                     s_risk, s_src, s_mid, s_mver, s_prov = self._compute_action_risk(
                         action=a_name,
-                        current_world_state=current_world_state,
+                        current_world_state=alt_sim_state,
                         predicted_outcome=predicted_outcome,
+                        tenant_id=tenant_id,
+                        task=task,
                     )
                     alt_cum_risk += s_risk
                     alt_spec = ACTION_SPECIFICATIONS.get(a_name, {})
@@ -477,6 +504,8 @@ class PlanningEngine:
                         is_reversible=alt_spec.get("is_reversible", "refund" not in a_name.lower()),
                     )
                     alt_plan_steps.append(alt_step)
+                    # Advance sequential simulation state for alternative branch
+                    alt_sim_state = sim_state
 
                 alt_compliant, _ = self._evaluate_constraint_compliance(
                     alt_plan_steps, reasoning_trace, current_world_state, forbidden
@@ -549,10 +578,116 @@ class PlanningEngine:
             plan_efficiency_score=round(efficiency, 2),
             constraint_compliance=constraint_compliance,
             goal_satisfied=goal_satisfied,
-            is_verified_goal_completion=goal_satisfied,
+            simulated_goal_achieved=goal_satisfied,
+            is_verified_goal_completion=False,  # ALWAYS False for proposed plans
             goal_satisfaction_details=satisfaction_details,
             alternative_plans=alternatives,
         )
+
+    def record_step_execution(
+        self,
+        plan: Plan,
+        step_number: int,
+        observed_outcome: Dict[str, Any],
+        observed_state: Optional[WorldState] = None,
+        execution_status: str = "success",
+    ) -> ExecutedActionStep:
+        """Explicit action execution and outcome observation interface.
+        Records telemetry from an executed plan step without mistaking proposed steps for executed outcomes.
+        """
+        matching_step = next((s for s in plan.steps if s.step_number == step_number), None)
+        action_name = matching_step.action_name if matching_step else f"step_{step_number}"
+        metrics = (observed_state.environment_metrics if observed_state else {}).copy()
+
+        executed_step = ExecutedActionStep(
+            step_number=step_number,
+            action_name=action_name,
+            executed_at=time.time(),
+            execution_status=execution_status,
+            observed_outcome=observed_outcome,
+            observed_state_metrics=metrics,
+            verified_goal_completion=False,
+        )
+        plan.executed_steps.append(executed_step)
+        plan.observed_outcomes.append(observed_outcome)
+        plan.plan_stage = "in_progress"
+        return executed_step
+
+    def verify_plan_execution_completion(
+        self,
+        plan: Plan,
+        target_goal: GoalNode,
+        final_observed_world_state: WorldState,
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """Verifies actual execution completion against real observed outcomes and final world state.
+        Never grants verified goal completion for merely proposed plans.
+        """
+        if not plan.executed_steps:
+            return False, {"verified": False, "reason": "No actions have been executed."}
+
+        # Check that all planned steps have been executed
+        if len(plan.executed_steps) < len(plan.steps):
+            return False, {
+                "verified": False,
+                "reason": f"Partial execution: {len(plan.executed_steps)} of {len(plan.steps)} steps executed.",
+            }
+
+        # Check for any execution failures
+        failed_steps = [s for s in plan.executed_steps if s.execution_status != "success"]
+        if failed_steps:
+            plan.is_verified_goal_completion = False
+            plan.plan_stage = "failed"
+            return False, {
+                "verified": False,
+                "reason": f"Execution failures in steps: {[s.step_number for s in failed_steps]}",
+            }
+
+        # Collect observed outcomes and metrics
+        observed_postconditions = set()
+        for s in plan.executed_steps:
+            posts = s.observed_outcome.get("observed_postconditions", [])
+            observed_postconditions.update(posts)
+            matching = next((ps for ps in plan.steps if ps.step_number == s.step_number), None)
+            if matching and s.execution_status == "success":
+                observed_postconditions.update(matching.postconditions)
+
+        # Check target goal criteria against real final observed world state and observed postconditions
+        target_metrics = getattr(target_goal, "target_state_metrics", {}) or {}
+        metrics_satisfied = True
+        failed_metrics = []
+        for metric, target_val in target_metrics.items():
+            obs_val = final_observed_world_state.environment_metrics.get(metric)
+            if obs_val is None:
+                metrics_satisfied = False
+                failed_metrics.append(f"Missing observed metric: {metric}")
+            elif "risk" in metric.lower() or "exposure" in metric.lower():
+                if obs_val > target_val:
+                    metrics_satisfied = False
+                    failed_metrics.append(f"Metric {metric}={obs_val} > target {target_val}")
+
+        required_posts = getattr(target_goal, "required_postconditions", []) or []
+        missing_posts = [p for p in required_posts if p not in observed_postconditions]
+
+        is_completed = metrics_satisfied and len(missing_posts) == 0
+
+        verification_details = {
+            "verified": is_completed,
+            "executed_steps_count": len(plan.executed_steps),
+            "observed_postconditions": list(observed_postconditions),
+            "failed_metrics": failed_metrics,
+            "missing_required_postconditions": missing_posts,
+        }
+
+        if is_completed:
+            plan.is_verified_goal_completion = True
+            plan.plan_stage = "completed"
+            for s in plan.executed_steps:
+                s.verified_goal_completion = True
+        else:
+            plan.is_verified_goal_completion = False
+            plan.plan_stage = "failed"
+
+        return is_completed, verification_details
 
     def should_replan(self, current_plan: Plan, current_world_state: WorldState) -> Tuple[bool, Optional[str]]:
         """Evaluates whether current execution conditions have diverged, necessitating replanning."""

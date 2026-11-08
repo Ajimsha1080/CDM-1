@@ -165,6 +165,7 @@ class Plan(BaseModel):
     plan_efficiency_score: float = 1.0
     constraint_compliance: bool = True
     goal_satisfied: bool = False
+    simulated_goal_achieved: bool = False
     is_verified_goal_completion: bool = False
     goal_satisfaction_details: Dict[str, Any] = Field(default_factory=dict)
     alternative_plans: List[Dict[str, Any]] = Field(default_factory=list)

@@ -283,6 +283,7 @@ class CognitiveEngine:
                 task=task,
                 candidates=candidate_list,
                 prohibited_actions=effective_prohibitions,
+                tenant_id=tenant_id,
             )
 
             decision = cdm_result.decision
@@ -332,6 +333,8 @@ class CognitiveEngine:
                     reasoning_trace=reasoning_trace,
                     prohibited_actions=effective_prohibitions,
                     predicted_outcome=pred_for_planning,
+                    tenant_id=tenant_id,
+                    task=task,
                 )
 
             # Step I: Metacognitive Review & Safety Gate

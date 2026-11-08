@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "language_encoder": {
     "model_name_or_path": "answerdotai/ModernBERT-base",
+    "revision": "8949b909ec900327062f0ebf497f51aef5e6f0c8",
+    "local_files_only": true,
     "freeze_encoder": true,
     "pooling_strategy": "mean",
     "max_seq_length": 256,

@@ -16,7 +16,12 @@ from cdm.cognitive.state import (
     CognitiveEngineResult,
 )
 
-__version__ = "0.1.0"
+import importlib.metadata
+
+try:
+    __version__ = importlib.metadata.version("cdm-1")
+except Exception:
+    __version__ = "0.1.0"
 
 __all__ = [
     "CDMModel",

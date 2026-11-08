@@ -17,9 +17,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from fastapi import FastAPI, Depends, HTTPException, Security, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
+from cdm import __version__
 from cdm.inference.pipeline import CognitiveDecisionModel
 from cdm.cognitive.engine import CognitiveEngine
 from cdm.cognitive.state import CognitiveEngineResult
@@ -35,13 +38,41 @@ logger = logging.getLogger("cdm.api")
 from api.auth import PersistentApiKeyManager
 from api.metering import DurableUsageMeter
 
-# Persistent Secret & Key Management (Priority 6)
-KEY_MANAGER = PersistentApiKeyManager(db_path=os.environ.get("CDM_KEY_DB", "experiments/api_keys.sqlite"))
+# Configurable Writable Data Paths (Item 6)
+DATA_DIR = os.environ.get("CDM_DATA_DIR", "experiments")
+KEY_DB_PATH = os.environ.get("CDM_KEY_DB", os.path.join(DATA_DIR, "api_keys.sqlite"))
+METER_DB_PATH = os.environ.get("CDM_METER_DB", os.path.join(DATA_DIR, "api_usage_meter.sqlite"))
+MEMORY_DB_PATH = os.environ.get("CDM_MEMORY_DB", os.path.join(DATA_DIR, "cognitive_memory.db"))
+AGENT_DB_PATH = os.environ.get("CDM_AGENT_DB", os.path.join(DATA_DIR, "agent_runs.sqlite"))
 
-# Durable Transactional Metering & Rate Limiting (Priority 6)
-USAGE_METER = DurableUsageMeter(db_path=os.environ.get("CDM_METER_DB", "experiments/api_usage_meter.sqlite"))
+KEY_MANAGER = PersistentApiKeyManager(db_path=KEY_DB_PATH)
+USAGE_METER = DurableUsageMeter(db_path=METER_DB_PATH)
 
 security = HTTPBearer(auto_error=False)
+
+
+def _validate_dict_bounds(d: Any, max_entries: int = 100, max_key_len: int = 128, max_val_len: int = 1024) -> Dict[str, Any]:
+    if not isinstance(d, dict):
+        raise ValueError("Must be a dictionary")
+    if len(d) > max_entries:
+        raise ValueError(f"Dictionary exceeds maximum of {max_entries} entries (got {len(d)})")
+    for k, v in d.items():
+        if not isinstance(k, str) or len(k) > max_key_len:
+            raise ValueError(f"Dictionary keys must be strings <= {max_key_len} characters")
+        if isinstance(v, str) and len(v) > max_val_len:
+            raise ValueError(f"Dictionary string value for key '{k}' exceeds {max_val_len} characters")
+    return d
+
+
+def _validate_list_bounds(lst: Any, max_items: int = 50, max_str_len: int = 1024) -> List[Any]:
+    if not isinstance(lst, list):
+        raise ValueError("Must be a list")
+    if len(lst) > max_items:
+        raise ValueError(f"List exceeds maximum of {max_items} items (got {len(lst)})")
+    for item in lst:
+        if isinstance(item, str) and len(item) > max_str_len:
+            raise ValueError(f"List string item exceeds {max_str_len} characters")
+    return lst
 
 
 # Pydantic Schemas with Strict Payload Validation
@@ -58,6 +89,25 @@ class DecisionRequest(BaseModel):
         valid_tasks = {"binary", "choice", "score", "predict", "priority", "risk"}
         if v not in valid_tasks:
             raise ValueError(f"Invalid task '{v}'. Supported tasks: {valid_tasks}")
+        return v
+
+    @field_validator("structured_features")
+    @classmethod
+    def validate_structured_features(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        return _validate_dict_bounds(v, max_entries=100, max_key_len=128, max_val_len=1024)
+
+    @field_validator("candidates")
+    @classmethod
+    def validate_candidates(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            return _validate_list_bounds(v, max_items=32, max_str_len=1024)
+        return v
+
+    @field_validator("prohibited_actions")
+    @classmethod
+    def validate_prohibited_actions(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            return _validate_list_bounds(v, max_items=50, max_str_len=256)
         return v
 
 
@@ -96,7 +146,40 @@ class CognitiveProcessRequest(BaseModel):
     prohibited_actions: Optional[List[str]] = Field(default=None, description="Prohibited action constraints.")
     goals: Optional[List[str]] = Field(default=None, description="Active task goals.")
     constraints: Optional[List[str]] = Field(default=None, description="Explicit caller constraints.")
-    session_id: str = Field(default="default_session", description="Session identifier for multi-turn tracking.")
+    session_id: str = Field(default="default_session", max_length=128, description="Session identifier for multi-turn tracking.")
+
+    @field_validator("structured_features")
+    @classmethod
+    def validate_features(cls, v: Dict[str, Any]) -> Dict[str, Any]:
+        return _validate_dict_bounds(v, max_entries=100, max_key_len=128, max_val_len=1024)
+
+    @field_validator("candidates")
+    @classmethod
+    def validate_cand(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            return _validate_list_bounds(v, max_items=32, max_str_len=1024)
+        return v
+
+    @field_validator("prohibited_actions")
+    @classmethod
+    def validate_proh(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            return _validate_list_bounds(v, max_items=50, max_str_len=256)
+        return v
+
+    @field_validator("goals")
+    @classmethod
+    def validate_goals(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            return _validate_list_bounds(v, max_items=32, max_str_len=512)
+        return v
+
+    @field_validator("constraints")
+    @classmethod
+    def validate_constraints(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            return _validate_list_bounds(v, max_items=32, max_str_len=512)
+        return v
 
 
 class CognitiveProcessResponse(BaseModel):
@@ -127,6 +210,27 @@ class CreateAgentRunRequest(BaseModel):
     prohibited_actions: Optional[List[str]] = Field(default=None, max_length=50, description="Hard prohibited actions")
     verification_spec: Optional[Dict[str, Any]] = Field(default=None, description="Ground truth verification spec")
     auto_run: bool = Field(default=True, description="Whether to execute until completion or required pause")
+
+    @field_validator("tenant_policies")
+    @classmethod
+    def validate_policies(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            return _validate_list_bounds(v, max_items=20, max_str_len=512)
+        return v
+
+    @field_validator("prohibited_actions")
+    @classmethod
+    def validate_proh_actions(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is not None:
+            return _validate_list_bounds(v, max_items=50, max_str_len=256)
+        return v
+
+    @field_validator("verification_spec")
+    @classmethod
+    def validate_verif(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if v is not None:
+            return _validate_dict_bounds(v, max_entries=50, max_key_len=128, max_val_len=1024)
+        return v
 
 
 class AgentRejectRequest(BaseModel):
@@ -176,11 +280,11 @@ async def lifespan(app: FastAPI):
         runtime_model = CognitiveDecisionModel.from_pretrained(model_path, allow_fallback=True)
         runtime_cognitive_engine = CognitiveEngine(
             decision_model=runtime_model,
-            db_path=os.environ.get("CDM_MEMORY_DB", "experiments/cognitive_memory.db"),
+            db_path=MEMORY_DB_PATH,
         )
         runtime_agent_loop = AgentControlLoop(
             cognitive_engine=runtime_cognitive_engine,
-            store=AgentStore(os.environ.get("CDM_AGENT_DB", "experiments/agent_runs.sqlite")),
+            store=AgentStore(AGENT_DB_PATH),
         )
         if getattr(runtime_model, "is_fallback", False):
             logger.warning("CDM-1 Model initialized in deterministic rule-based fallback mode (weights absent).")
@@ -197,9 +301,55 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="CDM-1 Cognitive Decision Model API",
     description="Commercial REST API for neural decision models, predictive estimation, and calibrated actions.",
-    version="2.0.0",
+    version=__version__,
     lifespan=lifespan,
 )
+
+MAX_REQUEST_BODY_BYTES = 1048576  # 1 MB
+
+
+@app.middleware("http")
+async def limit_request_body_size(request: Request, call_next):
+    """Enforces global maximum request body size (1 MB)."""
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_REQUEST_BODY_BYTES:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={
+                        "error": "PayloadTooLarge",
+                        "detail": f"Request payload exceeds maximum allowed size of {MAX_REQUEST_BODY_BYTES} bytes (1 MB).",
+                    },
+                )
+        except ValueError:
+            pass
+    return await call_next(request)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Structured response for request model validation errors."""
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "error": "ValidationError",
+            "detail": jsonable_encoder(exc.errors()),
+        },
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Structured response for HTTP exceptions."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": "HTTPException",
+            "detail": exc.detail,
+        },
+        headers=getattr(exc, "headers", None),
+    )
 
 
 @app.exception_handler(Exception)
@@ -208,7 +358,10 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.error(f"Internal unhandled exception on {request.method} {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "An internal server error occurred. Diagnostic event has been securely logged."},
+        content={
+            "error": "InternalServerError",
+            "detail": "An internal server error occurred. Diagnostic event has been securely logged.",
+        },
     )
 
 
@@ -334,7 +487,7 @@ def readiness_check():
 def version_info():
     return {
         "service": "CDM-1 Commercial Decision API",
-        "version": "2.0.0",
+        "version": __version__,
         "architecture": "Hybrid Neural Cognitive Decision Model",
         "framework": "PyTorch + Transformers",
     }

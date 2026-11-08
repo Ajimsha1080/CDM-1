@@ -25,8 +25,8 @@
   },
   "packaged_files": {
     "config.json": {
-      "size_bytes": 1428,
-      "sha256": "b500ede84dd307ec59729b9a30873191f1a5e042c285f00a5fc8c8eb4b31e9fe"
+      "size_bytes": 1518,
+      "sha256": "4dcf8cb656a594c56e8b5acf0235f6e0142832bfe22477ba8e0a55b2d88b5ce7"
     },
     "feature_schema.json": {
       "size_bytes": 2839,
@@ -57,6 +57,6 @@
     "algorithm": "Ed25519",
     "key_id": "cdm-release-public-v10",
     "public_key": "bf02342a8f2a5ac2defdd1cc9398464ebff22b9face378398cb343b58e0200a9",
-    "signature": "57628ab3338b6cef498699fe979936363ed07567c41cdecb7f3657a1ef853439052f9f6a4c34cdfdf0d7d08e7a1bcaa24bd851ea034ab062b03c87c413762306"
+    "signature": "d939a53bfa35d93581a54222cd40d912bea1a5507012941edbf9e4748502b222c7f2d58495dc52488e89ed9f42bc6b233c4a15a841c8f398c044f3854af11c09"
   }
 }

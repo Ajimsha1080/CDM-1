@@ -30,8 +30,26 @@ def main():
     print("CDM-1 END-TO-END VERIFICATION SMOKE TEST")
     print("=" * 70)
 
+    api_url = os.environ.get("CDM_API_URL")
+    if api_url:
+        import requests
+        class HttpClientWrapper:
+            def __init__(self, base_url):
+                self.base_url = base_url.rstrip("/")
+            def get(self, path, **kwargs):
+                return requests.get(f"{self.base_url}{path}", **kwargs)
+            def post(self, path, **kwargs):
+                return requests.post(f"{self.base_url}{path}", **kwargs)
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                pass
+        client_context = HttpClientWrapper(api_url)
+    else:
+        client_context = TestClient(app)
+
     success = True
-    with TestClient(app) as client:
+    with client_context as client:
         # 1. Readiness probe check
         print("\n[Step 1] Checking service readiness probe (/v1/ready)...")
         ready_resp = client.get("/v1/ready")

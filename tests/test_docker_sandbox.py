@@ -85,10 +85,15 @@ def test_shell_tool_docker_command_construction(monkeypatch):
     assert "--network" in captured_args
     assert "none" in captured_args
     assert "--read-only" in captured_args
+    assert "--cap-drop" in captured_args
+    assert "ALL" in captured_args
+    assert "--security-opt" in captured_args
+    assert "no-new-privileges" in captured_args
     assert "--memory" in captured_args
     assert "64m" in captured_args
     assert "--cpus=0.5" in captured_args
     assert "--pids-limit=32" in captured_args
+    assert any("sha256:" in arg for arg in captured_args)
 
 
 @pytest.mark.requires_docker

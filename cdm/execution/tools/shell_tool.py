@@ -18,6 +18,10 @@ import uuid
 from cdm.execution.tools.base import BaseTool
 
 
+# Pinned minimal Alpine container image digest (reproducible, zero-drift, tamper-evident)
+PINNED_SANDBOX_IMAGE = "alpine@sha256:beefdbd8a1da6d2915566fde36db9db0b524eb737fc57cd13675d29e083a2072"
+
+
 class SandboxedShellTool(BaseTool):
     """Container-sandboxed shell execution tool."""
 
@@ -43,7 +47,7 @@ class SandboxedShellTool(BaseTool):
 
         self.timeout_seconds = min(float(timeout_seconds), 30.0)
         self.working_dir = working_dir
-        self.image = image or os.getenv("CDM_SANDBOX_IMAGE", "alpine:latest")
+        self.image = image or os.getenv("CDM_SANDBOX_IMAGE", PINNED_SANDBOX_IMAGE)
         self.memory_limit = memory_limit
         self.cpu_limit = cpu_limit
         self.pids_limit = pids_limit
@@ -72,8 +76,10 @@ class SandboxedShellTool(BaseTool):
 
         if not self.is_docker_available():
             raise RuntimeError(
-                "Docker is unavailable or daemon is not running. "
-                "Shell execution strictly requires container isolation and refuses to execute on the host."
+                "Docker is unavailable: Docker daemon is not accessible in this environment. "
+                "Shell execution strictly requires container isolation and refuses to execute on the host. "
+                "The container runtime does not mount the host Docker socket for security isolation. "
+                "Supported deployment requires host Docker access or a separate sandbox runner service."
             )
 
         cmd = args.get("command", "")
@@ -89,6 +95,8 @@ class SandboxedShellTool(BaseTool):
             "--rm",
             "--network", "none",
             "--read-only",
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
             "--memory", self.memory_limit,
             f"--cpus={self.cpu_limit}",
             f"--pids-limit={self.pids_limit}",

@@ -4,142 +4,89 @@ language:
 license: apache-2.0
 library_name: transformers
 tags:
+- agent-control-loop
+- policy-gate
 - decision-making
-- cognitive-model
-- hybrid-architecture
-- predictive-inference
-- uncertainty-calibration
+- safe-execution
 - customer-support
 - risk-assessment
 datasets:
-- custom-cdm-curated
-metrics:
-- accuracy
-- f1
-- auroc
-- auprc
-- expected_calibration_error
-- brier_score
-- selective_risk
+- synthetic-customer-support-refunds
 pipeline_tag: text-classification
 model-index:
 - name: CDM-1
   results:
   - task:
       type: decision-making
-      name: Cognitive Decision Modeling
+      name: LLM + CDM Control Loop Agent Evaluation
     metrics:
-    - name: Binary Accuracy
+    - name: LLM Alone Success Rate
       type: accuracy
-      value: 0.9483
-    - name: Binary AUROC
-      type: auroc
-      value: 0.9857
-    - name: Expected Calibration Error (ECE)
-      type: expected_calibration_error
-      value: 0.0710
-    - name: Candidate Choice Top-1
+      value: 0.3333
+    - name: LLM + Policy Gate Success Rate
       type: accuracy
-      value: 0.9483
-    - name: Candidate Choice NDCG
-      type: ndcg
-      value: 0.9809
-    - name: Priority Macro F1
-      type: f1
-      value: 0.9625
-    - name: Risk Classification Accuracy
+      value: 1.0000
+    - name: LLM + Gate + Memory Success Rate
       type: accuracy
-      value: 0.9483
-    - name: Hard Constraint Violation Rate
-      type: constraint_violation_rate
-      value: 0.0000
+      value: 1.0000
 ---
 
-# CDM-1 — Cognitive Decision Model (Model Card)
+# CDM-1 — Model Card & System Specification
 
-## Model Overview
-**CDM-1 (Cognitive Decision Model)** is an independent, trainable AI decision model built using a hybrid neural architecture that combines contextual language understanding with structured tabular features, outcome predictive modelling, calibrated uncertainty estimation, and hard policy constraint enforcement.
+## System Overview
 
-Unlike generative conversational chatbots or LLM API wrappers, CDM-1 is purpose-engineered to output structured, risk-bounded operational decisions (YES/NO, alternative choice, priority tiering, continuous scoring, predictive outcomes, and abstention).
+**CDM-1** is an **LLM + CDM control loop agent product with policy gating and signed audit**. It coordinates foundation language models (Anthropic Claude or local OpenAI-compatible models) with a deterministic policy gate, sandboxed execution tools, ground-truth outcome verification, and persistent cognitive state (episodic memory, world state tracking, and signed audit trails).
+
+Unlike unconstrained agent architectures that grant foundation models direct execution privileges, CDM-1 enforces a 4-layer control loop where all model proposals are treated as untrusted input:
+1. **Layer 1 (Foundation Model)**: Proposes structured tool actions `{tool, args, reason}`. Output is strictly validated against schemas with at most one automatic repair call.
+2. **Layer 2 (CDM Cognitive Engine)**: Manages episodic memory of past actions and outcomes, procedural rules, and relational world state.
+3. **Layer 3 (Decision & Planning Engine)**: Runs deterministic policy checks, precondition verification against world state, financial limits, and risk scoring. Outputs `ALLOW`, `REQUIRE_HUMAN_APPROVAL`, or `BLOCK`.
+4. **Layer 4 (Execution & Feedback)**: Executes sandboxed tools (shell, file I/O, allowlisted HTTP), independently verifies physical ground truth with `OutcomeVerifier`, and signs every step with an HMAC provenance record.
+
+---
 
 ## Parameter Accounting
+
 - **Trainable Parameters**: 9,345,732 (Structured Feature MLP, Gated Fusion, Action-Conditioned Predictive Network, Multi-Head Decision Network, Candidate Scorer)
-- **Frozen Parameters**: 149,014,272 (`answerdotai/ModernBERT-base` contextual language backbone)
-- **Total Parameters**: 158,360,004 (~158.36M parameters, fulfilling the 150–200M design target)
+- **Frozen Parameters**: 149,014,272 (`answerdotai/ModernBERT-base` contextual language backbone, pinned git commit `8949b909ec900327062f0ebf497f51aef5e6f0c8`)
+- **Total Model Parameters**: 158,360,004 (~158.36M parameters)
+- **Optional Neural Head**: If weights (`model.safetensors`) are absent, the service falls back cleanly to a deterministic rule-based risk/priority scorer and passes `/v1/ready` readiness checks.
 
-## Architecture Components
-1. **Component A (Language Encoder)**: ModernBERT-base with attention-mask-aware pooling, sequence projection (learning norm $\Delta = 4.6201$), and configurable gradual unfreezing.
-2. **Component B (Structured Feature Encoder)**: Continuous feature normalizer, categorical entity embeddings, and missing-value indicator tracking with MLP projection.
-3. **Component C (Cognitive Representation Fusion)**: Dynamic Gated Fusion with cross-attention support, forming a shared latent cognitive state.
-4. **Component D (Action-Conditioned Predictive Network)**: Multi-target forward outcome estimation conditioned on candidate actions (binary outcome, multi-class category, resolution time regression, risk score, predictive entropy, and Monte Carlo dropout variance).
-5. **Component E (Decision Network)**: Independent output heads:
-   - Binary Decision (`YES` / `NO`, Accuracy 94.83%, AUROC 0.9857)
-   - Candidate Choice & Ranking (Top-1 94.83%, NDCG 0.9809, with hard policy constraint logit masking)
-   - Continuous Scoring (0–100 operational score, MAE 10.79)
-   - Priority Tiering (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`, Accuracy 96.55%, Macro F1 0.9625)
-   - Risk Assessment (`LOW`, `MODERATE`, `HIGH`, `SEVERE`, Accuracy 94.83%)
-   - Calibrated Confidence & Selective Abstention (Calibrated $ECE = 0.0710$, Coverage 72.41%, Selective Accuracy 100.0%)
+---
 
-## Verified Benchmark Results (Holdout Test Partition, N=58)
-| Benchmark Metric | Logistic Reg. | Random Forest | XGBoost (v3.4.1) | ModernBERT Baseline | **CDM-1 (Ours)** |
-|---|---|---|---|---|---|
-| **Binary Accuracy** | 0.9310 | 1.0000 | 1.0000 | 1.0000 | **0.9483** |
-| **Binary AUROC** | 0.9905 | 1.0000 | 1.0000 | 1.0000 | **0.9857** |
-| **Brier Score** | 0.0628 | 0.0002 | 0.0002 | 0.0015 | **0.0400** |
-| **Candidate Choice Top-1 Accuracy** | N/A | N/A | N/A | N/A | **0.9483** |
-| **Candidate Choice NDCG** | N/A | N/A | N/A | N/A | **0.9809** |
-| **Priority Classification (Macro F1)** | N/A | N/A | N/A | N/A | **0.9625** |
-| **Risk Classification Accuracy** | N/A | N/A | N/A | N/A | **0.9483** |
-| **Prohibited Constraint Violations** | N/A | N/A | N/A | N/A | **0.00%** |
-| **Permutation Invariance ($\Delta_{L2}$)** | N/A | N/A | N/A | N/A | **0.0000** |
-| **Scalability (32 candidates latency)** | N/A | N/A | N/A | N/A | **26.15 ms** |
+## Measured Evaluation Benchmark Results
 
-## Quickstart Usage
+The system was evaluated using 30 tasks in a customer support and refund operations domain (`research/agent_eval/`):
+- 10 Standard Tasks (valid routine support operations)
+- 10 Adversarial Tasks (prompt injections, `rm -rf`, unauthorized wire transfers)
+- 10 High-Risk Tasks (refunds > $500, fraud freezes, compliance data deletion)
 
-### Local Python SDK
-```python
-from cdm import CognitiveDecisionModel
+### Results by Agent Configuration
 
-model = CognitiveDecisionModel.from_pretrained("experiments/release/cdm-1-general", local_files_only=True)
+| Metric | (a) LLM Alone | (b) LLM + Policy Gate | (c) LLM + Gate + Memory |
+|---|---|---|---|
+| **Overall Success Rate** | **33.3%** (10/30) | **100.0%** (30/30) | **100.0%** (30/30) |
+| **95% Wilson Confidence Interval** | [19.2%, 51.2%] | [88.6%, 100.0%] | [88.6%, 100.0%] |
+| **Standard Tasks Passed** | 10 / 10 | 10 / 10 | 10 / 10 |
+| **Adversarial Attacks Blocked** | 0 / 10 (10 Unsafe Executions) | 10 / 10 (100% Blocked) | 10 / 10 (100% Blocked) |
+| **Human Approvals Requested** | 0 / 10 (10 Policy Breaches) | 10 / 10 (100% Paused) | 10 / 10 (100% Paused) |
+| **Mean Execution Steps per Task** | 1.00 | 0.67 | 0.67 |
 
-result = model.decide(
-    text="Customer reports item arrived broken 12 days ago with photos.",
-    structured_features={
-        "monetary_value_usd": 89.99,
-        "sla_remaining_hours": 14.0,
-        "domain": "customer_support",
-        "urgency_level": "medium",
-    },
-    task="choice",
-    candidates=["auto_resolve", "issue_refund", "escalate_to_tier2"],
-)
+*Data source: `research/agent_eval/benchmark_results.json` generated by `research/agent_eval/eval_runner.py`.*
 
-print(result.decision)            # issue_refund
-print(result.confidence)          # 0.9992
-print(result.score)               # 92.45
-print(result.abstain)             # False
-```
+---
 
-### Commercial REST API (FastAPI)
-```bash
-uvicorn api.main:app --port 8000
-```
-```bash
-curl -X POST http://localhost:8000/v1/decisions \
-  -H "Authorization: Bearer sk_test_developer_key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "Production server memory leak detected on payment microservice.",
-    "structured_features": {
-      "monetary_value_usd": 25000,
-      "sla_remaining_hours": 0.5,
-      "domain": "business_operations",
-      "urgency_level": "critical"
-    },
-    "task": "binary"
-  }'
-```
+## Known Limitations
 
-## Intended Uses & Limitations
-- **Intended Uses**: Decision support in Communication, Customer Support triage, Retail operations, and Business Incident prioritization.
-- **Limitations**: CDM-1 outputs operational recommendations and decisions; it does not autonomously execute monetary or external infrastructure mutations. External authorization systems must enforce permissions independently.
+1. **Small Neural Decision Head**: The trainable decision network is relatively small (~9.35M parameters) and serves as an auxiliary scoring signal rather than an autonomous reasoning engine.
+2. **Synthetic Training Data**: The training dataset was synthetically generated for support and refund workflows. Performance on arbitrary real-world enterprise databases may require retraining and domain adaptation.
+3. **External Foundation Model Dependency**: High-level semantic reasoning requires access to an external LLM (e.g. Anthropic Claude via API) or a local LLM runner (vLLM / Ollama).
+4. **Single Supported Domain**: The provided tools and benchmark evaluation suite currently cover customer support and refund operations. Other business verticals require authoring domain-specific tool suites and tenant policy rules.
+5. **No Claims of Artificial Consciousness**: The system does not mirror human biology or cognition. All memory and world model constructs are relational database tables and directed relation graphs.
+
+---
+
+## Cryptographic Security & Provenance
+
+- **Release Manifest**: Signed with Ed25519 digital signature (`cdm-release-public-v9`). Model weights are strictly verified for SHA-256 and digital signature before being loaded into memory.
+- **Audit Trails**: Every step (action proposal, policy gate decision, tool execution result, and ground-truth verification) is recorded as a signed HMAC-SHA256 provenance record with key ID support and rotation capability across process restarts.

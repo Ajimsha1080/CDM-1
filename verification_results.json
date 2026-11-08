@@ -1,6 +1,6 @@
 {
   "release_status": "CDM-1 \u2014 FINAL VERIFIED RELEASE CANDIDATE",
-  "git_commit": "464908e389e8c7a29039c8ac8e01ef0a7bc87b63",
+  "git_commit": "1f4766d75488ea96a903421bb47c4c57fd57fea1",
   "model_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
   "all_passed": true,
   "total_duration_seconds": 251.4,

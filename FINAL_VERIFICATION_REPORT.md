@@ -3,7 +3,7 @@
 **Release Status**: `CDM-1 — FINAL VERIFIED RELEASE CANDIDATE`  
 **Overall Verification Result**: **PASSED**  
 **Timestamp**: `2026-11-08 09:04:37 UTC`  
-**Git Commit**: `464908e389e8c7a29039c8ac8e01ef0a7bc87b63`  
+**Git Commit**: `1f4766d75488ea96a903421bb47c4c57fd57fea1`  
 **Model Checkpoint SHA-256**: `9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a`  
 
 ---

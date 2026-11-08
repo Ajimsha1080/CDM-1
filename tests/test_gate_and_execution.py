@@ -105,13 +105,18 @@ def test_sandboxed_shell_tool_disabled_by_default_and_no_host_execution():
 
 
 def test_sandboxed_http_tool_domain_allowlist():
-    """Verify that HTTP tool blocks calls to non-allowlisted domains."""
-    tool = HttpCallTool(allowed_domains={"localhost", "127.0.0.1"})
+    """Verify that HTTP tool blocks calls to non-allowlisted domains and denies by default."""
+    # Empty allowlist denies all
+    tool_empty = HttpCallTool()
+    res_empty = tool_empty.execute({"url": "https://api.github.com/zen"})
+    assert res_empty.success is False
+    assert "not in the approved allowlist" in res_empty.error
 
-    # Attempt to reach external unauthorized domain
+    # Explicit allowlist blocks unauthorized domain
+    tool = HttpCallTool(allowed_domains={"api.github.com"})
     res = tool.execute({"url": "https://unauthorized-evil-api.com/exfiltrate"})
     assert res.success is False
-    assert "not in the approved tenant allowlist" in res.error
+    assert "not in the approved allowlist" in res.error
 
 
 def test_outcome_verifier():

@@ -26,6 +26,16 @@ from cdm.execution.tools.base import BaseTool, ToolResult
 from cdm.execution.tools.shell_tool import SandboxedShellTool
 from cdm.execution.tools.file_tool import FileReadTool, FileWriteTool, FileEditTool
 from cdm.execution.tools.http_tool import HttpCallTool
+from cdm.execution.tools.engineering_tools import (
+    RepoSearchTool,
+    EnhancedFileReadTool,
+    EnhancedFileEditTool,
+    FileCreateTool,
+    RunTestsTool,
+    GitDiffTool,
+    GitStatusTool,
+    ListDirectoryTool,
+)
 from cdm.execution.verifier import OutcomeVerifier, VerificationSpec, VerificationResult
 from cdm.execution.audit import AuditTrailManager
 
@@ -45,12 +55,13 @@ class AgentRunState(BaseModel):
     session_id: str
     goal: str
     task_description: str
-    status: str = "running" # 'running', 'waiting_for_approval', 'completed', 'failed', 'rejected', 'step_budget_exceeded', 'cost_budget_exceeded'
+    status: str = "running" # 'running', 'waiting_for_approval', 'completed', 'failed', 'rejected', 'step_budget_exceeded', 'cost_budget_exceeded', 'loop_detected', 'paused'
     step_count: int = 0
     step_budget: int = 10
     cost_budget_usd: float = 1.0
     accumulated_cost_usd: float = 0.0
     accumulated_tokens: int = 0
+    max_context_tokens: int = 8000
     tool_call_count: int = 0
     history: List[Dict[str, Any]] = Field(default_factory=list)
     pending_action: Optional[Dict[str, Any]] = None
@@ -149,17 +160,98 @@ class AgentControlLoop:
         self.store = store or AgentStore()
         self.audit = audit_manager or AuditTrailManager()
 
-        # Register default execution tools
+        # Register default execution tools (including engineering tools)
         self.tools: Dict[str, BaseTool] = tools or {
-            "read_file": FileReadTool(sandbox_root=self.sandbox_root),
+            "read_file": EnhancedFileReadTool(sandbox_root=self.sandbox_root),
             "write_file": FileWriteTool(sandbox_root=self.sandbox_root),
-            "edit_file": FileEditTool(sandbox_root=self.sandbox_root),
+            "create_file": FileCreateTool(sandbox_root=self.sandbox_root),
+            "edit_file": EnhancedFileEditTool(sandbox_root=self.sandbox_root),
+            "repo_search": RepoSearchTool(sandbox_root=self.sandbox_root),
+            "run_tests": RunTestsTool(sandbox_root=self.sandbox_root),
+            "git_diff": GitDiffTool(sandbox_root=self.sandbox_root),
+            "git_status": GitStatusTool(sandbox_root=self.sandbox_root),
+            "list_directory": ListDirectoryTool(sandbox_root=self.sandbox_root),
             "shell_exec": SandboxedShellTool(working_dir=self.sandbox_root),
             "http_request": HttpCallTool(),
         }
 
-    def register_tool(self, tool: BaseTool) -> None:
-        self.tools[tool.name] = tool
+    def _build_history_context(self, run: AgentRunState) -> str:
+        """Constructs a token-bounded history context, summarizing older steps when exceeding budget."""
+        if not run.history:
+            return "No actions taken yet."
+
+        # Keep last 4 steps detailed, summarize earlier steps concisely
+        keep_recent = 4
+        earlier = run.history[:-keep_recent] if len(run.history) > keep_recent else []
+        recent = run.history[-keep_recent:] if len(run.history) > keep_recent else run.history
+
+        parts = []
+        if earlier:
+            parts.append(f"--- Compact Summary of Earlier Steps 1 to {earlier[-1].get('step')} ({len(earlier)} actions) ---")
+            for h in earlier:
+                tool = h.get("tool", "unknown")
+                gate = h.get("gate_decision", "allow")
+                succ = "SUCCESS" if h.get("success") else ("BLOCKED" if "block" in str(gate) else "FAIL")
+                out_snippet = str(h.get("output") or h.get("error") or "")[:100].replace("\n", " ")
+                parts.append(f"- Step {h.get('step')}: [{tool}] -> {succ} ({out_snippet})")
+            parts.append("--- End of Compact Summary ---\n")
+
+        parts.append("Recent Execution Steps:")
+        for h in recent:
+            out_snippet = str(h.get("output") or h.get("error") or "")[:300].replace("\n", " ")
+            parts.append(
+                f"Step {h.get('step')}: Action '{h.get('tool')}' (args: {h.get('arguments', {})}) -> "
+                f"Gate: {h.get('gate_decision')} | Success: {h.get('success')} | Outcome: {out_snippet}"
+            )
+        return "\n".join(parts)
+
+    def _is_action_loop(self, history: List[Dict[str, Any]], proposed_tool: str, proposed_args: Dict[str, Any]) -> bool:
+        """Detects whether identical tool and arguments have been repeated without progress (loop detection)."""
+        if len(history) < 2:
+            return False
+        # If the last 2 completed actions match proposed tool and identical arguments:
+        norm_proposed_args = json.dumps(proposed_args or {}, sort_keys=True)
+        for h in history[-2:]:
+            if h.get("tool") != proposed_tool:
+                return False
+            if json.dumps(h.get("arguments") or {}, sort_keys=True) != norm_proposed_args:
+                return False
+        return True
+
+    def resume_run(
+        self,
+        run_id: str,
+        additional_steps: Optional[int] = None,
+        additional_cost_budget: Optional[float] = None,
+        resume_loop: bool = True,
+    ) -> AgentRunState:
+        """Resumes an interrupted, paused, or budget-exhausted run from persistent storage."""
+        run = self.store.load_run(run_id)
+        if not run:
+            raise ValueError(f"Agent run '{run_id}' not found.")
+
+        if additional_steps is not None and additional_steps > 0:
+            run.step_budget += additional_steps
+        if additional_cost_budget is not None and additional_cost_budget > 0:
+            run.cost_budget_usd += additional_cost_budget
+
+        if run.status in ("step_budget_exceeded", "cost_budget_exceeded", "paused", "loop_detected"):
+            run.status = "running"
+
+        self.store.save_run(run)
+
+        if resume_loop and run.status == "running":
+            return self.run_until_pause_or_finish(run_id)
+        return run
+
+    def pause_run(self, run_id: str) -> AgentRunState:
+        """Pauses a running agent run and persists its state."""
+        run = self.store.load_run(run_id)
+        if not run:
+            raise ValueError(f"Agent run '{run_id}' not found.")
+        run.status = "paused"
+        self.store.save_run(run)
+        return run
 
     def create_run(
         self,
@@ -168,6 +260,7 @@ class AgentControlLoop:
         tenant_id: str = "default_tenant",
         step_budget: int = 10,
         cost_budget_usd: float = 1.0,
+        max_context_tokens: int = 8000,
         tenant_policies: Optional[List[str]] = None,
         prohibited_actions: Optional[List[str]] = None,
         verification_spec: Optional[Dict[str, Any]] = None,
@@ -185,6 +278,7 @@ class AgentControlLoop:
             task_description=task_description,
             step_budget=step_budget,
             cost_budget_usd=cost_budget_usd,
+            max_context_tokens=max_context_tokens,
             tenant_policies=tenant_policies or [],
             prohibited_actions=prohibited_actions or [],
             verification_spec=verification_spec,
@@ -253,40 +347,75 @@ class AgentControlLoop:
             "}"
         )
 
-        history_summary = []
-        for h in run.history[-5:]: # Last 5 steps
-            history_summary.append(
-                f"Step {h.get('step')}: Action '{h.get('tool')}' -> "
-                f"Gate: {h.get('gate_decision')} | Success: {h.get('success')} | Result: {h.get('output') or h.get('error')}"
-            )
+        history_context = self._build_history_context(run)
 
         user_prompt = (
             f"Task Goal: {run.goal}\n"
             f"Description: {run.task_description}\n"
             f"Step Count: {run.step_count + 1} / {run.step_budget}\n\n"
             f"Context from Episodic Memory:\n" + ("\n".join(memory_notes) if memory_notes else "None available.") + "\n\n"
-            f"Recent Execution History:\n" + ("\n".join(history_summary) if history_summary else "No actions taken yet.") + "\n\n"
+            f"{history_context}\n\n"
             "Propose the next optimal action."
         )
 
         # =====================================================================
-        # Layer 1: Foundation Model Proposal
+        # Layer 1: Foundation Model Proposal with Automatic Retries
         # =====================================================================
         messages = [
             LLMMessage(role="system", content=system_prompt),
             LLMMessage(role="user", content=user_prompt),
         ]
-        llm_resp = self.llm.complete(messages=messages, schema=AgentActionProposal, tenant_id=run.tenant_id)
-        run.accumulated_tokens += (llm_resp.input_tokens + llm_resp.output_tokens)
-        run.accumulated_cost_usd += llm_resp.cost_usd
+        max_retries = 2
+        attempt = 0
+        proposed = None
+        last_error = None
+        current_messages = list(messages)
+        last_llm_resp = None
 
-        proposal_data = llm_resp.parsed_json or {
-            "tool": "complete_task" if "complete" in llm_resp.raw_text.lower() else "shell_exec",
-            "arguments": {},
-            "reason": "Fallback default proposal",
-            "claim_goal_met": "complete" in llm_resp.raw_text.lower(),
-        }
-        proposed = AgentActionProposal.model_validate(proposal_data)
+        while attempt <= max_retries:
+            attempt += 1
+            llm_resp = self.llm.complete(messages=current_messages, schema=AgentActionProposal, tenant_id=run.tenant_id)
+            last_llm_resp = llm_resp
+            run.accumulated_tokens += (llm_resp.input_tokens + llm_resp.output_tokens)
+            run.accumulated_cost_usd += llm_resp.cost_usd
+
+            if llm_resp.parsed_json:
+                try:
+                    proposed = AgentActionProposal.model_validate(llm_resp.parsed_json)
+                    break
+                except Exception as e:
+                    last_error = f"Schema validation error: {e}"
+            else:
+                raw_text = (llm_resp.raw_text or "").strip()
+                try:
+                    if "```" in raw_text:
+                        block = raw_text.split("```")[1]
+                        if block.startswith("json"):
+                            block = block[4:]
+                        raw_text = block.strip()
+                    parsed = json.loads(raw_text)
+                    proposed = AgentActionProposal.model_validate(parsed)
+                    break
+                except Exception as e:
+                    last_error = f"JSON parse error: {e}"
+
+            if attempt <= max_retries:
+                logger.warning(f"Malformed LLM response on attempt {attempt}: {last_error}. Retrying...")
+                current_messages.append(LLMMessage(role="assistant", content=(llm_resp.raw_text or "")[:400]))
+                current_messages.append(LLMMessage(
+                    role="user",
+                    content=f"Your previous output was invalid ({last_error}). Output strictly valid RFC-8259 JSON matching AgentActionProposal.",
+                ))
+
+        if proposed is None:
+            raw_text = (last_llm_resp.raw_text if last_llm_resp else "") or ""
+            proposal_data = {
+                "tool": "complete_task" if "complete" in raw_text.lower() else "shell_exec",
+                "arguments": {},
+                "reason": f"Fallback after {max_retries} failed retries: {last_error}",
+                "claim_goal_met": "complete" in raw_text.lower(),
+            }
+            proposed = AgentActionProposal.model_validate(proposal_data)
 
         # Check if LLM claims completion
         if proposed.tool == "complete_task" or proposed.claim_goal_met:
@@ -317,6 +446,25 @@ class AgentControlLoop:
                 "output": "Task goal verified and completed.",
             })
             run.step_count += 1
+            self.store.save_run(run)
+            return run
+
+        # Loop Detection: intercept repeated identical actions
+        if self._is_action_loop(run.history, proposed.tool, proposed.arguments):
+            step_num = run.step_count + 1
+            logger.warning(f"Run {run.run_id}: Step {step_num} loop detected for action '{proposed.tool}'. Halting repeated action.")
+            run.history.append({
+                "step": step_num,
+                "tool": proposed.tool,
+                "arguments": proposed.arguments,
+                "gate_decision": "blocked_loop",
+                "success": False,
+                "error": f"Action loop detected: action '{proposed.tool}' with identical arguments repeated 3 times without progress.",
+            })
+            run.step_count += 1
+            loop_count = sum(1 for h in run.history[-2:] if h.get("gate_decision") == "blocked_loop")
+            if loop_count >= 2:
+                run.status = "loop_detected"
             self.store.save_run(run)
             return run
 

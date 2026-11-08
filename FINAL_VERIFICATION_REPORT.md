@@ -1,9 +1,9 @@
 # FINAL VERIFICATION REPORT — CDM-1
 
-**Release Status**: `CDM-1 — FINAL VERIFIED RELEASE CANDIDATE`  
+**Release Status**: `CDM-1 v1.0 — FINAL RELEASE VERIFIED`  
 **Overall Verification Result**: **PASSED**  
-**Timestamp**: `2026-11-08 09:04:37 UTC`  
-**Git Commit**: `1f4766d75488ea96a903421bb47c4c57fd57fea1`  
+**Timestamp**: `2026-11-08 10:22:16 UTC`  
+**Git Commit**: `d47ccba3288336ca1d65dd689a3e6133ea932ab2`  
 **Model Checkpoint SHA-256**: `9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a`  
 
 ---
@@ -14,10 +14,10 @@ The automated verification infrastructure executed all five strict acceptance ga
 
 | Acceptance Gate | Status | Evidence Summary |
 | :--- | :---: | :--- |
-| **1. Model Checkpoint** | `PASS` | 633,465,536 bytes, 215 tensors, 158.36M params, offline neural reload, inference latency 1511.81ms. |
+| **1. Model Checkpoint** | `PASS` | 633,465,536 bytes, 215 tensors, 158.36M params, offline neural reload, inference latency 1243.43ms. |
 | **2. Planning Correctness** | `PASS` | Sequential state simulation, intermediate precondition filtering, negative goal validation, provenance bindings. |
 | **3. Execution Verification** | `PASS` | Lifecycle transitions (proposed->approved->executed->completed), negative execution test, strict step-ID checks, metric validations. |
-| **4. Full Automated Tests** | `PASS` | 116 passed, 0 failed, 0 errors, 0 skipped in 230.38s. |
+| **4. Full Automated Tests** | `PASS` | 119 passed, 0 failed, 0 errors, 0 skipped in 146.21s. |
 | **5. Release Security & API** | `PASS` | Ed25519 signature verified on manifest, tamper detection active, `/v1/ready` and `/v1/health` 200 OK. |
 
 ---
@@ -61,12 +61,12 @@ The automated verification infrastructure executed all five strict acceptance ga
 
 ### 4. Full Pytest Suite Execution (`test_report.json`)
 - **Command**: `C:\Users\91730\AppData\Local\Programs\Python\Python314\python.exe -m pytest tests/ -v`
-- **Collected Test Cases**: `116`
-- **Passed**: `116`
+- **Collected Test Cases**: `119`
+- **Passed**: `119`
 - **Failed**: `0`
 - **Errors**: `0`
 - **Skipped**: `0`
-- **Execution Duration**: `230.38 seconds`
+- **Execution Duration**: `146.21 seconds`
 - **Pass Rate**: `100.0%`
 
 ### 5. Release Security & Production API Verification (`release_report.json`)
@@ -83,4 +83,4 @@ The automated verification infrastructure executed all five strict acceptance ga
 
 All acceptance criteria are satisfied in full. There are zero unresolved release blockers, zero mock inferences, and zero failing tests.
 
-Release Candidate: **`CDM-1 — FINAL VERIFIED RELEASE CANDIDATE`**
+Release Status: **`CDM-1 v1.0 — FINAL RELEASE VERIFIED`**

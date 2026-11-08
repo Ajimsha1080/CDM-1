@@ -1,14 +1,14 @@
 {
-  "timestamp": 1794128437.4706702,
+  "timestamp": 1794133158.7074933,
   "command": "C:\\Users\\91730\\AppData\\Local\\Programs\\Python\\Python314\\python.exe -m pytest tests/ -v",
   "passed": true,
-  "total_collected": 116,
-  "total_passed": 116,
+  "total_collected": 119,
+  "total_passed": 119,
   "total_failed": 0,
   "total_errors": 0,
   "total_skipped": 0,
-  "duration_seconds": 230.38,
+  "duration_seconds": 146.21,
   "test_files": [],
-  "output_summary": "================= 116 passed, 1 warning in 221.71s (0:03:41) ==================",
-  "test_lines_count": 116
+  "output_summary": "================= 119 passed, 1 warning in 141.00s (0:02:21) ==================",
+  "test_lines_count": 119
 }

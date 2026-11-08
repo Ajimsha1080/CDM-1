@@ -1,5 +1,5 @@
 {
-  "timestamp": 1794128437.4402132,
+  "timestamp": 1794133158.6990418,
   "checks": {
     "sequential_simulation": {
       "status": "PASS",
@@ -32,7 +32,8 @@
       "is_verified_goal_completion": false,
       "missing_postconditions": [
         "missing_required_postcondition:cryptographic_enclave_attested",
-        "missing_required_postcondition:quantum_resistant_key_derived"
+        "missing_required_postcondition:quantum_resistant_key_derived",
+        "metric_exceeded:network_latency_ms=120.0>0.0 (Exceeded limit (120.0 > 0.0))"
       ]
     },
     "prediction_provenance_verification": {

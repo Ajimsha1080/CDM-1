@@ -48,32 +48,42 @@ class ReasoningEngine:
 
         # Step 2: Evaluate deterministic policy constraints from Semantic Rules
         for rule in active_rules:
+            if not rule.get("active", True):
+                continue
             rule_id = rule.get("rule_id", "rule_general")
             condition = rule.get("condition", {})
-            action_restriction = rule.get("prohibited_action")
+            prohibs = []
+            if rule.get("prohibited_action"):
+                prohibs.append(rule["prohibited_action"])
+            if isinstance(rule.get("prohibited_actions"), list):
+                for p in rule["prohibited_actions"]:
+                    if p not in prohibs:
+                        prohibs.append(p)
 
             # Check condition matching against world metrics
             condition_met = True
-            for cond_k, cond_v in condition.items():
-                actual_v = world_state.environment_metrics.get(cond_k)
-                if actual_v is not None and isinstance(cond_v, (int, float)):
-                    if actual_v < cond_v:
-                        condition_met = False
-                        break
+            if condition:
+                for cond_k, cond_v in condition.items():
+                    actual_v = world_state.environment_metrics.get(cond_k)
+                    if actual_v is not None and isinstance(cond_v, (int, float)):
+                        if actual_v < cond_v:
+                            condition_met = False
+                            break
 
-            if condition_met and action_restriction:
-                violated_constraints.append(f"Policy Violation: {action_restriction} is forbidden by {rule_id}")
-                steps.append(
-                    ReasoningStep(
-                        step_index=step_idx,
-                        rule_or_premise=f"Rule {rule_id}: {rule.get('description', 'Policy Gate')}",
-                        inputs=[f"{k}={v}" for k, v in condition.items()],
-                        conclusion=f"Action '{action_restriction}' is strictly PROHIBITED under active policy.",
-                        confidence=1.0,
-                        is_hard_constraint=True,
+            if condition_met and prohibs:
+                for action_restriction in prohibs:
+                    violated_constraints.append(f"Policy Violation: {action_restriction} is forbidden by {rule_id}")
+                    steps.append(
+                        ReasoningStep(
+                            step_index=step_idx,
+                            rule_or_premise=f"Rule {rule_id}: {rule.get('condition_description') or rule.get('description', 'Policy Gate')}",
+                            inputs=[f"{k}={v}" for k, v in condition.items()] if condition else ["domain_policy"],
+                            conclusion=f"Action '{action_restriction}' is strictly PROHIBITED under active policy.",
+                            confidence=1.0,
+                            is_hard_constraint=True,
+                        )
                     )
-                )
-                step_idx += 1
+                    step_idx += 1
             else:
                 satisfied_constraints.append(f"Policy Passed: {rule_id}")
 

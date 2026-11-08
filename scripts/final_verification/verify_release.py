@@ -138,10 +138,13 @@ def verify_release(report_path: str = "release_report.json") -> Dict[str, Any]:
         report["checks"]["api_readiness"] = {"status": "FAIL", "error": str(e)}
     print(f"[*] API /v1/ready & /v1/health endpoints -> {'PASS' if api_ok else 'FAIL'}")
 
-    # 5. Packaged Archives Check in dist/
-    print("[*] 5. Inspecting packaged distributions in dist/...")
+    # 5. Packaged Archives Check & Extraction Verification
+    print("[*] 5. Inspecting packaged distributions and verifying extraction from CDM-1-Complete-With-Weights.zip...")
     dist_dir = "dist"
     archives = {}
+    weights_archive = os.path.join(dist_dir, "CDM-1-Complete-With-Weights.zip")
+    extraction_verified = False
+
     if os.path.exists(dist_dir):
         for item in os.listdir(dist_dir):
             ipath = os.path.join(dist_dir, item)
@@ -150,13 +153,39 @@ def verify_release(report_path: str = "release_report.json") -> Dict[str, Any]:
                     "size_bytes": os.path.getsize(ipath),
                     "sha256": compute_file_sha256(ipath),
                 }
-    report["checks"]["packaged_distributions"] = {
-        "status": "PASS" if len(archives) >= 2 else "WARN",
-        "archives": archives,
-    }
-    print(f"[*] Packaged archives found: {list(archives.keys())} -> PASS")
 
-    overall_passed = root_manifest_ok and ckpt_auth_ok and tamper_ok and api_ok
+    if os.path.exists(weights_archive):
+        import tempfile
+        import zipfile
+        with tempfile.TemporaryDirectory() as tmp_extract:
+            with zipfile.ZipFile(weights_archive, "r") as zf:
+                members = zf.namelist()
+                has_weights = any("model.safetensors" in m for m in members)
+                if has_weights:
+                    zf.extractall(tmp_extract)
+                    extracted_root = os.path.join(tmp_extract, "CDM-1")
+                    extracted_model_dir = os.path.join(extracted_root, "experiments", "release", "cdm-1-general")
+                    if os.path.exists(os.path.join(extracted_model_dir, "model.safetensors")):
+                        from cdm.inference.pipeline import CognitiveDecisionModel
+                        ext_model = CognitiveDecisionModel.from_pretrained(extracted_model_dir, local_files_only=True)
+                        ext_res = ext_model.decide(
+                            text="High priority test query on extracted weights",
+                            structured_features={"monetary_value_usd": 100.0, "domain": "customer_support"},
+                            task="choice",
+                            candidates=["auto_resolve", "escalate_to_tier2"],
+                        )
+                        if ext_res.decision:
+                            extraction_verified = True
+
+    archive_status = "PASS" if (len(archives) >= 2 and extraction_verified) else "FAIL"
+    report["checks"]["packaged_distributions"] = {
+        "status": archive_status,
+        "archives": archives,
+        "clean_extraction_inference_verified": extraction_verified,
+    }
+    print(f"[*] Packaged archives found: {list(archives.keys())}, extraction_inference={extraction_verified} -> {archive_status}")
+
+    overall_passed = root_manifest_ok and ckpt_auth_ok and tamper_ok and api_ok and (archive_status == "PASS")
     report["passed"] = overall_passed
 
     with open(report_path, "w", encoding="utf-8") as f:

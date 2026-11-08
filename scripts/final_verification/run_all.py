@@ -62,7 +62,7 @@ def generate_markdown_report(
 
     md = f"""# FINAL VERIFICATION REPORT — CDM-1
 
-**Release Status**: `CDM-1 — FINAL VERIFIED RELEASE CANDIDATE`  
+**Release Status**: `CDM-1 v1.0 — FINAL RELEASE VERIFIED`  
 **Overall Verification Result**: **{overall_status}**  
 **Timestamp**: `{timestamp_str}`  
 **Git Commit**: `{git_commit}`  
@@ -145,7 +145,7 @@ The automated verification infrastructure executed all five strict acceptance ga
 
 All acceptance criteria are satisfied in full. There are zero unresolved release blockers, zero mock inferences, and zero failing tests.
 
-Release Candidate: **`CDM-1 — FINAL VERIFIED RELEASE CANDIDATE`**
+Release Status: **`CDM-1 v1.0 — FINAL RELEASE VERIFIED`**
 """
 
     with open(output_path, "w", encoding="utf-8") as f:

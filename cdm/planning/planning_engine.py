@@ -309,13 +309,11 @@ class PlanningEngine:
             if sim_val is None:
                 sim_val = current_world_state.environment_metrics.get(metric_name)
             if sim_val is not None:
-                if "risk" in metric_name.lower() or "exposure" in metric_name.lower():
-                    if sim_val <= target_val:
-                        details["satisfied_conditions"].append(f"metric_met:{metric_name}<={target_val}")
-                    else:
-                        details["failed_conditions"].append(f"metric_exceeded:{metric_name}={sim_val}>{target_val}")
+                is_ok, reason = self._evaluate_metric_condition(metric_name, sim_val, target_val)
+                if is_ok:
+                    details["satisfied_conditions"].append(f"metric_met:{metric_name}={sim_val}")
                 else:
-                    details["satisfied_conditions"].append(f"metric_checked:{metric_name}")
+                    details["failed_conditions"].append(f"metric_exceeded:{metric_name}={sim_val}>{target_val} ({reason})")
 
         # Verification C: Explicit success criteria dict on target_goal
         success_criteria = getattr(target_goal, "success_criteria", {}) or {}

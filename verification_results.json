@@ -1,12 +1,12 @@
 {
   "release_status": "CDM-1 \u2014 FINAL VERIFIED RELEASE CANDIDATE",
-  "git_commit": "1f4766d75488ea96a903421bb47c4c57fd57fea1",
+  "git_commit": "d47ccba3288336ca1d65dd689a3e6133ea932ab2",
   "model_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
   "all_passed": true,
-  "total_duration_seconds": 251.4,
-  "timestamp": 1794128677.2928529,
+  "total_duration_seconds": 185.4,
+  "timestamp": 1794133336.4900987,
   "checkpoint": {
-    "timestamp": 1794128425.9888983,
+    "timestamp": 1794133151.1711757,
     "checkpoint_path": "experiments/release/cdm-1-general\\model.safetensors",
     "checks": {
       "file_size": {
@@ -34,7 +34,7 @@
         "decision": "YES",
         "confidence": 0.9891,
         "risk": 0.0203,
-        "latency_ms": 1511.81,
+        "latency_ms": 1243.43,
         "candidate_scores": {
           "auto_resolve": 0.5751,
           "escalate_tier2": 0.4249
@@ -52,7 +52,7 @@
     "passed": true
   },
   "planning": {
-    "timestamp": 1794128437.4402132,
+    "timestamp": 1794133158.6990418,
     "checks": {
       "sequential_simulation": {
         "status": "PASS",
@@ -85,7 +85,8 @@
         "is_verified_goal_completion": false,
         "missing_postconditions": [
           "missing_required_postcondition:cryptographic_enclave_attested",
-          "missing_required_postcondition:quantum_resistant_key_derived"
+          "missing_required_postcondition:quantum_resistant_key_derived",
+          "metric_exceeded:network_latency_ms=120.0>0.0 (Exceeded limit (120.0 > 0.0))"
         ]
       },
       "prediction_provenance_verification": {
@@ -97,7 +98,7 @@
     "passed": true
   },
   "execution": {
-    "timestamp": 1794128437.4638574,
+    "timestamp": 1794133158.7052093,
     "checks": {
       "plan_lifecycle_transitions": {
         "status": "PASS",
@@ -161,21 +162,21 @@
     "passed": true
   },
   "tests": {
-    "timestamp": 1794128437.4706702,
+    "timestamp": 1794133158.7074933,
     "command": "C:\\Users\\91730\\AppData\\Local\\Programs\\Python\\Python314\\python.exe -m pytest tests/ -v",
     "passed": true,
-    "total_collected": 116,
-    "total_passed": 116,
+    "total_collected": 119,
+    "total_passed": 119,
     "total_failed": 0,
     "total_errors": 0,
     "total_skipped": 0,
-    "duration_seconds": 230.38,
+    "duration_seconds": 146.21,
     "test_files": [],
-    "output_summary": "================= 116 passed, 1 warning in 221.71s (0:03:41) ==================",
-    "test_lines_count": 116
+    "output_summary": "================= 119 passed, 1 warning in 141.00s (0:02:21) ==================",
+    "test_lines_count": 119
   },
   "release": {
-    "timestamp": 1794128667.8692148,
+    "timestamp": 1794133304.9247053,
     "checks": {
       "root_release_manifest_signature": {
         "status": "PASS",
@@ -204,7 +205,7 @@
           "manifest_signature_verified": true,
           "weights_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
           "parameters": "158M",
-          "timestamp": 1794128674.8887804
+          "timestamp": 1794133309.3360887
         },
         "health_http_status": 200
       },
@@ -212,22 +213,23 @@
         "status": "PASS",
         "archives": {
           "CDM-1-Complete-With-Weights.zip": {
-            "size_bytes": 1175407558,
-            "sha256": "58cd47db238c0d41fc4e550f859bc2cdff1e074f34089e54deaebf2ef65150ac"
+            "size_bytes": 1175443902,
+            "sha256": "ed39a33040a833aa0228090ee013a354d49085df0fa16af889f7b3fdb7f1a307"
           },
           "CDM-1-Project.zip": {
-            "size_bytes": 941672,
-            "sha256": "548dc3472806ef83aac7d865be5b9363c63bf428e59772b51dd508210c38f949"
+            "size_bytes": 978016,
+            "sha256": "7e91f71054964bc2f59b69e3504cbfca9da75149f926845623a0b9513417d3a7"
           },
           "FINAL_RELEASE_MANIFEST.json": {
             "size_bytes": 1874,
             "sha256": "00ec8df7c0a55dceeac0517d21457ef7ff13c97fd25c4d3a617430cd84ebc39b"
           },
           "release_manifest.json": {
-            "size_bytes": 1041,
-            "sha256": "432ddb9985abd7e8714fafb4e15954283262b2461e49c38dfc18a75d0f353299"
+            "size_bytes": 704,
+            "sha256": "f29d77139b9e0f78af68b3996ec1b3260a38ade69483055d92c7fb7969cd6b1d"
           }
-        }
+        },
+        "clean_extraction_inference_verified": true
       }
     },
     "passed": true

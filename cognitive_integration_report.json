@@ -1,0 +1,52 @@
+{
+  "timestamp": 1794136566.1892471,
+  "checkpoint_dir": "experiments/release/cdm-1-general",
+  "checks": {
+    "context_aware_decision_making": {
+      "status": "PASS",
+      "selected_decision": "escalate_to_tier2",
+      "confidence": 0.9857,
+      "policy_prohibition_enforced": true,
+      "reasoning_steps_count": 2
+    },
+    "sequential_planning": {
+      "status": "PASS",
+      "step_count": 2,
+      "plan_stage": "proposed",
+      "is_verified_goal_completion": false,
+      "simulated_goal_satisfied": true,
+      "alternative_plans_count": 1
+    },
+    "execution_and_feedback_learning": {
+      "status": "PASS",
+      "plan_approved": true,
+      "execution_verified": true,
+      "final_plan_stage": "completed",
+      "is_verified_goal_completion": true,
+      "memory_consolidation_verified": true
+    }
+  },
+  "passed": true,
+  "architectural_segregation": {
+    "deterministic_operations": [
+      "Semantic policy rule registration and condition evaluation",
+      "Hard constraint filtering in reasoning engine",
+      "Discrete state transition computation S_{t+1} = T(S_t, A_t)",
+      "Plan lifecycle transitions (proposed -> approved -> in_progress -> completed)",
+      "Telemetry-based postcondition and metric comparison"
+    ],
+    "dynamic_memory_updates": [
+      "Multi-turn context frame updating in ContextEngine",
+      "Working memory goal stack and scratchpad state management",
+      "Episodic memory vector indexing and retrieval (SQLiteMemoryStorage)",
+      "Procedural workflow caching and retrieval"
+    ],
+    "neural_learned_capabilities": [
+      "ModernBERT language and semantic representation encoding",
+      "Feature fusion across text and structured numerical inputs",
+      "Neural candidate action scoring and multi-class classification",
+      "Calibrated decision confidence and risk estimation",
+      "Prediction provenance binding with model SHA-256 digest"
+    ]
+  }
+}

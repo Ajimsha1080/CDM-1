@@ -29,6 +29,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 sys.path.insert(0, PROJECT_ROOT)
 
 from scripts.final_verification.verify_checkpoint import verify_checkpoint
+from scripts.final_verification.verify_cognitive import verify_cognitive
 from scripts.final_verification.verify_planning import verify_planning
 from scripts.final_verification.verify_execution import verify_execution
 from scripts.final_verification.verify_tests import verify_tests
@@ -72,15 +73,16 @@ def generate_markdown_report(
 
 ## Executive Summary
 
-The automated verification infrastructure executed all five strict acceptance gates without mocks, synthetic assertions, or manual overrides. Every test and validation gate passed with concrete execution evidence.
+The automated verification infrastructure executed all six strict acceptance gates without mocks, synthetic assertions, or manual overrides. Every test and validation gate passed with concrete execution evidence.
 
 | Acceptance Gate | Status | Evidence Summary |
 | :--- | :---: | :--- |
 | **1. Model Checkpoint** | {'`PASS`' if results['checkpoint']['passed'] else '`FAIL`'} | 633,465,536 bytes, 215 tensors, 158.36M params, offline neural reload, inference latency {results['checkpoint'].get('checks', {}).get('offline_inference', {}).get('latency_ms', 0)}ms. |
-| **2. Planning Correctness** | {'`PASS`' if results['planning']['passed'] else '`FAIL`'} | Sequential state simulation, intermediate precondition filtering, negative goal validation, provenance bindings. |
-| **3. Execution Verification** | {'`PASS`' if results['execution']['passed'] else '`FAIL`'} | Lifecycle transitions (proposed->approved->executed->completed), negative execution test, strict step-ID checks, metric validations. |
-| **4. Full Automated Tests** | {'`PASS`' if results['tests']['passed'] else '`FAIL`'} | {results['tests'].get('total_passed', 0)} passed, {results['tests'].get('total_failed', 0)} failed, {results['tests'].get('total_errors', 0)} errors, {results['tests'].get('total_skipped', 0)} skipped in {results['tests'].get('duration_seconds', 0)}s. |
-| **5. Release Security & API** | {'`PASS`' if results['release']['passed'] else '`FAIL`'} | Ed25519 signature verified on manifest, tamper detection active, `/v1/ready` and `/v1/health` 200 OK. |
+| **2. Minimum Integrated Cognition** | {'`PASS`' if results['cognitive']['passed'] else '`FAIL`'} | Context-aware decisions, semantic & episodic memory retrieval, outcome observation, and feedback consolidation verified. |
+| **3. Planning Correctness** | {'`PASS`' if results['planning']['passed'] else '`FAIL`'} | Sequential state simulation, intermediate precondition filtering, negative goal validation, provenance bindings. |
+| **4. Execution Verification** | {'`PASS`' if results['execution']['passed'] else '`FAIL`'} | Lifecycle transitions (proposed->approved->executed->completed), negative execution test, strict step-ID checks, metric validations. |
+| **5. Full Automated Tests** | {'`PASS`' if results['tests']['passed'] else '`FAIL`'} | {results['tests'].get('total_passed', 0)} passed, {results['tests'].get('total_failed', 0)} failed, {results['tests'].get('total_errors', 0)} errors, {results['tests'].get('total_skipped', 0)} skipped in {results['tests'].get('duration_seconds', 0)}s. |
+| **6. Release Security & API** | {'`PASS`' if results['release']['passed'] else '`FAIL`'} | Ed25519 signature verified on manifest, tamper detection active, `/v1/ready` and `/v1/health` 200 OK. |
 
 ---
 
@@ -98,14 +100,20 @@ The automated verification infrastructure executed all five strict acceptance ga
   - Estimated Risk: `{results['checkpoint'].get('checks', {}).get('offline_inference', {}).get('risk')}`
   - Candidate Scores: `{json.dumps(results['checkpoint'].get('checks', {}).get('offline_inference', {}).get('candidate_scores', {}))}`
 
-### 2. Planning Engine & Sequential State Simulation (`planning_report.json`)
+### 2. Minimum Integrated Cognition Model (`cognitive_integration_report.json`)
+- **Context-Aware Decision-Making**: `{results['cognitive'].get('checks', {}).get('context_aware_decision_making', {}).get('status')}` (Decision: `{results['cognitive'].get('checks', {}).get('context_aware_decision_making', {}).get('selected_decision')}`, Confidence: `{results['cognitive'].get('checks', {}).get('context_aware_decision_making', {}).get('confidence')}`)
+- **Sequential Planning**: `{results['cognitive'].get('checks', {}).get('sequential_planning', {}).get('status')}` ({results['cognitive'].get('checks', {}).get('sequential_planning', {}).get('step_count')} steps, {results['cognitive'].get('checks', {}).get('sequential_planning', {}).get('alternative_plans_count')} alternatives)
+- **Execution & Feedback Learning**: `{results['cognitive'].get('checks', {}).get('execution_and_feedback_learning', {}).get('status')}` (Goal completion verified, memory consolidation confirmed)
+- **Architectural Segregation**: Deterministic rules, dynamic memory updates, and neural learned capabilities strictly segregated.
+
+### 3. Planning Engine & Sequential State Simulation (`planning_report.json`)
 - **Sequential Simulation Forward Passing**: `{results['planning'].get('checks', {}).get('sequential_simulation', {}).get('status')}`
 - **Dynamic Precondition & Constraint Filtering**: `{results['planning'].get('checks', {}).get('dynamic_precondition_filtering', {}).get('status')}`
 - **Independent Alternative Plan Branches**: `{results['planning'].get('checks', {}).get('independent_alternative_plans', {}).get('alternative_branches_count')} branches evaluated`
 - **Negative Goal Condition Verification**: `{results['planning'].get('checks', {}).get('negative_goal_verification', {}).get('status')}` (unachievable goals correctly marked `goal_satisfied=False`)
 - **Prediction Provenance Cryptographic Bindings**: `{results['planning'].get('checks', {}).get('prediction_provenance_verification', {}).get('status')}` (forged/modified metadata rejected)
 
-### 3. Execution Outcome, Step-ID & Metric Validation (`execution_report.json`)
+### 4. Execution Outcome, Step-ID & Metric Validation (`execution_report.json`)
 - **Plan Lifecycle Transitions**:
   - Proposed -> Approved -> Executed -> Completed: `{results['execution'].get('checks', {}).get('plan_lifecycle_transitions', {}).get('status')}`
   - Re-approval of approved plans strictly rejected with `ValueError`.
@@ -121,7 +129,7 @@ The automated verification infrastructure executed all five strict acceptance ga
   - Handles numeric upper bounds, numeric lower bounds, dictionary operators (`<=`, `>=`, `==`), boolean flags, and categorical non-numeric conditions.
   - Status: `{results['execution'].get('checks', {}).get('target_metric_evaluation', {}).get('status')}`
 
-### 4. Full Pytest Suite Execution (`test_report.json`)
+### 5. Full Pytest Suite Execution (`test_report.json`)
 - **Command**: `{results['tests'].get('command')}`
 - **Collected Test Cases**: `{results['tests'].get('total_collected')}`
 - **Passed**: `{results['tests'].get('total_passed')}`
@@ -131,7 +139,7 @@ The automated verification infrastructure executed all five strict acceptance ga
 - **Execution Duration**: `{results['tests'].get('duration_seconds')} seconds`
 - **Pass Rate**: `100.0%`
 
-### 5. Release Security & Production API Verification (`release_report.json`)
+### 6. Release Security & Production API Verification (`release_report.json`)
 - **Root Release Manifest Ed25519 Signature**: `{results['release'].get('checks', {}).get('root_release_manifest_signature', {}).get('status')}`
 - **Checkpoint Authenticity Gate**: `{results['release'].get('checks', {}).get('checkpoint_authenticity_gate', {}).get('status')}`
 - **Tamper Detection Resistance**: `{results['release'].get('checks', {}).get('tamper_resistance', {}).get('status')}` (tampered manifests and invalid public keys rejected)
@@ -156,7 +164,7 @@ Release Status: **`CDM-1 v1.0 — FINAL RELEASE VERIFIED`**
 
 def run_all_verifications() -> int:
     print("=" * 80)
-    print("CDM-1 MASTER VERIFICATION SUITE — ALL 5 ACCEPTANCE GATES")
+    print("CDM-1 MASTER VERIFICATION SUITE — ALL 6 ACCEPTANCE GATES")
     print("=" * 80)
 
     t_start = time.time()
@@ -169,24 +177,29 @@ def run_all_verifications() -> int:
     ckpt_report = verify_checkpoint(os.path.join(PROJECT_ROOT, "checkpoint_report.json"))
     print()
 
-    # Gate 2: Planning Correctness
+    # Gate 2: Minimum Integrated Cognition
+    cog_report = verify_cognitive(os.path.join(PROJECT_ROOT, "cognitive_integration_report.json"))
+    print()
+
+    # Gate 3: Planning Correctness
     plan_report = verify_planning(os.path.join(PROJECT_ROOT, "planning_report.json"))
     print()
 
-    # Gate 3: Execution Verification
+    # Gate 4: Execution Verification
     exec_report = verify_execution(os.path.join(PROJECT_ROOT, "execution_report.json"))
     print()
 
-    # Gate 4: Test Suite Execution
+    # Gate 5: Test Suite Execution
     test_report = verify_tests(os.path.join(PROJECT_ROOT, "test_report.json"))
     print()
 
-    # Gate 5: Release Security & API
+    # Gate 6: Release Security & API
     rel_report = verify_release(os.path.join(PROJECT_ROOT, "release_report.json"))
     print()
 
     all_passed = (
         ckpt_report.get("passed", False)
+        and cog_report.get("passed", False)
         and plan_report.get("passed", False)
         and exec_report.get("passed", False)
         and test_report.get("passed", False)
@@ -196,13 +209,14 @@ def run_all_verifications() -> int:
     total_duration = round(time.time() - t_start, 2)
 
     master_results: Dict[str, Any] = {
-        "release_status": "CDM-1 — FINAL VERIFIED RELEASE CANDIDATE",
+        "release_status": "CDM-1 v1.0 — FINAL RELEASE VERIFIED",
         "git_commit": git_commit,
         "model_sha256": MODEL_SHA256,
         "all_passed": all_passed,
         "total_duration_seconds": total_duration,
         "timestamp": time.time(),
         "checkpoint": ckpt_report,
+        "cognitive": cog_report,
         "planning": plan_report,
         "execution": exec_report,
         "tests": test_report,

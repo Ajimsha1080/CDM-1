@@ -1,5 +1,5 @@
 {
-  "timestamp": 1794133304.9247053,
+  "timestamp": 1794136757.0746973,
   "checks": {
     "root_release_manifest_signature": {
       "status": "PASS",
@@ -28,7 +28,7 @@
         "manifest_signature_verified": true,
         "weights_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
         "parameters": "158M",
-        "timestamp": 1794133309.3360887
+        "timestamp": 1794136763.2223268
       },
       "health_http_status": 200
     },
@@ -36,20 +36,20 @@
       "status": "PASS",
       "archives": {
         "CDM-1-Complete-With-Weights.zip": {
-          "size_bytes": 1175443902,
-          "sha256": "ed39a33040a833aa0228090ee013a354d49085df0fa16af889f7b3fdb7f1a307"
+          "size_bytes": 1175450529,
+          "sha256": "9b96d49d234cccf07fcf207986de99611503a00afe1536293919191cb08b1dc2"
         },
         "CDM-1-Project.zip": {
-          "size_bytes": 978016,
-          "sha256": "7e91f71054964bc2f59b69e3504cbfca9da75149f926845623a0b9513417d3a7"
+          "size_bytes": 984643,
+          "sha256": "57ad78f6b0fa21f81e4a9cf2cdf98b36a7358d5b06b0debc01da339d2183237e"
         },
         "FINAL_RELEASE_MANIFEST.json": {
           "size_bytes": 1874,
           "sha256": "00ec8df7c0a55dceeac0517d21457ef7ff13c97fd25c4d3a617430cd84ebc39b"
         },
         "release_manifest.json": {
-          "size_bytes": 704,
-          "sha256": "f29d77139b9e0f78af68b3996ec1b3260a38ade69483055d92c7fb7969cd6b1d"
+          "size_bytes": 703,
+          "sha256": "cc5ac5587f6179417695e882c7778bdeb28c54231f1f35760d80d69f3287ce8d"
         }
       },
       "clean_extraction_inference_verified": true

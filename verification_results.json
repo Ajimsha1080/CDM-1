@@ -1,12 +1,12 @@
 {
-  "release_status": "CDM-1 \u2014 FINAL VERIFIED RELEASE CANDIDATE",
-  "git_commit": "d47ccba3288336ca1d65dd689a3e6133ea932ab2",
+  "release_status": "CDM-1 v1.0 \u2014 FINAL RELEASE VERIFIED",
+  "git_commit": "329dcf4a9d1c9cd1308e46a5201919d20e661711",
   "model_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
   "all_passed": true,
-  "total_duration_seconds": 185.4,
-  "timestamp": 1794133336.4900987,
+  "total_duration_seconds": 236.54,
+  "timestamp": 1794136791.7356582,
   "checkpoint": {
-    "timestamp": 1794133151.1711757,
+    "timestamp": 1794136555.2557535,
     "checkpoint_path": "experiments/release/cdm-1-general\\model.safetensors",
     "checks": {
       "file_size": {
@@ -34,7 +34,7 @@
         "decision": "YES",
         "confidence": 0.9891,
         "risk": 0.0203,
-        "latency_ms": 1243.43,
+        "latency_ms": 1566.59,
         "candidate_scores": {
           "auto_resolve": 0.5751,
           "escalate_tier2": 0.4249
@@ -51,8 +51,60 @@
     },
     "passed": true
   },
+  "cognitive": {
+    "timestamp": 1794136566.1892471,
+    "checkpoint_dir": "experiments/release/cdm-1-general",
+    "checks": {
+      "context_aware_decision_making": {
+        "status": "PASS",
+        "selected_decision": "escalate_to_tier2",
+        "confidence": 0.9857,
+        "policy_prohibition_enforced": true,
+        "reasoning_steps_count": 2
+      },
+      "sequential_planning": {
+        "status": "PASS",
+        "step_count": 2,
+        "plan_stage": "proposed",
+        "is_verified_goal_completion": false,
+        "simulated_goal_satisfied": true,
+        "alternative_plans_count": 1
+      },
+      "execution_and_feedback_learning": {
+        "status": "PASS",
+        "plan_approved": true,
+        "execution_verified": true,
+        "final_plan_stage": "completed",
+        "is_verified_goal_completion": true,
+        "memory_consolidation_verified": true
+      }
+    },
+    "passed": true,
+    "architectural_segregation": {
+      "deterministic_operations": [
+        "Semantic policy rule registration and condition evaluation",
+        "Hard constraint filtering in reasoning engine",
+        "Discrete state transition computation S_{t+1} = T(S_t, A_t)",
+        "Plan lifecycle transitions (proposed -> approved -> in_progress -> completed)",
+        "Telemetry-based postcondition and metric comparison"
+      ],
+      "dynamic_memory_updates": [
+        "Multi-turn context frame updating in ContextEngine",
+        "Working memory goal stack and scratchpad state management",
+        "Episodic memory vector indexing and retrieval (SQLiteMemoryStorage)",
+        "Procedural workflow caching and retrieval"
+      ],
+      "neural_learned_capabilities": [
+        "ModernBERT language and semantic representation encoding",
+        "Feature fusion across text and structured numerical inputs",
+        "Neural candidate action scoring and multi-class classification",
+        "Calibrated decision confidence and risk estimation",
+        "Prediction provenance binding with model SHA-256 digest"
+      ]
+    }
+  },
   "planning": {
-    "timestamp": 1794133158.6990418,
+    "timestamp": 1794136572.796272,
     "checks": {
       "sequential_simulation": {
         "status": "PASS",
@@ -98,7 +150,7 @@
     "passed": true
   },
   "execution": {
-    "timestamp": 1794133158.7052093,
+    "timestamp": 1794136572.8088624,
     "checks": {
       "plan_lifecycle_transitions": {
         "status": "PASS",
@@ -162,7 +214,7 @@
     "passed": true
   },
   "tests": {
-    "timestamp": 1794133158.7074933,
+    "timestamp": 1794136572.8125453,
     "command": "C:\\Users\\91730\\AppData\\Local\\Programs\\Python\\Python314\\python.exe -m pytest tests/ -v",
     "passed": true,
     "total_collected": 119,
@@ -170,13 +222,13 @@
     "total_failed": 0,
     "total_errors": 0,
     "total_skipped": 0,
-    "duration_seconds": 146.21,
+    "duration_seconds": 184.25,
     "test_files": [],
-    "output_summary": "================= 119 passed, 1 warning in 141.00s (0:02:21) ==================",
+    "output_summary": "================= 119 passed, 1 warning in 177.14s (0:02:57) ==================",
     "test_lines_count": 119
   },
   "release": {
-    "timestamp": 1794133304.9247053,
+    "timestamp": 1794136757.0746973,
     "checks": {
       "root_release_manifest_signature": {
         "status": "PASS",
@@ -205,7 +257,7 @@
           "manifest_signature_verified": true,
           "weights_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
           "parameters": "158M",
-          "timestamp": 1794133309.3360887
+          "timestamp": 1794136763.2223268
         },
         "health_http_status": 200
       },
@@ -213,20 +265,20 @@
         "status": "PASS",
         "archives": {
           "CDM-1-Complete-With-Weights.zip": {
-            "size_bytes": 1175443902,
-            "sha256": "ed39a33040a833aa0228090ee013a354d49085df0fa16af889f7b3fdb7f1a307"
+            "size_bytes": 1175450529,
+            "sha256": "9b96d49d234cccf07fcf207986de99611503a00afe1536293919191cb08b1dc2"
           },
           "CDM-1-Project.zip": {
-            "size_bytes": 978016,
-            "sha256": "7e91f71054964bc2f59b69e3504cbfca9da75149f926845623a0b9513417d3a7"
+            "size_bytes": 984643,
+            "sha256": "57ad78f6b0fa21f81e4a9cf2cdf98b36a7358d5b06b0debc01da339d2183237e"
           },
           "FINAL_RELEASE_MANIFEST.json": {
             "size_bytes": 1874,
             "sha256": "00ec8df7c0a55dceeac0517d21457ef7ff13c97fd25c4d3a617430cd84ebc39b"
           },
           "release_manifest.json": {
-            "size_bytes": 704,
-            "sha256": "f29d77139b9e0f78af68b3996ec1b3260a38ade69483055d92c7fb7969cd6b1d"
+            "size_bytes": 703,
+            "sha256": "cc5ac5587f6179417695e882c7778bdeb28c54231f1f35760d80d69f3287ce8d"
           }
         },
         "clean_extraction_inference_verified": true

@@ -1,5 +1,5 @@
 {
-  "timestamp": 1794133151.1711757,
+  "timestamp": 1794136555.2557535,
   "checkpoint_path": "experiments/release/cdm-1-general\\model.safetensors",
   "checks": {
     "file_size": {
@@ -27,7 +27,7 @@
       "decision": "YES",
       "confidence": 0.9891,
       "risk": 0.0203,
-      "latency_ms": 1243.43,
+      "latency_ms": 1566.59,
       "candidate_scores": {
         "auto_resolve": 0.5751,
         "escalate_tier2": 0.4249

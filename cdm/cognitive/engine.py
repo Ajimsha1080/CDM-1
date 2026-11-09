@@ -50,10 +50,12 @@ class CognitiveEngine:
         decision_model: Optional[CognitiveDecisionModel] = None,
         db_path: str = "experiments/cognitive_memory.db",
         production_mode: bool = False,
+        decision_core: Optional[CognitiveDecisionModel] = None,
     ):
+        effective_model = decision_core if decision_core is not None else decision_model
         is_prod = production_mode or (os.environ.get("CDM_PRODUCTION_MODE", "").strip().lower() in ("1", "true", "yes"))
         if is_prod:
-            if decision_model is None or getattr(decision_model, "is_fallback", False):
+            if effective_model is None or getattr(effective_model, "is_fallback", False):
                 raise RuntimeError(
                     "Production mode startup failure: CDM-1 requires an authenticated, trained decision model checkpoint, "
                     "but no trained checkpoint was loaded."
@@ -94,7 +96,7 @@ class CognitiveEngine:
         self.causal_engine = CausalEngine()
 
         # 9. CDM-1 Central Cognitive Decision Core
-        self.decision_core = decision_model
+        self.decision_core = effective_model
         self.production_mode = is_prod
 
         # 9. Grounded Semantic Memory Embedder

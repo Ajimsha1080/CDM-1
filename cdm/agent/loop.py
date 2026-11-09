@@ -312,6 +312,29 @@ class AgentControlLoop:
             self.store.save_run(run)
             return run
 
+        # Metacognitive recurring failure check
+        consecutive_failures = 0
+        for h in reversed(run.history):
+            if h.get("success") is False:
+                consecutive_failures += 1
+            else:
+                break
+        if consecutive_failures >= 3:
+            step_num = run.step_count + 1
+            logger.warning(f"Run {run.run_id}: Metacognitive recurring failure threshold exceeded ({consecutive_failures} failures).")
+            run.status = "waiting_for_approval"
+            run.pending_reason = f"Metacognitive intervention: Systemic failure detected ({consecutive_failures} consecutive action failures). Requiring human review before continuing."
+            run.history.append({
+                "step": step_num,
+                "tool": "metacognitive_intervention",
+                "gate_decision": "suspend_systemic_failure",
+                "success": False,
+                "error": f"Metacognitive intervention: {consecutive_failures} consecutive execution failures detected. Execution suspended for human review.",
+            })
+            run.step_count += 1
+            self.store.save_run(run)
+            return run
+
         # =====================================================================
         # Layer 2: Perception, Context, Memory, World State, Reasoning, Planning
         # =====================================================================
@@ -891,9 +914,10 @@ class AgentControlLoop:
             # Action failed: trigger replanning!
             logger.info(f"Run {run.run_id}: Step {step_num} action '{selected_tool_name}' failed. Triggering replanning...")
             if working_state.active_goals:
+                replan_candidates = [a for a in candidate_tools if a != selected_tool_name]
                 replan_res = self.cognitive_engine.planning_engine.generate_plan(
                     target_goal=working_state.active_goals[0],
-                    available_actions=candidate_tools,
+                    available_actions=replan_candidates if replan_candidates else candidate_tools,
                     current_world_state=world_state,
                     reasoning_trace=reasoning_trace,
                     prohibited_actions=run.prohibited_actions,
@@ -962,6 +986,13 @@ class AgentControlLoop:
             verification_result=action_verif_res.model_dump() if action_verif_res else None,
         )
 
+        exec_outcome_state = OutcomeVerifier.classify_execution_state(
+            attempted=True,
+            executed=exec_res.success,
+            action_verified=(action_verif_res.verified if action_verif_res else False),
+            goal_verified=is_goal_verified,
+        ).value
+
         run.history.append({
             "step": step_num,
             "tool": selected_tool_name,
@@ -970,6 +1001,7 @@ class AgentControlLoop:
             "success": exec_res.success,
             "output": exec_res.output,
             "error": exec_res.error,
+            "execution_state": exec_outcome_state,
             "action_verified": action_verif_res.verified if action_verif_res else None,
             "alternatives_evaluated": alternatives_evaluated,
             "neural_score": selected_neural_score,

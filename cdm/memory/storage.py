@@ -125,13 +125,14 @@ class SQLiteMemoryStorage(BaseMemoryStorage):
         now = time.time()
         vec_str = json.dumps(vector) if vector else None
         payload_str = json.dumps(data)
+        outcome_str = json.dumps(data["verified_outcome"]) if data.get("verified_outcome") else None
         self._execute_commit(
             """
             INSERT OR REPLACE INTO episodic_memory 
             (record_id, tenant_id, created_at, ttl_seconds, vector_json, payload_json, verified_outcome_json)
-            VALUES (?, ?, ?, ?, ?, ?, NULL)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
             """,
-            (record_id, tenant_id, now, ttl, vec_str, payload_str),
+            (record_id, tenant_id, now, ttl, vec_str, payload_str, outcome_str),
         )
 
     def query_similar_episodic(

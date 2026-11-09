@@ -7,15 +7,28 @@ from typing import Dict, Any, Optional, Callable, List, Tuple
 from pydantic import BaseModel, Field
 import os
 import time
+from enum import Enum
 from pathlib import Path
+
+
+class ExecutionOutcomeState(str, Enum):
+    """The four distinct execution lifecycle states."""
+    ATTEMPTED = "attempted"                           # Action initiated / dispatched to sandbox
+    EXECUTED = "executed"                             # Tool executed with output returned, unverified
+    ACTION_RESULT_VERIFIED = "action_result_verified"  # Physical action postcondition independently verified
+    TASK_GOAL_VERIFIED = "task_goal_verified"          # End-to-end task goal independently verified
 
 
 class VerificationStatus:
     PENDING = "pending"
     RUNNING = "running"
+    ATTEMPTED = "attempted"
+    EXECUTED = "executed"
     ACTION_SUCCEEDED = "action_succeeded"
+    ACTION_RESULT_VERIFIED = "action_result_verified"
     VERIFICATION_PENDING = "verification_pending"
     VERIFIED_COMPLETE = "verified_complete"
+    TASK_GOAL_VERIFIED = "task_goal_verified"
     FAILED = "failed"
     INCONCLUSIVE = "inconclusive"
     REQUIRES_HUMAN_APPROVAL = "requires_human_approval"
@@ -42,6 +55,25 @@ class OutcomeVerifier:
     """Verifies actual execution outcomes independently of LLM assertions."""
 
     VERIFIER_VERSION = "1.4.0"
+
+    @classmethod
+    def classify_execution_state(
+        cls,
+        attempted: bool = True,
+        executed: bool = False,
+        action_verified: bool = False,
+        goal_verified: bool = False,
+    ) -> ExecutionOutcomeState:
+        """Determines the exact execution state across the 4-tier lifecycle hierarchy:
+        attempted -> executed -> action_result_verified -> task_goal_verified.
+        """
+        if goal_verified:
+            return ExecutionOutcomeState.TASK_GOAL_VERIFIED
+        if action_verified:
+            return ExecutionOutcomeState.ACTION_RESULT_VERIFIED
+        if executed:
+            return ExecutionOutcomeState.EXECUTED
+        return ExecutionOutcomeState.ATTEMPTED
 
     @classmethod
     def resolve_sandbox_path(cls, target: str, sandbox_root: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:

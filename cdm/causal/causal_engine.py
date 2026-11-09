@@ -144,6 +144,94 @@ class CausalEngine:
         """Looks up the known direct relationship between two variables."""
         return self.edges.get((source, target))
 
+    def get_variable(self, name: str) -> Optional[CausalVariable]:
+        """Looks up registered causal variable."""
+        return self.variables.get(name)
+
+    def validate_temporal_ordering(self, cause: str, effect: str) -> Tuple[bool, str]:
+        """Validates that cause strictly precedes or coincides with effect in time.
+        Returns (True, msg) if valid or if not yet observed, (False, reason) if violated.
+        """
+        cause_times = [t for n, v, t in self.temporal_history if n == cause]
+        effect_times = [t for n, v, t in self.temporal_history if n == effect]
+        if not cause_times or not effect_times:
+            return True, "Temporal ordering indeterminate: one or both variables not yet observed in history."
+
+        t_cause = min(cause_times)
+        t_effect = min(effect_times)
+        if t_effect < t_cause:
+            return False, f"Temporal ordering violated: effect '{effect}' (t={t_effect:.4f}) preceded cause '{cause}' (t={t_cause:.4f}). Effects cannot precede causes."
+        return True, f"Temporal ordering respected: cause '{cause}' (t={t_cause:.4f}) preceded effect '{effect}' (t={t_effect:.4f})."
+
+    def detect_confounders(self, treatment: str, outcome: str) -> List[str]:
+        """Identifies potential confounding variables Z that have causal/associational edges
+        to both treatment and outcome (fork: treatment <- Z -> outcome).
+        """
+        sources_to_treatment = {src for (src, tgt), edge in self.edges.items() if tgt == treatment}
+        sources_to_outcome = {src for (src, tgt), edge in self.edges.items() if tgt == outcome}
+
+        # Confounders are common parents
+        common_parents = list(sources_to_treatment.intersection(sources_to_outcome))
+        return common_parents
+
+    def isolate_confounder(
+        self,
+        treatment: str,
+        outcome: str,
+        confounder: str,
+    ) -> Dict[str, Any]:
+        """Evaluates relationship between treatment and outcome while conditioning on (controlling for) confounder.
+        Returns whether the direct treatment -> outcome link holds after backdoor adjustment.
+        """
+        edge_t_o = self.get_relationship(treatment, outcome)
+        edge_z_t = self.get_relationship(confounder, treatment)
+        edge_z_o = self.get_relationship(confounder, outcome)
+
+        has_direct_causal_mechanism = (
+            edge_t_o is not None and edge_t_o.association_type == AssociationType.CAUSAL_MECHANISM
+        )
+        confounder_explains_correlation = (
+            edge_z_t is not None and edge_z_o is not None and not has_direct_causal_mechanism
+        )
+
+        return {
+            "treatment": treatment,
+            "outcome": outcome,
+            "confounder": confounder,
+            "confounder_active": edge_z_t is not None and edge_z_o is not None,
+            "raw_association": edge_t_o.association_type.value if edge_t_o else "unknown",
+            "has_direct_causal_mechanism": has_direct_causal_mechanism,
+            "is_spurious_or_confounded": confounder_explains_correlation,
+            "adjusted_causal_effect": (
+                edge_t_o.confidence if has_direct_causal_mechanism else 0.0
+            ),
+            "isolation_analysis": (
+                f"Backdoor adjustment on confounder '{confounder}' reveals no direct causal mechanism; correlation is non-causal."
+                if confounder_explains_correlation
+                else f"Direct causal mechanism '{treatment}' -> '{outcome}' persists independently after conditioning on '{confounder}'."
+            ),
+        }
+
+    def find_causal_path(self, source: str, target: str) -> Optional[List[str]]:
+        """Traverses directed graph along AssociationType.CAUSAL_MECHANISM edges to find a verifiable chain."""
+        if source == target:
+            return [source]
+
+        visited = set()
+        queue = [[source]]
+        while queue:
+            path = queue.pop(0)
+            node = path[-1]
+            if node == target:
+                return path
+            if node in visited:
+                continue
+            visited.add(node)
+            for (src, tgt), edge in self.edges.items():
+                if src == node and edge.association_type == AssociationType.CAUSAL_MECHANISM:
+                    queue.append(path + [tgt])
+        return None
+
     def evaluate_causality(self, cause: str, effect: str) -> CausalHypothesis:
         """Evaluates whether cause -> effect is a genuine causal mechanism, temporal sequence, or mere correlation."""
         edge = self.get_relationship(cause, effect)
@@ -163,17 +251,30 @@ class CausalEngine:
         cause_times = [t for n, v, t in self.temporal_history if n == cause]
         effect_times = [t for n, v, t in self.temporal_history if n == effect]
 
-        if cause_times and effect_times and min(cause_times) < min(effect_times):
-            # A preceded B, but no verified causal mechanism exists
-            return CausalHypothesis(
-                cause=cause,
-                effect=effect,
-                association_type=AssociationType.TEMPORAL_SEQUENCE,
-                confidence=0.40,
-                supporting_evidence=["Observed temporal precedence in session history"],
-                counter_evidence=["No validated causal mechanism or intervention trial connecting variables"],
-                status="formulated",
-            )
+        if cause_times and effect_times:
+            if min(effect_times) < min(cause_times):
+                return CausalHypothesis(
+                    cause=cause,
+                    effect=effect,
+                    association_type=AssociationType.CORRELATION,
+                    confidence=0.0,
+                    supporting_evidence=[],
+                    counter_evidence=[
+                        f"Temporal violation: Effect '{effect}' was observed before Cause '{cause}'. Effects cannot precede causes."
+                    ],
+                    status="refuted",
+                )
+            if min(cause_times) <= min(effect_times):
+                # A preceded B, but no verified causal mechanism exists
+                return CausalHypothesis(
+                    cause=cause,
+                    effect=effect,
+                    association_type=AssociationType.TEMPORAL_SEQUENCE,
+                    confidence=0.40,
+                    supporting_evidence=["Observed temporal precedence in session history"],
+                    counter_evidence=["No validated causal mechanism or intervention trial connecting variables"],
+                    status="formulated",
+                )
 
         return CausalHypothesis(
             cause=cause,

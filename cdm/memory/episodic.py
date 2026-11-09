@@ -35,6 +35,7 @@ class EpisodicMemory:
             "context_text": record.context_text,
             "features": record.features,
             "decision_made": record.decision_made,
+            "verified_outcome": record.verified_outcome,
             "provenance": record.provenance,
         }
         self.storage.insert_episodic(

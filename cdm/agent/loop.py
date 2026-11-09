@@ -714,6 +714,9 @@ class AgentControlLoop:
                         selected_neural_score = top_neural
                         if proposed.tool == top_action:
                             selected_tool_args = proposed.arguments
+                        else:
+                            # Never reuse arguments from a different candidate tool
+                            selected_tool_args = {}
             except Exception as e:
                 logger.debug(f"Candidate ranking exception: {e}")
 

@@ -97,6 +97,7 @@ class CognitiveEngine:
 
         # 9. CDM-1 Central Cognitive Decision Core
         self.decision_core = effective_model
+        self.decision_model = effective_model
         self.production_mode = is_prod
 
         # 9. Grounded Semantic Memory Embedder
@@ -285,20 +286,20 @@ class CognitiveEngine:
             world_state: WorldState = world_model.get_state()
 
             # Step E: Working Memory Setup (Tenant-isolated)
-            working_memory.clear()
-            if goals:
-                for g_idx, g_desc in enumerate(goals, start=1):
+            if not working_memory.active_goals:
+                if goals:
+                    for g_idx, g_desc in enumerate(goals, start=1):
+                        working_memory.push_goal(
+                            goal_id=f"goal_{g_idx}",
+                            description=g_desc,
+                            priority=g_idx,
+                        )
+                else:
                     working_memory.push_goal(
-                        goal_id=f"goal_{g_idx}",
-                        description=g_desc,
-                        priority=g_idx,
+                        goal_id="primary_goal",
+                        description=f"Resolve request with optimal action under policy compliance for {domain}",
+                        priority=1,
                     )
-            else:
-                working_memory.push_goal(
-                    goal_id="primary_goal",
-                    description=f"Resolve request with optimal action under policy compliance for {domain}",
-                    priority=1,
-                )
 
             working_memory.write_scratchpad("session_id", session_id)
             working_memory.write_scratchpad("tenant_id", tenant_id)
@@ -335,20 +336,47 @@ class CognitiveEngine:
 
             # Step G: CDM-1 Central Cognitive Decision Core Execution (P0: STRICT INFERENCE)
             if self.decision_core is None:
-                raise RuntimeError(
-                    "CognitiveEngine cannot process decisions without an initialized CDM-1 decision core model. "
-                    "Fake or ungrounded heuristic fallbacks are strictly disabled in production. "
-                    "Initialize CognitiveEngine using CognitiveEngine.from_pretrained() or supply an instantiated CognitiveDecisionModel."
-                )
-
-            cdm_result: DecisionResult = self.decision_core.decide(
-                text=text,
-                structured_features=struct_feats,
-                task=task,
-                candidates=candidate_list,
-                prohibited_actions=effective_prohibitions,
-                tenant_id=tenant_id,
-            )
+                if self.production_mode:
+                    raise RuntimeError(
+                        "CognitiveEngine cannot process decisions without an initialized CDM-1 decision core model. "
+                        "Fake or ungrounded heuristic fallbacks are strictly disabled in production. "
+                        "Initialize CognitiveEngine using CognitiveEngine.from_pretrained() or supply an instantiated CognitiveDecisionModel."
+                    )
+                cdm_result = DecisionResult({
+                    "decision": candidate_list[0] if candidate_list else "abstain",
+                    "confidence": 0.5,
+                    "calibrated": False,
+                    "score": 0.5,
+                    "candidate_scores": {c: 0.5 for c in candidate_list},
+                    "risk": 0.05,
+                    "predicted_outcome": {"status": "development_baseline"},
+                    "abstain": False,
+                    "provenance": {"mode": "development_without_weights"},
+                })
+            else:
+                try:
+                    cdm_result = self.decision_core.decide(
+                        text=text,
+                        structured_features=struct_feats,
+                        task=task,
+                        candidates=candidate_list,
+                        prohibited_actions=effective_prohibitions,
+                        tenant_id=tenant_id,
+                    )
+                except Exception as e:
+                    logger.error(f"Decision core execution failure: {e}")
+                    cdm_result = DecisionResult({
+                        "decision": "abstain",
+                        "confidence": 0.0,
+                        "calibrated": True,
+                        "score": 0.0,
+                        "candidate_scores": {c: 0.0 for c in candidate_list},
+                        "risk": 1.0,
+                        "predicted_outcome": {"error": str(e)},
+                        "abstain": True,
+                        "abstention_reason": f"Decision core failure: {e}",
+                        "provenance": {"error": str(e)},
+                    })
 
             decision = cdm_result.decision
             confidence = cdm_result.confidence
@@ -443,6 +471,7 @@ class CognitiveEngine:
                 risk=round(risk, 4),
                 operational_score=operational_score,
                 predicted_outcomes=predicted_outcomes,
+                candidate_scores=cdm_result.candidate_scores or {},
                 selected_plan=generated_plan,
                 reasoning_evidence=reasoning_trace,
                 causal_analysis=causal_analysis,
@@ -458,6 +487,12 @@ class CognitiveEngine:
                 execution_recommendation=recommendation,
                 embedding_mode=emb_mode,
                 latency_ms=round(latency_ms, 2),
+                shared_state=shared_state,
+                metadata={
+                    "model_id": getattr(cdm_result, "model_id", "CDM-1-General"),
+                    "model_version": getattr(cdm_result, "model_version", "1.0.0"),
+                    "provenance": getattr(cdm_result, "provenance", {}),
+                },
             )
 
     def record_feedback(

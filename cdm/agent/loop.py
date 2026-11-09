@@ -336,173 +336,89 @@ class AgentControlLoop:
             return run
 
         # =====================================================================
-        # Layer 2: Perception, Context, Memory, World State, Reasoning, Planning
+        # Layer 2: Authoritative Unified Cognitive Processing
         # =====================================================================
-        # 1. Perception Subsystem: extract entities, operational signals, intent
-        task_stimulus = f"Goal: {run.goal}. Task: {run.task_description}."
-        perception = self.cognitive_engine.perception_engine.process(
-            text=task_stimulus,
-            structured_features={"step": run.step_count + 1, "cost_usd": run.accumulated_cost_usd},
-        )
+        candidate_tools = list(self.tools.keys()) + ["complete_task"]
+        execute_planning = (run.active_plan is None)
 
-        # 2. Contextual Situation Tracking (Tenant-isolated)
-        context = self.cognitive_engine.context_engine.update_context(
+        cog_result = self.cognitive_engine.process(
+            text=f"Task: {run.task_description}. Goal: {run.goal}",
+            structured_features={"step": run.step_count + 1, "cost_usd": run.accumulated_cost_usd, "accumulated_cost": run.accumulated_cost_usd},
+            candidates=candidate_tools[:8],
+            prohibited_actions=run.prohibited_actions,
+            task="agent_control_step",
+            goals=[run.goal] if run.goal else None,
+            constraints=run.tenant_policies + run.prohibited_actions,
             session_id=run.session_id,
             tenant_id=run.tenant_id,
-            perception=perception,
-            user_message=task_stimulus,
+            execute_planning=execute_planning,
         )
 
-        # 3. Persistent Memory Retrieval (Episodic, Semantic, Procedural, Working)
-        working_memory = self.cognitive_engine.get_isolated_working_memory(
-            tenant_id=run.tenant_id, session_id=run.session_id
-        )
-        if not working_memory.active_goals:
-            working_memory.push_goal(goal_id=f"goal_{run.run_id}", description=run.goal, priority=1)
-        working_memory.write_scratchpad("step_count", run.step_count + 1)
-        working_memory.write_scratchpad("cost_usd", run.accumulated_cost_usd)
-        working_state = working_memory.snapshot()
+        if cog_result.abstain and cog_result.abstention_reason:
+            step_num = run.step_count + 1
+            logger.warning(f"Run {run.run_id}: Cognitive engine abstention: {cog_result.abstention_reason}")
+            run.status = "waiting_for_approval"
+            run.pending_reason = cog_result.abstention_reason
+            gate_dec = "fail_closed_ranking_error" if "Decision core failure" in str(cog_result.abstention_reason) else "abstain"
+            run.history.append({
+                "step": step_num,
+                "tool": "abstain",
+                "arguments": {},
+                "gate_decision": gate_dec,
+                "success": False,
+                "error": f"Cognitive runtime failed closed: {cog_result.abstention_reason}",
+            })
+            run.step_count += 1
+            self.store.save_run(run)
+            return run
 
-        relevant_episodes = []
-        try:
-            relevant_episodes = self.cognitive_engine.episodic_memory.search_episodes(
-                query_text=f"{run.goal} {run.task_description}",
-                limit=3,
-                tenant_id=run.tenant_id,
-            )
-        except Exception as e:
-            logger.debug(f"Episodic memory search skipped: {e}")
+        perception = cog_result.shared_state.perception if cog_result.shared_state else self.cognitive_engine.perception_engine.process(text=run.task_description)
+        context = cog_result.shared_state.context if cog_result.shared_state else None
+        world_model = self.cognitive_engine.get_isolated_world_model(run.tenant_id, run.session_id)
+        working_memory = self.cognitive_engine.get_isolated_working_memory(run.tenant_id, run.session_id)
+        working_state = cog_result.shared_state.working_memory if cog_result.shared_state else working_memory.snapshot()
+        world_state = cog_result.shared_state.world_state if cog_result.shared_state else world_model.get_state()
+        reasoning_trace = cog_result.reasoning_evidence
+        causal_consequences = cog_result.causal_analysis or {}
+        candidate_scores = cog_result.candidate_scores or {}
+        pred_risk = cog_result.risk or 0.05
+        cdm_prov = cog_result.metadata.get("provenance")
+        cdm_model_id = cog_result.metadata.get("model_id", "CDM-1-General")
+        cdm_model_version = cog_result.metadata.get("model_version", "1.0.0")
+        semantic_rules = cog_result.shared_state.semantic_rules if cog_result.shared_state else []
+        relevant_episodes = cog_result.shared_state.episodic_context if cog_result.shared_state else []
 
-        domain = "general"
-        semantic_rules = []
-        try:
-            rules_objs = self.cognitive_engine.semantic_memory.query_rules_for_domain(domain=domain, tenant_id=run.tenant_id)
-            semantic_rules = [r.model_dump() for r in rules_objs]
-        except Exception as e:
-            logger.debug(f"Semantic rules query skipped: {e}")
-
-        procedural_workflows = []
-        try:
-            procedural_workflows = self.cognitive_engine.procedural_memory.get_workflows_for_domain(domain=domain, tenant_id=run.tenant_id)
-        except Exception as e:
-            logger.debug(f"Procedural workflows query skipped: {e}")
-
-        # 4. Tenant & Session Scoped World Model Construction
-        world_model = self.cognitive_engine.get_isolated_world_model(
-            tenant_id=run.tenant_id, session_id=run.session_id
-        )
-        world_model.record_observed_fact("goal", run.goal)
-        world_model.record_observed_fact("task_description", run.task_description)
-        world_model.set_environment_metric("step_count", float(run.step_count + 1))
-        world_model.set_environment_metric("accumulated_cost_usd", float(run.accumulated_cost_usd))
-
-        for ent in perception.extracted_entities:
-            world_model.update_entity(
-                entity_id=ent.entity_id,
-                entity_type=ent.entity_type,
-                properties={"name": ent.name, **ent.attributes},
-                uncertainty=1.0 - ent.confidence,
-            )
-        for p in run.prohibited_actions:
-            world_model.register_constraint(f"ProhibitedAction: {p}")
-        for pol in run.tenant_policies:
-            world_model.register_constraint(f"TenantPolicy: {pol}")
-        world_state = world_model.get_state()
-
-        # 5. Causal Analysis & Consequence Evaluation
-        candidate_tools = list(self.tools.keys()) + ["complete_task"]
-        causal_consequences = {}
-        try:
-            causal_consequences = self.cognitive_engine.causal_engine.analyze_candidate_consequences(
-                candidate_actions=candidate_tools,
-                current_metrics=world_state.environment_metrics,
-            )
-        except Exception as e:
-            logger.debug(f"Causal analysis skipped: {e}")
-
-        # 6. Reasoning Subsystem: Deductive Constraint Satisfaction
-        reasoning_trace = self.cognitive_engine.reasoning_engine.reason(
-            world_state=world_state,
-            context=context,
-            semantic_rules=semantic_rules,
-            candidate_actions=candidate_tools,
-            user_constraints=run.tenant_policies + run.prohibited_actions,
-            procedural_workflows=procedural_workflows,
-            causal_consequences=causal_consequences,
-        )
-        for step in reasoning_trace.steps:
-            world_model.record_inferred_state(f"deduction_step_{step.step_index}", step.conclusion)
-
-        # 7. Decision Core Scoring & Sequential Planning Coordination
-        candidate_scores = {}
-        pred_risk = 0.05
-        cdm_prov = None
-        cdm_model_id = "CDM-1-General"
-        cdm_model_version = "1.0.0"
-        cdm_res = None
-        if getattr(self.cognitive_engine, "decision_core", None) is not None:
-            try:
-                cdm_res = self.cognitive_engine.decision_core.decide(
-                    text=f"Goal: {run.goal}. Task: {run.task_description}",
-                    structured_features={"step": run.step_count + 1, "accumulated_cost": run.accumulated_cost_usd},
-                    task="choice",
-                    candidates=candidate_tools[:8],
-                    prohibited_actions=run.prohibited_actions,
-                    tenant_id=run.tenant_id,
+        # Sequential Planning Engine invocation & Active Plan Tracking
+        if not run.active_plan and cog_result.selected_plan and cog_result.selected_plan.steps:
+            run.active_plan = cog_result.selected_plan.model_dump()
+            run.current_plan_step = 0
+            active_plan = cog_result.selected_plan
+        elif run.active_plan:
+            active_plan = Plan.model_validate(run.active_plan)
+            curr_step_idx = run.current_plan_step
+            if curr_step_idx < len(active_plan.steps):
+                curr_step = active_plan.steps[curr_step_idx]
+                preconds, preconds_met = self.cognitive_engine.planning_engine._evaluate_preconditions(
+                    action=curr_step.action_name,
+                    current_world_state=world_state,
+                    forbidden_actions=set(run.prohibited_actions),
                 )
-                candidate_scores = cdm_res.candidate_scores or {}
-                pred_risk = cdm_res.risk or 0.05
-                cdm_prov = getattr(cdm_res, "provenance", None)
-                cdm_model_id = getattr(cdm_res, "model_id", "CDM-1-General")
-                cdm_model_version = getattr(cdm_res, "model_version", "1.0.0")
-            except Exception as e:
-                logger.debug(f"Decision core candidate scoring skipped: {e}")
-
-        # Sequential Planning Engine invocation & Active Plan Tracking (Phase 2)
-        active_plan = None
-        try:
-            self.cognitive_engine.planning_engine.world_model = world_model
-            if working_state.active_goals:
-                primary_goal = working_state.active_goals[0]
-                if not run.active_plan:
+                if not preconds_met:
+                    logger.info(f"Run {run.run_id}: Preconditions for step '{curr_step.action_name}' invalid. Replanning...")
                     active_plan = self.cognitive_engine.planning_engine.generate_plan(
-                        target_goal=primary_goal,
+                        target_goal=working_state.active_goals[0] if working_state.active_goals else GoalNode(goal_id="g1", description=run.goal),
                         available_actions=candidate_tools,
                         current_world_state=world_state,
                         reasoning_trace=reasoning_trace,
                         prohibited_actions=run.prohibited_actions,
                         tenant_id=run.tenant_id,
-                        task="plan",
+                        task="replan",
                     )
                     if active_plan and active_plan.steps:
                         run.active_plan = active_plan.model_dump()
                         run.current_plan_step = 0
-                else:
-                    active_plan = Plan.model_validate(run.active_plan)
-                    curr_step_idx = run.current_plan_step
-                    if curr_step_idx < len(active_plan.steps):
-                        curr_step = active_plan.steps[curr_step_idx]
-                        preconds, preconds_met = self.cognitive_engine.planning_engine._evaluate_preconditions(
-                            action=curr_step.action_name,
-                            current_world_state=world_state,
-                            forbidden_actions=set(run.prohibited_actions),
-                        )
-                        if not preconds_met:
-                            logger.info(f"Run {run.run_id}: Preconditions for step '{curr_step.action_name}' invalid. Replanning...")
-                            active_plan = self.cognitive_engine.planning_engine.generate_plan(
-                                target_goal=primary_goal,
-                                available_actions=candidate_tools,
-                                current_world_state=world_state,
-                                reasoning_trace=reasoning_trace,
-                                prohibited_actions=run.prohibited_actions,
-                                tenant_id=run.tenant_id,
-                                task="replan",
-                            )
-                            if active_plan and active_plan.steps:
-                                run.active_plan = active_plan.model_dump()
-                                run.current_plan_step = 0
-        except Exception as e:
-            logger.debug(f"Planning engine skipped: {e}")
+        else:
+            active_plan = None
 
         # Build prompt context
         memory_notes = []
@@ -722,26 +638,112 @@ class AgentControlLoop:
 
                 ranked_candidates.sort(key=lambda x: x[0], reverse=True)
                 if ranked_candidates:
-                    top_composite, top_action, top_neural, _ = ranked_candidates[0]
-                    # If active plan has a valid next step, enforce plan execution unless replanning occurred
-                    if planned_action_name and planned_action_name in self.tools:
-                        selected_tool_name = planned_action_name
-                        selected_neural_score = cand_scores.get(planned_action_name, top_neural)
-                        if proposed.tool == planned_action_name:
-                            selected_tool_args = proposed.arguments
-                        else:
-                            selected_tool_args = plan_step_params
-                        selected_reason = f"Executing planned step {run.current_plan_step + 1} ({planned_action_name}) per validated sequential plan."
+                    top_composite, top_action, top_neural, top_c_risk = ranked_candidates[0]
+                    selected_tool_name = top_action
+                    selected_neural_score = top_neural
+                    if proposed.tool == top_action:
+                        selected_tool_args = proposed.arguments
+                        selected_reason = proposed.reason
+                    elif top_action == planned_action_name:
+                        # Filter out internal planning metadata keys; never reuse proposed arguments from a different tool
+                        clean_plan_args = {k: v for k, v in plan_step_params.items() if k != "target_goal"}
+                        selected_tool_args = clean_plan_args
+                        selected_reason = f"Executing planned step {run.current_plan_step + 1} ({top_action}) per validated sequential plan."
                     else:
-                        selected_tool_name = top_action
-                        selected_neural_score = top_neural
-                        if proposed.tool == top_action:
-                            selected_tool_args = proposed.arguments
-                        else:
-                            # Never reuse arguments from a different candidate tool
-                            selected_tool_args = {}
+                        # Prevent argument reuse from a different candidate tool
+                        selected_tool_args = {}
+                        selected_reason = f"Selected candidate '{top_action}' with optimal decision score ({round(top_neural, 4)}) and risk ({round(top_c_risk, 4)})."
             except Exception as e:
-                logger.debug(f"Candidate ranking exception: {e}")
+                logger.error(f"Candidate ranking exception: {e}")
+                step_num = run.step_count + 1
+                run.history.append({
+                    "step": step_num,
+                    "tool": proposed.tool,
+                    "arguments": proposed.arguments,
+                    "gate_decision": "fail_closed_ranking_error",
+                    "success": False,
+                    "error": f"Decision ranking failed closed: {e}",
+                    "alternatives_evaluated": alternatives_evaluated,
+                    "model_version": cdm_model_version,
+                })
+                run.status = "waiting_for_approval"
+                run.pending_reason = f"Candidate ranking error: {e}"
+                run.step_count += 1
+                self.store.save_run(run)
+                return run
+
+        # Validate candidate arguments against selected tool's schema
+        if selected_tool_name in self.tools and selected_tool_name != "complete_task":
+            tool_obj = self.tools[selected_tool_name]
+            schema_err = tool_obj.validate_args(selected_tool_args) if hasattr(tool_obj, "validate_args") else None
+            if schema_err:
+                step_num = run.step_count + 1
+                logger.warning(f"Run {run.run_id}: Step {step_num} tool '{selected_tool_name}' argument schema validation failed: {schema_err}")
+                run.history.append({
+                    "step": step_num,
+                    "tool": selected_tool_name,
+                    "arguments": selected_tool_args,
+                    "gate_decision": "rejected_schema_validation",
+                    "success": False,
+                    "error": f"Tool argument schema validation failed: {schema_err}",
+                    "alternatives_evaluated": alternatives_evaluated,
+                    "model_version": cdm_model_version,
+                })
+                run.step_count += 1
+                if working_state.active_goals:
+                    replan_candidates = [a for a in candidate_tools if a != selected_tool_name]
+                    replan_res = self.cognitive_engine.planning_engine.generate_plan(
+                        target_goal=working_state.active_goals[0],
+                        available_actions=replan_candidates if replan_candidates else candidate_tools,
+                        current_world_state=world_state,
+                        reasoning_trace=reasoning_trace,
+                        prohibited_actions=run.prohibited_actions,
+                        tenant_id=run.tenant_id,
+                        task="replan_after_schema_validation_failure",
+                    )
+                    if replan_res and replan_res.steps:
+                        run.active_plan = replan_res.model_dump()
+                        run.current_plan_step = 0
+                self.store.save_run(run)
+                return run
+
+        # Revalidate selected action against dynamic world state preconditions
+        if selected_tool_name in self.tools and selected_tool_name != "complete_task":
+            preconds, preconds_met = self.cognitive_engine.planning_engine._evaluate_preconditions(
+                action=selected_tool_name,
+                current_world_state=world_state,
+                forbidden_actions=set(run.prohibited_actions),
+            )
+            if not preconds_met:
+                step_num = run.step_count + 1
+                logger.warning(f"Run {run.run_id}: Step {step_num} action '{selected_tool_name}' failed world state precondition revalidation: {preconds}")
+                run.history.append({
+                    "step": step_num,
+                    "tool": selected_tool_name,
+                    "arguments": selected_tool_args,
+                    "gate_decision": "rejected_world_state_preconditions",
+                    "success": False,
+                    "error": f"Action '{selected_tool_name}' rejected: preconditions not satisfied under current world state metrics.",
+                    "alternatives_evaluated": alternatives_evaluated,
+                    "model_version": cdm_model_version,
+                })
+                run.step_count += 1
+                if working_state.active_goals:
+                    replan_candidates = [a for a in candidate_tools if a != selected_tool_name]
+                    replan_res = self.cognitive_engine.planning_engine.generate_plan(
+                        target_goal=working_state.active_goals[0],
+                        available_actions=replan_candidates if replan_candidates else candidate_tools,
+                        current_world_state=world_state,
+                        reasoning_trace=reasoning_trace,
+                        prohibited_actions=run.prohibited_actions,
+                        tenant_id=run.tenant_id,
+                        task="replan_after_precondition_failure",
+                    )
+                    if replan_res and replan_res.steps:
+                        run.active_plan = replan_res.model_dump()
+                        run.current_plan_step = 0
+                self.store.save_run(run)
+                return run
 
         # Check if tool is complete_task (Phase 3)
         if selected_tool_name == "complete_task":

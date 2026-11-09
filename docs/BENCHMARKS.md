@@ -1,5 +1,8 @@
 # CDM-1 Benchmark Suite Report & Research Validation
 
+> [!NOTE]
+> **Synthetic Data & Development Simulation Notice**: All benchmark figures, experimental evaluation runs, and datasets referenced in this document are self-generated for simulation, algorithmic validation, and methodology research only. Real-world records represent 2.5% of the corpus as documented in [`research/docs/scientific/DATASET_PROVENANCE.md`](../research/docs/scientific/DATASET_PROVENANCE.md).
+
 ## 1. Experimental Methodology
 - **Holdout Test Set**: 58 distinct, audited holdout decision cases systematically balanced across 5 in-domain domains (`customer_support`, `business_operations`, `finance_and_credit`, `communication`, and `retail`).
 - **Domain-Held-Out Evaluation Set**: 4 verified cross-domain cases in unseen operational areas (`healthcare_triage`, `compliance_legal`).

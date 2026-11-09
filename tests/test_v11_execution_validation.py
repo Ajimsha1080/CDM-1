@@ -9,9 +9,12 @@ Validates:
 7. Validation of non-numeric target conditions (categorical strings, booleans).
 """
 
+from typing import Tuple
 import pytest
 from cdm.cognitive.state import GoalNode, WorldState, ReasoningTrace, Plan, ExecutedActionStep
 from cdm.planning.planning_engine import PlanningEngine
+
+Tuple_Plan_Goal_World = Tuple[PlanningEngine, Plan, GoalNode, WorldState]
 
 
 def _create_test_plan(num_steps: int = 2) -> Tuple_Plan_Goal_World:

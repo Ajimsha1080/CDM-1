@@ -198,6 +198,7 @@ class CognitiveEngineResult(BaseModel):
     risk: float
     operational_score: Optional[float] = None
     predicted_outcomes: Dict[str, Any] = Field(default_factory=dict)
+    candidate_scores: Dict[str, float] = Field(default_factory=dict)
     selected_plan: Optional[Plan] = None
     reasoning_evidence: ReasoningTrace
     causal_analysis: Optional[Dict[str, Any]] = None
@@ -208,3 +209,5 @@ class CognitiveEngineResult(BaseModel):
     execution_recommendation: str
     embedding_mode: str = "structured_fallback"  # 'transformer' vs 'structured_fallback'
     latency_ms: float = 0.0
+    shared_state: Optional[SharedCognitiveState] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)

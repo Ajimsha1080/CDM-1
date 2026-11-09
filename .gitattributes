@@ -1,0 +1,13 @@
+# Global line ending normalization (LF across all platforms)
+* text=auto eol=lf
+
+# Shipped release artifacts must never have bytes or line endings altered
+experiments/release/** -text
+
+# Binary formats
+*.safetensors binary
+*.sqlite binary
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary

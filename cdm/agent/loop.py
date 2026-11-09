@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from cdm.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
 from cdm.llm.factory import get_llm_provider
 from cdm.cognitive.engine import CognitiveEngine
-from cdm.cognitive.state import WorldState, WorldEntity
+from cdm.cognitive.state import WorldState, WorldEntity, GoalNode
 from cdm.gate.policy_gate import PolicyGate, ProposedAction, GateDecisionType, GateDecision
 from cdm.execution.tools.base import BaseTool, ToolResult
 from cdm.execution.tools.shell_tool import SandboxedShellTool
@@ -310,9 +310,33 @@ class AgentControlLoop:
             return run
 
         # =====================================================================
-        # Layer 2: Context, Memory, and World State Retrieval
+        # Layer 2: Perception, Context, Memory, World State, Reasoning, Planning
         # =====================================================================
-        # Query episodic memory for relevant past experiences
+        # 1. Perception Subsystem: extract entities, operational signals, intent
+        task_stimulus = f"Goal: {run.goal}. Task: {run.task_description}."
+        perception = self.cognitive_engine.perception_engine.process(
+            text=task_stimulus,
+            structured_features={"step": run.step_count + 1, "cost_usd": run.accumulated_cost_usd},
+        )
+
+        # 2. Contextual Situation Tracking (Tenant-isolated)
+        context = self.cognitive_engine.context_engine.update_context(
+            session_id=run.session_id,
+            tenant_id=run.tenant_id,
+            perception=perception,
+            user_message=task_stimulus,
+        )
+
+        # 3. Persistent Memory Retrieval (Episodic, Semantic, Procedural, Working)
+        working_memory = self.cognitive_engine.get_isolated_working_memory(
+            tenant_id=run.tenant_id, session_id=run.session_id
+        )
+        if not working_memory.active_goals:
+            working_memory.push_goal(goal_id=f"goal_{run.run_id}", description=run.goal, priority=1)
+        working_memory.write_scratchpad("step_count", run.step_count + 1)
+        working_memory.write_scratchpad("cost_usd", run.accumulated_cost_usd)
+        working_state = working_memory.snapshot()
+
         relevant_episodes = []
         try:
             relevant_episodes = self.cognitive_engine.episodic_memory.search_episodes(
@@ -323,17 +347,108 @@ class AgentControlLoop:
         except Exception as e:
             logger.debug(f"Episodic memory search skipped: {e}")
 
-        # Get world state
-        world_state = None
+        domain = "general"
+        semantic_rules = []
         try:
-            world_state = self.cognitive_engine.world_model.get_state(session_id=run.session_id)
-        except Exception:
-            world_state = WorldState(tenant_id=run.tenant_id, session_id=run.session_id)
+            rules_objs = self.cognitive_engine.semantic_memory.query_rules_for_domain(domain=domain, tenant_id=run.tenant_id)
+            semantic_rules = [r.model_dump() for r in rules_objs]
+        except Exception as e:
+            logger.debug(f"Semantic rules query skipped: {e}")
+
+        procedural_workflows = []
+        try:
+            procedural_workflows = self.cognitive_engine.procedural_memory.get_workflows_for_domain(domain=domain, tenant_id=run.tenant_id)
+        except Exception as e:
+            logger.debug(f"Procedural workflows query skipped: {e}")
+
+        # 4. Tenant & Session Scoped World Model Construction
+        world_model = self.cognitive_engine.get_isolated_world_model(
+            tenant_id=run.tenant_id, session_id=run.session_id
+        )
+        world_model.record_observed_fact("goal", run.goal)
+        world_model.record_observed_fact("task_description", run.task_description)
+        world_model.set_environment_metric("step_count", float(run.step_count + 1))
+        world_model.set_environment_metric("accumulated_cost_usd", float(run.accumulated_cost_usd))
+
+        for ent in perception.extracted_entities:
+            world_model.update_entity(
+                entity_id=ent.entity_id,
+                entity_type=ent.entity_type,
+                properties={"name": ent.name, **ent.attributes},
+                uncertainty=1.0 - ent.confidence,
+            )
+        for p in run.prohibited_actions:
+            world_model.register_constraint(f"ProhibitedAction: {p}")
+        for pol in run.tenant_policies:
+            world_model.register_constraint(f"TenantPolicy: {pol}")
+        world_state = world_model.get_state()
+
+        # 5. Causal Analysis & Consequence Evaluation
+        candidate_tools = list(self.tools.keys()) + ["complete_task"]
+        causal_consequences = {}
+        try:
+            causal_consequences = self.cognitive_engine.causal_engine.analyze_candidate_consequences(
+                candidate_actions=candidate_tools,
+                current_metrics=world_state.environment_metrics,
+            )
+        except Exception as e:
+            logger.debug(f"Causal analysis skipped: {e}")
+
+        # 6. Reasoning Subsystem: Deductive Constraint Satisfaction
+        reasoning_trace = self.cognitive_engine.reasoning_engine.reason(
+            world_state=world_state,
+            context=context,
+            semantic_rules=semantic_rules,
+            candidate_actions=candidate_tools,
+            user_constraints=run.tenant_policies + run.prohibited_actions,
+        )
+        for step in reasoning_trace.steps:
+            world_model.record_inferred_state(f"deduction_step_{step.step_index}", step.conclusion)
+
+        # 7. Decision Core Scoring & Sequential Planning Coordination
+        candidate_scores = {}
+        pred_risk = 0.05
+        if getattr(self.cognitive_engine, "decision_core", None) is not None:
+            try:
+                cdm_res = self.cognitive_engine.decision_core.decide(
+                    text=f"Goal: {run.goal}. Task: {run.task_description}",
+                    structured_features={"step": run.step_count + 1, "accumulated_cost": run.accumulated_cost_usd},
+                    task="choice",
+                    candidates=candidate_tools[:8],
+                    prohibited_actions=run.prohibited_actions,
+                    tenant_id=run.tenant_id,
+                )
+                candidate_scores = cdm_res.candidate_scores or {}
+                pred_risk = cdm_res.risk or 0.05
+            except Exception as e:
+                logger.debug(f"Decision core candidate scoring skipped: {e}")
+
+        # Sequential Planning Engine invocation
+        active_plan = None
+        try:
+            if working_state.active_goals:
+                primary_goal = working_state.active_goals[0]
+                self.cognitive_engine.planning_engine.world_model = world_model
+                active_plan = self.cognitive_engine.planning_engine.generate_plan(
+                    target_goal=primary_goal,
+                    available_actions=candidate_tools,
+                    current_world_state=world_state,
+                    reasoning_trace=reasoning_trace,
+                    prohibited_actions=run.prohibited_actions,
+                    tenant_id=run.tenant_id,
+                    task="plan",
+                )
+        except Exception as e:
+            logger.debug(f"Planning engine skipped: {e}")
 
         # Build prompt context
         memory_notes = []
         for ep in relevant_episodes:
-            memory_notes.append(f"- Past action '{ep.action_taken}' produced outcome '{ep.observed_outcome}' (reward: {ep.reward_signal})")
+            memory_notes.append(f"- Past action '{getattr(ep, 'action_taken', 'action')}' produced outcome '{getattr(ep, 'observed_outcome', '')}' (reward: {getattr(ep, 'reward_signal', 0.0)})")
+
+        rule_notes = [f"- Policy Rule: {r.get('rule_id', '')} ({r.get('condition_description', '')})" for r in semantic_rules[:3]]
+        deduction_notes = [f"- Deduction: {s.conclusion}" for s in reasoning_trace.steps[:3]]
+        plan_note = f"Recommended Plan: Step {active_plan.steps[0].step_number} -> {active_plan.steps[0].action_name}" if (active_plan and active_plan.steps) else None
 
         tools_desc = "\n".join([f"- {name}: {t.description}" for name, t in self.tools.items()])
 
@@ -352,14 +467,25 @@ class AgentControlLoop:
 
         history_context = self._build_history_context(run)
 
-        user_prompt = (
-            f"Task Goal: {run.goal}\n"
-            f"Description: {run.task_description}\n"
-            f"Step Count: {run.step_count + 1} / {run.step_budget}\n\n"
-            f"Context from Episodic Memory:\n" + ("\n".join(memory_notes) if memory_notes else "None available.") + "\n\n"
-            f"{history_context}\n\n"
-            "Propose the next optimal action."
-        )
+        user_prompt_parts = [
+            f"Task Goal: {run.goal}",
+            f"Description: {run.task_description}",
+            f"Step Count: {run.step_count + 1} / {run.step_budget}",
+        ]
+        if perception.extracted_entities:
+            user_prompt_parts.append("Entities Detected: " + ", ".join([f"{e.name} ({e.entity_type})" for e in perception.extracted_entities]))
+        if rule_notes:
+            user_prompt_parts.append("Active Semantic Rules:\n" + "\n".join(rule_notes))
+        if deduction_notes:
+            user_prompt_parts.append("Reasoning Deductions:\n" + "\n".join(deduction_notes))
+        if plan_note:
+            user_prompt_parts.append("Cognitive Planner Recommendation: " + plan_note)
+        if memory_notes:
+            user_prompt_parts.append("Context from Episodic Memory:\n" + "\n".join(memory_notes))
+
+        user_prompt_parts.append(history_context)
+        user_prompt_parts.append("Propose the next optimal action.")
+        user_prompt = "\n\n".join(user_prompt_parts)
 
         # =====================================================================
         # Layer 1: Foundation Model Proposal with Automatic Retries
@@ -545,7 +671,7 @@ class AgentControlLoop:
         )
 
         # =====================================================================
-        # Loop: Feedback into Layer 2 (Memory and World State)
+        # Loop: Metacognitive Review, Memory, World State & Feedback Updates
         # =====================================================================
         try:
             # 1. Update episodic memory
@@ -558,14 +684,28 @@ class AgentControlLoop:
                 reward_signal=reward,
                 tenant_id=run.tenant_id,
             )
-            # 2. Update world state
-            if hasattr(self.cognitive_engine, "world_model"):
-                self.cognitive_engine.world_model.record_transition(
-                    session_id=run.session_id,
-                    action_name=proposed.tool,
-                    action_args=proposed.arguments,
-                    outcome_observed={"success": exec_res.success},
+            # 2. Update tenant-and-session isolated world model
+            world_model.record_transition(
+                session_id=run.session_id,
+                action_name=proposed.tool,
+                action_args=proposed.arguments,
+                outcome_observed={"success": exec_res.success, "output": str(exec_res.output if exec_res.success else exec_res.error)[:256]},
+                tenant_id=run.tenant_id,
+            )
+            # 3. Update working memory scratchpad
+            working_memory.write_scratchpad(f"step_{step_num}_action", proposed.tool)
+            working_memory.write_scratchpad(f"step_{step_num}_success", exec_res.success)
+
+            # 4. Metacognitive Outcome Verification & Feedback Collection
+            if verif_res is not None and hasattr(self.cognitive_engine, "feedback_collector"):
+                self.cognitive_engine.feedback_collector.record_feedback(
+                    decision_id=f"dec_{run.run_id}_{step_num}",
+                    predicted_decision={"tool": proposed.tool, "args": proposed.arguments, "reason": proposed.reason},
+                    predicted_outcome={"expected_risk": gate_res.risk_score, "predicted_action": proposed.tool},
+                    actual_outcome={"success": exec_res.success, "verified": verif_res.verified, "details": verif_res.details},
+                    is_success=bool(verif_res.verified),
                     tenant_id=run.tenant_id,
+                    review_status="verified" if verif_res.verified else "rejected_for_training",
                 )
         except Exception as e:
             logger.debug(f"Feedback writeback warning: {e}")
@@ -639,7 +779,7 @@ class AgentControlLoop:
             verification_result=verif_res.model_dump() if verif_res else None,
         )
 
-        # Feedback to episodic memory
+        # Feedback to episodic memory & world model
         try:
             self.cognitive_engine.episodic_memory.record_episode(
                 session_id=run.session_id,
@@ -649,8 +789,26 @@ class AgentControlLoop:
                 reward_signal=1.0 if exec_res.success else -0.5,
                 tenant_id=run.tenant_id,
             )
-        except Exception:
-            pass
+            world_model = self.cognitive_engine.get_isolated_world_model(tenant_id=run.tenant_id, session_id=run.session_id)
+            world_model.record_transition(
+                session_id=run.session_id,
+                action_name=proposed.tool,
+                action_args=proposed.arguments,
+                outcome_observed={"success": exec_res.success, "output": str(exec_res.output if exec_res.success else exec_res.error)[:256]},
+                tenant_id=run.tenant_id,
+            )
+            if verif_res is not None and hasattr(self.cognitive_engine, "feedback_collector"):
+                self.cognitive_engine.feedback_collector.record_feedback(
+                    decision_id=f"dec_{run.run_id}_{step_num}",
+                    predicted_decision={"tool": proposed.tool, "args": proposed.arguments},
+                    predicted_outcome={"human_approved": True},
+                    actual_outcome={"success": exec_res.success, "verified": verif_res.verified},
+                    is_success=bool(verif_res.verified),
+                    tenant_id=run.tenant_id,
+                    review_status="verified" if verif_res.verified else "rejected_for_training",
+                )
+        except Exception as e:
+            logger.debug(f"Approval feedback writeback skipped: {e}")
 
         run.history.append({
             "step": step_num,

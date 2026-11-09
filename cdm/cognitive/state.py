@@ -184,6 +184,7 @@ class SharedCognitiveState(BaseModel):
     episodic_context: List[Dict[str, Any]] = Field(default_factory=list)
     semantic_rules: List[Dict[str, Any]] = Field(default_factory=list)
     procedural_workflows: List[Dict[str, Any]] = Field(default_factory=list)
+    causal_analysis: Optional[Dict[str, Any]] = None
     created_at: float = Field(default_factory=time.time)
 
 
@@ -199,6 +200,7 @@ class CognitiveEngineResult(BaseModel):
     predicted_outcomes: Dict[str, Any] = Field(default_factory=dict)
     selected_plan: Optional[Plan] = None
     reasoning_evidence: ReasoningTrace
+    causal_analysis: Optional[Dict[str, Any]] = None
     world_state_summary: Dict[str, Any] = Field(default_factory=dict)
     abstain: bool = False
     abstention_reason: Optional[str] = None

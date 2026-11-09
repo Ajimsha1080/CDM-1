@@ -118,7 +118,7 @@ def main():
     signed = sign_manifest(manifest, private_key_hex=priv_key)
 
     manifest_file = RELEASE_DIR / "release_manifest.json"
-    with open(manifest_file, "w", encoding="utf-8") as f:
+    with open(manifest_file, "w", encoding="utf-8", newline="\n") as f:
         json.dump(signed, f, indent=2)
 
     print(f"[+] Successfully regenerated and signed release manifest: {manifest_file}")

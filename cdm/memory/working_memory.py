@@ -16,6 +16,14 @@ class WorkingMemory:
         self.max_active_goals = max_active_goals
         self.state = WorkingMemoryState()
 
+    @property
+    def active_goals(self) -> List[GoalNode]:
+        return self.state.active_goals
+
+    @property
+    def scratchpad(self) -> Dict[str, Any]:
+        return self.state.scratchpad
+
     def set_attention_focus(self, focus_key: str) -> None:
         """Sets the current primary entity or topic of attention."""
         self.state.attention_focus = focus_key

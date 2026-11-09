@@ -132,6 +132,29 @@ class WorldModel:
         simulated.simulated_state[f"transition_{action}"] = transition_delta
         return simulated
 
+    def record_transition(
+        self,
+        session_id: str,
+        action_name: str,
+        action_args: Dict[str, Any],
+        outcome_observed: Dict[str, Any],
+        tenant_id: str = "default_tenant",
+    ) -> None:
+        """Records an actual physical or execution transition outcome into observed facts and metrics."""
+        self.record_observed_fact(f"action_executed_{action_name}", True)
+        self.record_observed_fact(f"last_action_args_{action_name}", action_args)
+        self.record_observed_fact(f"last_action_outcome_{action_name}", outcome_observed)
+
+        if outcome_observed.get("success"):
+            self.set_environment_metric(f"{action_name}_last_status", 1.0)
+            if "write" in action_name or "create" in action_name:
+                self.set_environment_metric("files_modified_count", self.state.environment_metrics.get("files_modified_count", 0.0) + 1.0)
+            elif "resolve" in action_name:
+                self.set_environment_metric("resolved", 1.0)
+        else:
+            self.set_environment_metric(f"{action_name}_last_status", 0.0)
+            self.set_environment_metric("failed_actions_count", self.state.environment_metrics.get("failed_actions_count", 0.0) + 1.0)
+
     def _update_overall_uncertainty(self) -> None:
         """Computes average uncertainty across all world entities."""
         if not self.state.entities:
@@ -140,6 +163,6 @@ class WorldModel:
         total = sum(e.uncertainty for e in self.state.entities.values())
         self.state.overall_state_uncertainty = total / len(self.state.entities)
 
-    def get_state(self) -> WorldState:
+    def get_state(self, session_id: Optional[str] = None) -> WorldState:
         """Returns the current world state."""
         return self.state.model_copy(deep=True)

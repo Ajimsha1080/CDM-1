@@ -97,6 +97,83 @@ class EpisodicMemory:
             prohibited_actions=prohibited_actions,
         )
 
+    def record_episode(
+        self,
+        session_id: str,
+        goal: str,
+        action_taken: str,
+        observed_outcome: str,
+        reward_signal: float = 0.0,
+        tenant_id: str = "default_tenant",
+        vector: Optional[List[float]] = None,
+        embedder: Optional[Any] = None,
+    ) -> MemoryRecord:
+        """Records an operational episode into persistent storage with tenant isolation."""
+        import uuid
+        record_id = f"ep_{uuid.uuid4().hex[:12]}"
+        context_text = f"Goal: {goal} | Session: {session_id}"
+
+        vec = vector
+        if vec is None and embedder is not None and hasattr(embedder, "embed"):
+            try:
+                vec = embedder.embed(text=f"{goal} {action_taken}")
+            except Exception:
+                vec = None
+
+        record = MemoryRecord(
+            record_id=record_id,
+            tenant_id=tenant_id,
+            context_text=context_text,
+            features={"session_id": session_id, "reward_signal": reward_signal},
+            decision_made={"action_taken": action_taken},
+            verified_outcome={"observed_outcome": observed_outcome, "reward_signal": reward_signal},
+            vector=vec,
+        )
+        self.insert(record)
+        return record
+
+    def search_episodes(
+        self,
+        query_text: str,
+        limit: int = 3,
+        tenant_id: str = "default_tenant",
+        embedder: Optional[Any] = None,
+    ) -> List[Any]:
+        """Searches past episodes by semantic similarity or text relevance for a specific tenant."""
+        vec = None
+        if embedder is not None and hasattr(embedder, "embed"):
+            try:
+                vec = embedder.embed(text=query_text)
+            except Exception:
+                vec = None
+
+        if vec is not None:
+            raw = self.retrieve_similar(query_vector=vec, tenant_id=tenant_id, top_k=limit, min_relevance=0.1)
+            results = []
+            for r in raw:
+                dec = r.get("decision_made", {})
+                out = r.get("verified_outcome", {})
+                results.append(type("EpisodeView", (), {
+                    "action_taken": dec.get("action_taken") or dec.get("selected_candidate", "action"),
+                    "observed_outcome": str(out.get("observed_outcome") or r.get("context_text", "")),
+                    "reward_signal": float(out.get("reward_signal", 0.0)),
+                }))
+            return results
+
+        if hasattr(self.storage, "list_episodic"):
+            rows = self.storage.list_episodic(tenant_id=tenant_id, limit=limit)
+            results = []
+            for r in rows:
+                dec = r.get("decision_made", {})
+                out = r.get("verified_outcome", {})
+                results.append(type("EpisodeView", (), {
+                    "action_taken": dec.get("action_taken") or dec.get("selected_candidate", "action"),
+                    "observed_outcome": str(out.get("observed_outcome") or r.get("context_text", "")),
+                    "reward_signal": float(out.get("reward_signal", 0.0)),
+                }))
+            return results
+        return []
+
     def update_verified_outcome(
         self, record_id: str, outcome: Dict[str, Any], tenant_id: Optional[str] = None
     ) -> bool:

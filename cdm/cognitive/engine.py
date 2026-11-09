@@ -35,6 +35,7 @@ from cdm.reasoning.reasoning_engine import ReasoningEngine
 from cdm.planning.planning_engine import PlanningEngine
 from cdm.learning.feedback import FeedbackCollector
 from cdm.inference.pipeline import CognitiveDecisionModel, DecisionResult
+from cdm.causal.causal_engine import CausalEngine
 
 
 class CognitiveEngine:
@@ -79,7 +80,10 @@ class CognitiveEngine:
         # 7. Durable Learning & Feedback (SQLite-backed)
         self.feedback_collector = FeedbackCollector(db_path=db_path)
 
-        # 8. CDM-1 Central Cognitive Decision Core
+        # 8. Causal Analysis & Counterfactual Subsystem
+        self.causal_engine = CausalEngine()
+
+        # 9. CDM-1 Central Cognitive Decision Core
         self.decision_core = decision_model
 
         # 9. Grounded Semantic Memory Embedder
@@ -112,6 +116,22 @@ class CognitiveEngine:
             local_files_only=local_files_only,
         )
         return cls(decision_model=decision_model, db_path=db_path)
+
+    @property
+    def decision_model(self) -> Optional[CognitiveDecisionModel]:
+        return self.decision_core
+
+    @decision_model.setter
+    def decision_model(self, model: Optional[CognitiveDecisionModel]) -> None:
+        self.decision_core = model
+
+    def get_isolated_world_model(self, tenant_id: str, session_id: str) -> WorldModel:
+        """Public accessor for tenant-and-session scoped WorldModel."""
+        return self._get_or_create_world_model(tenant_id=tenant_id, session_id=session_id)
+
+    def get_isolated_working_memory(self, tenant_id: str, session_id: str) -> WorkingMemory:
+        """Public accessor for tenant-and-session scoped WorkingMemory."""
+        return self._get_or_create_working_memory(tenant_id=tenant_id, session_id=session_id)
 
     def _get_session_lock(self, tenant_id: str, session_id: str) -> threading.Lock:
         """Retrieves or creates a dedicated synchronization lock for a specific (tenant_id, session_id)."""
@@ -249,6 +269,12 @@ class CognitiveEngine:
             working_memory.write_scratchpad("domain", domain)
             working_state: WorkingMemoryState = working_memory.snapshot()
 
+            # Step E.2: Causal Intelligence
+            causal_analysis = self.causal_engine.analyze_candidate_consequences(
+                candidate_actions=candidate_list,
+                current_metrics=world_state.environment_metrics,
+            )
+
             # Step F: Reasoning Intelligence
             reasoning_trace: ReasoningTrace = self.reasoning_engine.reason(
                 world_state=world_state,
@@ -366,6 +392,7 @@ class CognitiveEngine:
                 episodic_context=episodic_cases,
                 semantic_rules=semantic_rules,
                 procedural_workflows=procedural_workflows,
+                causal_analysis=causal_analysis,
             )
 
             latency_ms = (time.perf_counter() - start_time) * 1000.0
@@ -380,6 +407,7 @@ class CognitiveEngine:
                 predicted_outcomes=predicted_outcomes,
                 selected_plan=generated_plan,
                 reasoning_evidence=reasoning_trace,
+                causal_analysis=causal_analysis,
                 world_state_summary={
                     "entity_count": len(world_state.entities),
                     "active_constraints": world_state.active_constraints,

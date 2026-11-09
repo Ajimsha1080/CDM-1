@@ -25,12 +25,12 @@
   },
   "packaged_files": {
     "config.json": {
-      "size_bytes": 1518,
-      "sha256": "4dcf8cb656a594c56e8b5acf0235f6e0142832bfe22477ba8e0a55b2d88b5ce7"
+      "size_bytes": 1456,
+      "sha256": "2e5b95f790468b797eb49164061a7c28ca92c3a73b0874dae8a093e1503915fe"
     },
     "feature_schema.json": {
-      "size_bytes": 2839,
-      "sha256": "3e5e8f4e7c58786c6fd34e3fe5370e171bca89cdf9737fca9db943f20cf29c04"
+      "size_bytes": 2723,
+      "sha256": "87aed034c8a12979f0f7542af43dcacc2c8bd3214fc9f3cf01ba0759b757fea8"
     },
     "model.safetensors": {
       "size_bytes": 633465536,
@@ -41,8 +41,8 @@
       "sha256": "6c8aaa9a542084f2457eab775d4eeb51f92a70c0fd9de28d5edb0ddec3c08d30"
     },
     "tokenizer_config.json": {
-      "size_bytes": 397,
-      "sha256": "8d895c33fed683bb7b70178097d5a50478c9803236f53631c60e55851f1ddbe6"
+      "size_bytes": 380,
+      "sha256": "fb54f027372062b2ca52282efb04d178a8b57167a00cd8f4e816515823a2c016"
     }
   },
   "verification": {
@@ -56,7 +56,7 @@
   "manifest_signature": {
     "algorithm": "Ed25519",
     "key_id": "cdm-release-public-v10",
-    "public_key": "bf02342a8f2a5ac2defdd1cc9398464ebff22b9face378398cb343b58e0200a9",
-    "signature": "d939a53bfa35d93581a54222cd40d912bea1a5507012941edbf9e4748502b222c7f2d58495dc52488e89ed9f42bc6b233c4a15a841c8f398c044f3854af11c09"
+    "public_key": "4784afcf98a872ec65cc951f8803c6619e777923b559196f4cd9297bbadf56a5",
+    "signature": "26cb9288a93d57f15a623e767e024ecd46e1397efd2fd7d23106dcf8b75d346f107bffdb8275482a2d5d00230ab2a427e052277e64fbd0885a166fa0d20c910c"
   }
 }

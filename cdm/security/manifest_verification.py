@@ -15,7 +15,7 @@ from cryptography.exceptions import InvalidSignature
 
 
 # Embedded trusted public verification key (32 bytes raw Ed25519 public key in hex)
-TRUSTED_RELEASE_PUBLIC_KEY = "bf02342a8f2a5ac2defdd1cc9398464ebff22b9face378398cb343b58e0200a9"
+TRUSTED_RELEASE_PUBLIC_KEY = "4784afcf98a872ec65cc951f8803c6619e777923b559196f4cd9297bbadf56a5"
 KEY_ID = "cdm-release-public-v10"
 
 

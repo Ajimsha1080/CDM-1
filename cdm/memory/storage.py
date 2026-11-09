@@ -23,6 +23,20 @@ class BaseMemoryStorage:
     def update_verified_outcome(self, record_id: str, outcome: Dict[str, Any], tenant_id: Optional[str] = None) -> bool:
         raise NotImplementedError
 
+    def list_episodic(self, tenant_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            "SELECT record_id, tenant_id, created_at, payload_json, verified_outcome_json FROM episodic_memory WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?",
+            (tenant_id, limit),
+        )
+        results = []
+        for r in rows:
+            payload = json.loads(r["payload_json"])
+            payload["record_id"] = r["record_id"]
+            if r["verified_outcome_json"]:
+                payload["verified_outcome"] = json.loads(r["verified_outcome_json"])
+            results.append(payload)
+        return results
+
     def insert_rule(self, rule_id: str, tenant_id: str, domain: str, rule_data: Dict[str, Any]) -> None:
         raise NotImplementedError
 
@@ -177,6 +191,20 @@ class SQLiteMemoryStorage(BaseMemoryStorage):
                 (outcome_str, record_id),
             )
         return rowcount > 0
+
+    def list_episodic(self, tenant_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            "SELECT record_id, tenant_id, created_at, payload_json, verified_outcome_json FROM episodic_memory WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ?",
+            (tenant_id, limit),
+        )
+        results = []
+        for r in rows:
+            payload = json.loads(r["payload_json"])
+            payload["record_id"] = r["record_id"]
+            if r["verified_outcome_json"]:
+                payload["verified_outcome"] = json.loads(r["verified_outcome_json"])
+            results.append(payload)
+        return results
 
     def insert_rule(self, rule_id: str, tenant_id: str, domain: str, rule_data: Dict[str, Any]) -> None:
         self._execute_commit(

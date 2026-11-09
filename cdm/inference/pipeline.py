@@ -84,7 +84,7 @@ class CognitiveDecisionModel:
         If weights are present, validates SHA-256 and Ed25519 signature before loading.
         """
         resolved_path = model_name_or_path
-        if not os.path.exists(resolved_path):
+        if not os.path.exists(resolved_path) and model_name_or_path in ("experiments/release/cdm-1-general", "cdm-1-general"):
             alt_path = os.path.join("experiments", "checkpoints", "cdm-1-general")
             if os.path.exists(alt_path):
                 resolved_path = alt_path

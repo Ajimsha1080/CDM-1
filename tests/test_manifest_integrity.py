@@ -131,3 +131,20 @@ def test_actual_release_directory_verifies():
         assert "config.json" in res["files_verified"]
         assert "feature_schema.json" in res["files_verified"]
         assert "tokenizer_config.json" in res["files_verified"]
+
+
+def test_no_carriage_return_in_release_text_files():
+    """Regression test: Ensure all text/JSON files under experiments/release/ use strict LF endings (zero carriage returns b'\\r')."""
+    release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release"
+    assert release_dir.is_dir()
+
+    violating_files = []
+    for root, _, files in os.walk(release_dir):
+        for fname in files:
+            if fname.endswith((".json", ".md", ".txt", ".yaml", ".yml")):
+                fpath = Path(root) / fname
+                data = fpath.read_bytes()
+                if b"\r" in data:
+                    violating_files.append(str(fpath.relative_to(release_dir)))
+
+    assert violating_files == [], f"Found carriage return characters (CRLF/CR) in release files: {violating_files}"

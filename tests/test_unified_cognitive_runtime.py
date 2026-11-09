@@ -612,12 +612,6 @@ def test_full_integrated_cognitive_cycle_data_flow_trace():
                 "tool": "create_file",
                 "arguments": {"path": "report.txt", "content": "STATUS: HEALTHY\nTIMESTAMP: 2026-11-09"},
                 "reason": "Writing verified status report to disk",
-                "claim_goal_met": False,
-            },
-            {
-                "tool": "complete_task",
-                "arguments": {},
-                "reason": "Report exists and contains HEALTHY",
                 "claim_goal_met": True,
             },
         ])
@@ -640,13 +634,13 @@ def test_full_integrated_cognitive_cycle_data_flow_trace():
             },
         )
 
-        # Execute Step 1 (Tool: create_file)
-        run_s1 = loop.step(run.run_id)
-        assert run_s1.step_count == 1
-        assert run_s1.history[0]["tool"] == "create_file"
-        assert run_s1.history[0]["success"] is True
+        # Execute Cycle (Tool: create_file) - Full cognitive cycle execution
+        run_res = loop.step(run.run_id)
+        assert run_res.step_count == 1
+        assert run_res.history[0]["tool"] == "create_file"
+        assert run_res.history[0]["success"] is True
 
-        # Assert Stage Data Connections:
+        # Assert Stage Data Connections after Cycle:
         # A. File created on disk
         report_file = os.path.join(tmpdir, "report.txt")
         assert os.path.isfile(report_file)
@@ -662,12 +656,180 @@ def test_full_integrated_cognitive_cycle_data_flow_trace():
         assert len(episodes) >= 1
         assert "create_file" in episodes[0].action_taken
 
-        # D. Verified Feedback Collector received verified record
+        # D. Ground-truth verifier confirmed goal met and marked status completed
+        assert run_res.status == "completed"
+        assert run_res.verification_status == "verified_complete"
+
+        # E. Verified Feedback Collector received verified record upon goal completion
         fb_events = [e for e in engine.feedback_collector.events if e.tenant_id == tenant_id]
         assert len(fb_events) == 1
-        assert fb_events[0].decision_success is True
         assert fb_events[0].review_status == "verified"
+        assert fb_events[0].decision_success is True
 
-        # E. Independent ground-truth verifier confirmed goal met and marked status completed
-        assert run_s1.status == "completed"
-        assert run_s1.step_count == 1
+
+# =========================================================================
+# Scenario 16: Intermediate action success does NOT complete the entire task
+# =========================================================================
+def test_intermediate_action_success_does_not_complete_task():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "cognitive.db")
+        store = AgentStore(os.path.join(tmpdir, "agent.sqlite"))
+        engine = CognitiveEngine(db_path=db_path)
+        tenant_id = "tenant_intermediate_test"
+
+        llm = MockLLMProvider([
+            {
+                "tool": "create_file",
+                "arguments": {"path": "step1.txt", "content": "STEP_1_OK"},
+                "reason": "Creating intermediate step file",
+                "claim_goal_met": False,
+            },
+            {
+                "tool": "create_file",
+                "arguments": {"path": "final_goal.txt", "content": "ALL_DONE"},
+                "reason": "Creating final goal file",
+                "claim_goal_met": True,
+            },
+        ])
+
+        loop = AgentControlLoop(
+            llm_provider=llm,
+            cognitive_engine=engine,
+            store=store,
+            sandbox_root=tmpdir,
+        )
+
+        run = loop.create_run(
+            goal="Complete two step deployment",
+            task_description="Execute step 1 then finalize with step 2",
+            tenant_id=tenant_id,
+            verification_spec={
+                "check_type": "file_exists",
+                "target": "final_goal.txt",
+            },
+        )
+
+        # Execute step 1: intermediate file creation succeeds
+        run = loop.step(run.run_id)
+        assert run.step_count == 1
+        assert run.history[0]["success"] is True
+        # Must be running, NOT prematurely marked completed
+        assert run.status == "running"
+
+        # Check feedback collector: intermediate tool success must be UNVERIFIED
+        fb_events = [e for e in engine.feedback_collector.events if e.tenant_id == tenant_id]
+        assert len(fb_events) == 1
+        assert fb_events[0].review_status == "unverified"
+
+        # Execute step 2: complete_task confirms goal verification
+        run = loop.step(run.run_id)
+        assert run.step_count == 2
+        assert run.status == "completed"
+
+        # Now verified completion feedback exists
+        fb_events_all = [e for e in engine.feedback_collector.events if e.tenant_id == tenant_id]
+        assert len(fb_events_all) == 2
+        assert any(e.review_status == "verified" and e.decision_success is True for e in fb_events_all)
+
+
+# =========================================================================
+# Scenario 17: Invalid LLM output never triggers arbitrary tool execution
+# =========================================================================
+def test_invalid_llm_output_never_triggers_arbitrary_tool_execution():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        db_path = os.path.join(tmpdir, "cognitive.db")
+        store = AgentStore(os.path.join(tmpdir, "agent.sqlite"))
+        engine = CognitiveEngine(db_path=db_path)
+
+        # Provider that returns garbage non-JSON strings on every retry
+        class BrokenLLMProvider(BaseLLMProvider):
+            def _call_model(self, messages, temperature=0.0):
+                return "I am unable to output JSON: <syntax error here>", 50, 20
+
+        loop = AgentControlLoop(
+            llm_provider=BrokenLLMProvider(),
+            cognitive_engine=engine,
+            store=store,
+            sandbox_root=tmpdir,
+        )
+
+        run = loop.create_run(
+            goal="Test safe fallback handling",
+            task_description="Verify no shell_exec execution occurs on malformed LLM response",
+        )
+
+        run = loop.step(run.run_id)
+
+        # Run must safely fail/abstain without executing arbitrary shell tools
+        assert run.status == "failed"
+        assert run.step_count == 1
+        assert run.history[0]["tool"] == "abstain"
+        assert "abstain_malformed_llm_output" in run.history[0]["gate_decision"]
+        assert run.tool_call_count == 0
+
+
+# =========================================================================
+# Scenario 18: Verifier sandbox path traversal attempts are rejected
+# =========================================================================
+def test_verifier_path_traversal_attempts_rejected():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sandbox_path = os.path.join(tmpdir, "sandbox")
+        os.makedirs(sandbox_path, exist_ok=True)
+
+        # 1. Parent directory traversal attempt
+        spec_traversal = VerificationSpec(check_type="file_exists", target="../../secret.txt")
+        res_trav = OutcomeVerifier.verify(spec=spec_traversal, sandbox_root=sandbox_path)
+        assert res_trav.verified is False
+        assert "Security violation" in res_trav.failure_reason
+        assert res_trav.details.get("security_violation") is True
+
+        # 2. Outside absolute path attempt
+        outside_target = "C:\\Windows\\win.ini" if os.name == "nt" else "/etc/passwd"
+        spec_abs = VerificationSpec(check_type="file_exists", target=outside_target)
+        res_abs = OutcomeVerifier.verify(spec=spec_abs, sandbox_root=sandbox_path)
+        assert res_abs.verified is False
+        assert "Security violation" in res_abs.failure_reason
+
+        # 3. Valid nested path inside sandbox succeeds
+        nested_rel = "sub/dir/output.txt"
+        nested_full = os.path.join(sandbox_path, "sub", "dir", "output.txt")
+        os.makedirs(os.path.dirname(nested_full), exist_ok=True)
+        with open(nested_full, "w", encoding="utf-8") as f:
+            f.write("VALID CONTENT")
+
+        spec_valid = VerificationSpec(check_type="file_exists", target=nested_rel)
+        res_valid = OutcomeVerifier.verify(spec=spec_valid, sandbox_root=sandbox_path)
+        assert res_valid.verified is True
+        assert res_valid.failure_reason is None
+
+        # Content verification on valid nested path
+        spec_content = VerificationSpec(check_type="file_contains", target=nested_rel, expected_value="VALID CONTENT")
+        res_content = OutcomeVerifier.verify(spec=spec_content, sandbox_root=sandbox_path)
+        assert res_content.verified is True
+
+
+# =========================================================================
+# Scenario 19: Causal and predictive outputs influence action evaluation
+# =========================================================================
+def test_causal_and_predictive_outputs_influence_action_evaluation():
+    engine = CognitiveEngine()
+    # High-risk side effect analysis
+    causal_consequences = {
+        "drop_database": {
+            "expected_risk": 0.95,
+            "side_effects": ["permanent_data_loss", "service_outage"],
+        }
+    }
+    trace = engine.reasoning_engine.reason(
+        world_state=WorldState(),
+        context=ContextFrame(session_id="s1", tenant_id="t1"),
+        semantic_rules=[],
+        candidate_actions=["drop_database", "safe_diagnostics"],
+        causal_consequences=causal_consequences,
+    )
+
+    # Deduction must reflect causal mechanism analysis
+    causal_steps = [s for s in trace.steps if "Causal Mechanism" in s.rule_or_premise]
+    assert len(causal_steps) >= 1
+    assert "permanent_data_loss" in causal_steps[0].conclusion
+

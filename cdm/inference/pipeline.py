@@ -7,10 +7,13 @@ Supports offline local execution and strictly validated checkpoints.
 from typing import Dict, List, Optional, Any, Union
 import os
 import json
+import logging
 import torch
 from transformers import AutoTokenizer
 from cdm.models.cdm_model import CDMModel
 from cdm.config.feature_schema import FeatureSchema
+
+logger = logging.getLogger("cdm.inference")
 
 
 class DecisionResult:
@@ -78,11 +81,17 @@ class CognitiveDecisionModel:
         device: Optional[str] = None,
         local_files_only: bool = False,
         allow_fallback: bool = True,
+        production_mode: bool = False,
     ) -> "CognitiveDecisionModel":
         """Load CDM-1 weights, feature schema, and tokenizer from local checkpoint or release artifact.
+        If production_mode is True or CDM_PRODUCTION_MODE=1, fallback is strictly rejected.
         If weights are absent and allow_fallback is True, initializes deterministic rule-based scorer.
         If weights are present, validates SHA-256 and Ed25519 signature before loading.
         """
+        is_prod = production_mode or (os.environ.get("CDM_PRODUCTION_MODE", "").strip().lower() in ("1", "true", "yes"))
+        if is_prod:
+            allow_fallback = False
+
         resolved_path = model_name_or_path
         if not os.path.exists(resolved_path) and model_name_or_path in ("experiments/release/cdm-1-general", "cdm-1-general"):
             alt_path = os.path.join("experiments", "checkpoints", "cdm-1-general")
@@ -92,8 +101,23 @@ class CognitiveDecisionModel:
         weights_file = os.path.join(resolved_path, "model.safetensors") if os.path.isdir(resolved_path) else ""
         if not weights_file or not os.path.isfile(weights_file):
             if allow_fallback:
-                return cls(model=None, tokenizer=None, is_fallback=True)
-            raise FileNotFoundError(f"Model weights not found at {resolved_path} and allow_fallback is False.")
+                fb_instance = cls(model=None, tokenizer=None, is_fallback=True)
+                fb_instance.loading_status = {
+                    "loaded": False,
+                    "mode": "development_rule_fallback",
+                    "is_fallback": True,
+                    "production_mode": False,
+                }
+                logger.warning(
+                    "Operating in development mode without trained neural checkpoint. "
+                    "Fallback rule scorer is active and NOT trained neural inference."
+                )
+                return fb_instance
+            raise FileNotFoundError(
+                f"Model weights not found at '{resolved_path}'. "
+                f"Production model startup failure: weights not found at '{resolved_path}'. "
+                "Production mode strictly requires an authenticated trained checkpoint."
+            )
 
         # Cryptographically verify manifest and physical weights BEFORE loading weights into memory
         from cdm.security.manifest_verification import verify_checkpoint_authenticity
@@ -102,6 +126,11 @@ class CognitiveDecisionModel:
 
         # Strict model loading
         model = CDMModel.from_pretrained(resolved_path, strict=True)
+        param_count = sum(p.numel() for p in model.parameters())
+
+        # Validate architecture compatibility
+        if not hasattr(model, "config") or not hasattr(model, "language_encoder"):
+            raise ValueError(f"Checkpoint at '{resolved_path}' does not conform to CDMModel architecture.")
 
         # Check for packaged feature schema
         schema_path = os.path.join(resolved_path, "feature_schema.json")
@@ -121,7 +150,22 @@ class CognitiveDecisionModel:
                 local_files_only=local_files_only,
             )
 
-        return cls(model=model, tokenizer=tokenizer, schema=schema, device=device, artifact_hash=artifact_hash, is_fallback=False)
+        instance = cls(model=model, tokenizer=tokenizer, schema=schema, device=device, artifact_hash=artifact_hash, is_fallback=False)
+        instance.loading_status = {
+            "loaded": True,
+            "param_count": param_count,
+            "model_id": getattr(model.config, "model_name", "CDM-1-General"),
+            "model_version": getattr(model.config, "model_version", "1.0.0"),
+            "artifact_hash": artifact_hash,
+            "device": str(instance.device),
+            "is_fallback": False,
+            "production_mode": is_prod,
+        }
+        logger.info(
+            f"Loaded trained CDM-1 model from '{resolved_path}' with {param_count:,} parameters "
+            f"(SHA-256: {artifact_hash[:16]}...)."
+        )
+        return instance
 
     def _rule_based_decide(
         self,

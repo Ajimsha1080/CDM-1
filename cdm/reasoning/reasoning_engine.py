@@ -20,6 +20,8 @@ class ReasoningEngine:
         semantic_rules: List[Dict[str, Any]],
         candidate_actions: List[str],
         user_constraints: Optional[List[str]] = None,
+        procedural_workflows: Optional[List[Any]] = None,
+        causal_consequences: Optional[Dict[str, Any]] = None,
     ) -> ReasoningTrace:
         """Executes multi-step deduction, verifies constraints, and builds a traceable reasoning proof graph."""
         steps: List[ReasoningStep] = []
@@ -45,6 +47,43 @@ class ReasoningEngine:
             )
         )
         step_idx += 1
+
+        # Step 1b: Ingest procedural workflows if available
+        if procedural_workflows:
+            for wf in procedural_workflows:
+                name = getattr(wf, "name", str(wf))
+                preconds = getattr(wf, "preconditions", [])
+                wf_steps = getattr(wf, "steps", [])
+                steps.append(
+                    ReasoningStep(
+                        step_index=step_idx,
+                        rule_or_premise=f"Procedural Runbook: {name}",
+                        inputs=[str(p) for p in preconds] if preconds else ["default_preconditions"],
+                        conclusion=f"Applicable procedure '{name}' contains {len(wf_steps)} recommended operational steps.",
+                        confidence=0.95,
+                        is_hard_constraint=False,
+                    )
+                )
+                step_idx += 1
+
+        # Step 1c: Ingest causal consequences & side-effects
+        if causal_consequences:
+            for cand, consequence in causal_consequences.items():
+                if isinstance(consequence, dict):
+                    risk_lvl = consequence.get("expected_risk", 0.0)
+                    side_effects = consequence.get("side_effects", [])
+                    if risk_lvl > 0.6 or side_effects:
+                        steps.append(
+                            ReasoningStep(
+                                step_index=step_idx,
+                                rule_or_premise=f"Causal Mechanism Analysis: {cand}",
+                                inputs=[cand],
+                                conclusion=f"Causal analysis predicts elevated risk ({risk_lvl}) or side-effects: {side_effects}",
+                                confidence=0.88,
+                                is_hard_constraint=False,
+                            )
+                        )
+                        step_idx += 1
 
         # Step 2: Evaluate deterministic policy constraints from Semantic Rules
         for rule in active_rules:

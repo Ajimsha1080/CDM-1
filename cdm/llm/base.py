@@ -3,7 +3,7 @@ Defines provider abstractions, message formats, structured response envelopes,
 and per-tenant token and cost accounting.
 """
 
-from typing import List, Dict, Any, Optional, Union, Type
+from typing import List, Dict, Any, Optional, Union, Type, Tuple
 from abc import ABC, abstractmethod
 import time
 import json

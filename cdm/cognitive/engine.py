@@ -4,6 +4,7 @@ Central Decision Core, and Metacognition with strict tenant isolation and no fak
 """
 
 from typing import Dict, List, Optional, Any, Tuple
+import os
 import time
 import uuid
 import logging
@@ -48,7 +49,16 @@ class CognitiveEngine:
         self,
         decision_model: Optional[CognitiveDecisionModel] = None,
         db_path: str = "experiments/cognitive_memory.db",
+        production_mode: bool = False,
     ):
+        is_prod = production_mode or (os.environ.get("CDM_PRODUCTION_MODE", "").strip().lower() in ("1", "true", "yes"))
+        if is_prod:
+            if decision_model is None or getattr(decision_model, "is_fallback", False):
+                raise RuntimeError(
+                    "Production mode startup failure: CDM-1 requires an authenticated, trained decision model checkpoint, "
+                    "but no trained checkpoint was loaded."
+                )
+
         # 1. Perception Subsystem
         self.perception_engine = PerceptionEngine()
 
@@ -85,6 +95,7 @@ class CognitiveEngine:
 
         # 9. CDM-1 Central Cognitive Decision Core
         self.decision_core = decision_model
+        self.production_mode = is_prod
 
         # 9. Grounded Semantic Memory Embedder
         lang_enc = None
@@ -101,6 +112,27 @@ class CognitiveEngine:
             use_neural=True if (lang_enc is not None and tok is not None) else None,
         )
 
+    def get_health_status(self) -> Dict[str, Any]:
+        """Returns runtime health and model loading status."""
+        model_status = (
+            getattr(self.decision_core, "loading_status", {"loaded": False, "is_fallback": True})
+            if self.decision_core
+            else {"loaded": False, "is_fallback": True, "reason": "no_model_instance"}
+        )
+        is_healthy = bool(self.decision_core and not getattr(self.decision_core, "is_fallback", True))
+        return {
+            "status": "healthy" if is_healthy else "degraded",
+            "production_mode": self.production_mode,
+            "model": model_status,
+            "perception": True,
+            "memory": True,
+            "world_model": True,
+            "reasoning": True,
+            "planning": True,
+            "causal": True,
+            "feedback_collector": True,
+        }
+
     @classmethod
     def from_pretrained(
         cls,
@@ -108,14 +140,16 @@ class CognitiveEngine:
         db_path: str = "experiments/cognitive_memory.db",
         device: Optional[str] = None,
         local_files_only: bool = True,
+        production_mode: bool = False,
     ) -> "CognitiveEngine":
         """Factory method: loads the trained CDM-1 model into the Cognitive Engine."""
         decision_model = CognitiveDecisionModel.from_pretrained(
             model_name_or_path=model_name_or_path,
             device=device,
             local_files_only=local_files_only,
+            production_mode=production_mode,
         )
-        return cls(decision_model=decision_model, db_path=db_path)
+        return cls(decision_model=decision_model, db_path=db_path, production_mode=production_mode)
 
     @property
     def decision_model(self) -> Optional[CognitiveDecisionModel]:
@@ -282,6 +316,8 @@ class CognitiveEngine:
                 semantic_rules=semantic_rules,
                 candidate_actions=candidate_list,
                 user_constraints=user_constraints,
+                procedural_workflows=procedural_workflows,
+                causal_consequences=causal_analysis,
             )
 
             # Record inferred state in world model

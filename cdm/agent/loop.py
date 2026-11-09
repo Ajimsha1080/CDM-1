@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from cdm.llm.base import BaseLLMProvider, LLMMessage, LLMResponse
 from cdm.llm.factory import get_llm_provider
 from cdm.cognitive.engine import CognitiveEngine
-from cdm.cognitive.state import WorldState, WorldEntity, GoalNode
+from cdm.cognitive.state import WorldState, WorldEntity, GoalNode, Plan
 from cdm.gate.policy_gate import PolicyGate, ProposedAction, GateDecisionType, GateDecision
 from cdm.execution.tools.base import BaseTool, ToolResult
 from cdm.execution.tools.shell_tool import SandboxedShellTool
@@ -55,7 +55,7 @@ class AgentRunState(BaseModel):
     session_id: str
     goal: str
     task_description: str
-    status: str = "running" # 'running', 'waiting_for_approval', 'completed', 'failed', 'rejected', 'step_budget_exceeded', 'cost_budget_exceeded', 'loop_detected', 'paused'
+    status: str = "running" # 'running', 'waiting_for_approval', 'completed', 'failed', 'rejected', 'step_budget_exceeded', 'cost_budget_exceeded', 'loop_detected', 'inconclusive', 'paused'
     step_count: int = 0
     step_budget: int = 10
     cost_budget_usd: float = 1.0
@@ -67,8 +67,11 @@ class AgentRunState(BaseModel):
     pending_action: Optional[Dict[str, Any]] = None
     pending_reason: Optional[str] = None
     verification_spec: Optional[Dict[str, Any]] = None
+    verification_status: Optional[str] = None
     tenant_policies: List[str] = Field(default_factory=list)
     prohibited_actions: List[str] = Field(default_factory=list)
+    active_plan: Optional[Dict[str, Any]] = None
+    current_plan_step: int = 0
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
 
@@ -401,6 +404,8 @@ class AgentControlLoop:
             semantic_rules=semantic_rules,
             candidate_actions=candidate_tools,
             user_constraints=run.tenant_policies + run.prohibited_actions,
+            procedural_workflows=procedural_workflows,
+            causal_consequences=causal_consequences,
         )
         for step in reasoning_trace.steps:
             world_model.record_inferred_state(f"deduction_step_{step.step_index}", step.conclusion)
@@ -408,6 +413,10 @@ class AgentControlLoop:
         # 7. Decision Core Scoring & Sequential Planning Coordination
         candidate_scores = {}
         pred_risk = 0.05
+        cdm_prov = None
+        cdm_model_id = "CDM-1-General"
+        cdm_model_version = "1.0.0"
+        cdm_res = None
         if getattr(self.cognitive_engine, "decision_core", None) is not None:
             try:
                 cdm_res = self.cognitive_engine.decision_core.decide(
@@ -420,24 +429,55 @@ class AgentControlLoop:
                 )
                 candidate_scores = cdm_res.candidate_scores or {}
                 pred_risk = cdm_res.risk or 0.05
+                cdm_prov = getattr(cdm_res, "provenance", None)
+                cdm_model_id = getattr(cdm_res, "model_id", "CDM-1-General")
+                cdm_model_version = getattr(cdm_res, "model_version", "1.0.0")
             except Exception as e:
                 logger.debug(f"Decision core candidate scoring skipped: {e}")
 
-        # Sequential Planning Engine invocation
+        # Sequential Planning Engine invocation & Active Plan Tracking (Phase 2)
         active_plan = None
         try:
+            self.cognitive_engine.planning_engine.world_model = world_model
             if working_state.active_goals:
                 primary_goal = working_state.active_goals[0]
-                self.cognitive_engine.planning_engine.world_model = world_model
-                active_plan = self.cognitive_engine.planning_engine.generate_plan(
-                    target_goal=primary_goal,
-                    available_actions=candidate_tools,
-                    current_world_state=world_state,
-                    reasoning_trace=reasoning_trace,
-                    prohibited_actions=run.prohibited_actions,
-                    tenant_id=run.tenant_id,
-                    task="plan",
-                )
+                if not run.active_plan:
+                    active_plan = self.cognitive_engine.planning_engine.generate_plan(
+                        target_goal=primary_goal,
+                        available_actions=candidate_tools,
+                        current_world_state=world_state,
+                        reasoning_trace=reasoning_trace,
+                        prohibited_actions=run.prohibited_actions,
+                        tenant_id=run.tenant_id,
+                        task="plan",
+                    )
+                    if active_plan and active_plan.steps:
+                        run.active_plan = active_plan.model_dump()
+                        run.current_plan_step = 0
+                else:
+                    active_plan = Plan.model_validate(run.active_plan)
+                    curr_step_idx = run.current_plan_step
+                    if curr_step_idx < len(active_plan.steps):
+                        curr_step = active_plan.steps[curr_step_idx]
+                        preconds, preconds_met = self.cognitive_engine.planning_engine._evaluate_preconditions(
+                            action=curr_step.action_name,
+                            current_world_state=world_state,
+                            forbidden_actions=set(run.prohibited_actions),
+                        )
+                        if not preconds_met:
+                            logger.info(f"Run {run.run_id}: Preconditions for step '{curr_step.action_name}' invalid. Replanning...")
+                            active_plan = self.cognitive_engine.planning_engine.generate_plan(
+                                target_goal=primary_goal,
+                                available_actions=candidate_tools,
+                                current_world_state=world_state,
+                                reasoning_trace=reasoning_trace,
+                                prohibited_actions=run.prohibited_actions,
+                                tenant_id=run.tenant_id,
+                                task="replan",
+                            )
+                            if active_plan and active_plan.steps:
+                                run.active_plan = active_plan.model_dump()
+                                run.current_plan_step = 0
         except Exception as e:
             logger.debug(f"Planning engine skipped: {e}")
 
@@ -448,7 +488,7 @@ class AgentControlLoop:
 
         rule_notes = [f"- Policy Rule: {r.get('rule_id', '')} ({r.get('condition_description', '')})" for r in semantic_rules[:3]]
         deduction_notes = [f"- Deduction: {s.conclusion}" for s in reasoning_trace.steps[:3]]
-        plan_note = f"Recommended Plan: Step {active_plan.steps[0].step_number} -> {active_plan.steps[0].action_name}" if (active_plan and active_plan.steps) else None
+        plan_note = f"Recommended Plan: Step {active_plan.steps[run.current_plan_step].step_number} -> {active_plan.steps[run.current_plan_step].action_name}" if (active_plan and active_plan.steps and run.current_plan_step < len(active_plan.steps)) else None
 
         tools_desc = "\n".join([f"- {name}: {t.description}" for name, t in self.tools.items()])
 
@@ -537,69 +577,21 @@ class AgentControlLoop:
                 ))
 
         if proposed is None:
-            raw_text = (last_llm_resp.raw_text if last_llm_resp else "") or ""
-            proposal_data = {
-                "tool": "complete_task" if "complete" in raw_text.lower() else "shell_exec",
-                "arguments": {},
-                "reason": f"Fallback after {max_retries} failed retries: {last_error}",
-                "claim_goal_met": "complete" in raw_text.lower(),
-            }
-            proposed = AgentActionProposal.model_validate(proposal_data)
-
-        # Check if LLM claims completion
-        if proposed.tool == "complete_task" or proposed.claim_goal_met:
-            # Independent ground truth verification
-            if run.verification_spec:
-                v_spec = VerificationSpec.model_validate(run.verification_spec)
-                v_res = OutcomeVerifier.verify(spec=v_spec, sandbox_root=self.sandbox_root)
-                if not v_res.verified:
-                    # Refute LLM's claim of completion!
-                    run.history.append({
-                        "step": run.step_count + 1,
-                        "tool": "complete_task",
-                        "gate_decision": "rejected",
-                        "success": False,
-                        "error": f"Task verification failed: {v_res.failure_reason}",
-                    })
-                    run.step_count += 1
-                    self.store.save_run(run)
-                    return run
-
-            # Confirmed goal achievement!
-            run.status = "completed"
-            run.history.append({
-                "step": run.step_count + 1,
-                "tool": "complete_task",
-                "gate_decision": "allow",
-                "success": True,
-                "output": "Task goal verified and completed.",
-            })
-            run.step_count += 1
-            self.store.save_run(run)
-            return run
-
-        # Loop Detection: intercept repeated identical actions
-        if self._is_action_loop(run.history, proposed.tool, proposed.arguments):
+            # Phase 6: Safe LLM response handling. Never fall back to shell_exec!
             step_num = run.step_count + 1
-            logger.warning(f"Run {run.run_id}: Step {step_num} loop detected for action '{proposed.tool}'. Halting repeated action.")
+            run.status = "failed"
             run.history.append({
                 "step": step_num,
-                "tool": proposed.tool,
-                "arguments": proposed.arguments,
-                "gate_decision": "blocked_loop",
+                "tool": "abstain",
+                "gate_decision": "abstain_malformed_llm_output",
                 "success": False,
-                "error": f"Action loop detected: action '{proposed.tool}' with identical arguments repeated 3 times without progress.",
+                "error": f"LLM output could not be validated after {max_retries} retries: {last_error}. Agent safely abstained from arbitrary tool execution.",
             })
             run.step_count += 1
-            loop_count = sum(1 for h in run.history[-2:] if h.get("gate_decision") == "blocked_loop")
-            if loop_count >= 2:
-                run.status = "loop_detected"
             self.store.save_run(run)
             return run
 
-        # =====================================================================
-        # Layer 3: Policy Gate & Risk Evaluation
-        # =====================================================================
+        # Check PolicyGate on proposed action first to catch policy blocks (dangerous patterns, prohibited actions)
         action_item = ProposedAction(tool=proposed.tool, args=proposed.arguments, reason=proposed.reason)
         gate_res = self.policy_gate.evaluate(
             action=action_item,
@@ -613,12 +605,11 @@ class AgentControlLoop:
 
         if gate_res.decision == GateDecisionType.BLOCK:
             logger.warning(f"Run {run.run_id}: Step {step_num} BLOCKED by Policy Gate: {gate_res.reason}")
-            # Audit record for blocked action
             self.audit.record_step(
                 run_id=run.run_id,
                 step_number=step_num,
                 tenant_id=run.tenant_id,
-                proposed_action=proposed.model_dump(),
+                proposed_action={"tool": proposed.tool, "arguments": proposed.arguments, "reason": proposed.reason},
                 gate_decision=gate_res.model_dump(),
                 execution_result=None,
                 verification_result={"verified": False, "reason": "Blocked by policy gate"},
@@ -635,10 +626,231 @@ class AgentControlLoop:
             self.store.save_run(run)
             return run
 
+        # Validate proposed tool against registered tool interface
+        if proposed.tool not in self.tools and proposed.tool != "complete_task":
+            run.history.append({
+                "step": step_num,
+                "tool": proposed.tool,
+                "gate_decision": "rejected_unregistered_tool",
+                "success": False,
+                "error": f"Tool '{proposed.tool}' is not in the registered tool interface.",
+            })
+            run.step_count += 1
+            self.store.save_run(run)
+            return run
+
+        # =====================================================================
+        # Phase 1 & 2: Decision Model Candidate Evaluation, Ranking & Plan Control
+        # =====================================================================
+        planned_action_name = None
+        plan_step_params = {}
+        if run.active_plan:
+            plan_obj = Plan.model_validate(run.active_plan)
+            if run.current_plan_step < len(plan_obj.steps):
+                planned_step_obj = plan_obj.steps[run.current_plan_step]
+                planned_action_name = planned_step_obj.action_name
+                plan_step_params = planned_step_obj.parameters or {}
+
+        candidates_to_rank = []
+        if proposed.tool in self.tools:
+            candidates_to_rank.append(proposed.tool)
+        if planned_action_name and planned_action_name in self.tools and planned_action_name not in candidates_to_rank:
+            candidates_to_rank.append(planned_action_name)
+        for t_name in self.tools.keys():
+            if t_name not in candidates_to_rank and t_name not in run.prohibited_actions:
+                candidates_to_rank.append(t_name)
+
+        alternatives_evaluated = []
+        selected_tool_name = proposed.tool
+        selected_tool_args = proposed.arguments
+        selected_reason = proposed.reason
+        selected_neural_score = None
+
+        if candidates_to_rank and getattr(self.cognitive_engine, "decision_core", None) is not None:
+            try:
+                rank_res = self.cognitive_engine.decision_core.decide(
+                    text=f"Task: {run.task_description}. Goal: {run.goal}. Candidate evaluation.",
+                    structured_features={"step": run.step_count + 1, "accumulated_cost": run.accumulated_cost_usd},
+                    task="choice",
+                    candidates=candidates_to_rank[:8],
+                    prohibited_actions=run.prohibited_actions,
+                    tenant_id=run.tenant_id,
+                )
+                cand_scores = rank_res.candidate_scores or {}
+                ranked_candidates = []
+                for c_name in candidates_to_rank[:8]:
+                    if c_name in run.prohibited_actions:
+                        continue
+                    c_neural = cand_scores.get(c_name, 0.5)
+                    c_risk = pred_risk
+                    if c_name in causal_consequences and isinstance(causal_consequences[c_name], dict):
+                        c_risk = max(c_risk, causal_consequences[c_name].get("expected_risk", 0.0))
+                    # Plan alignment bonus: prioritize the planned step of validated plan
+                    c_plan_bonus = 0.35 if (planned_action_name and c_name == planned_action_name) else 0.0
+                    composite_score = (c_neural * (rank_res.confidence or 0.8)) - (c_risk * 0.4) + c_plan_bonus
+                    ranked_candidates.append((composite_score, c_name, c_neural, c_risk))
+                    alternatives_evaluated.append({
+                        "action": c_name,
+                        "composite_score": round(composite_score, 4),
+                        "neural_score": round(c_neural, 4),
+                        "risk": round(c_risk, 4),
+                        "in_active_plan": (c_name == planned_action_name),
+                    })
+
+                ranked_candidates.sort(key=lambda x: x[0], reverse=True)
+                if ranked_candidates:
+                    top_composite, top_action, top_neural, _ = ranked_candidates[0]
+                    # If active plan has a valid next step, enforce plan execution unless replanning occurred
+                    if planned_action_name and planned_action_name in self.tools:
+                        selected_tool_name = planned_action_name
+                        selected_neural_score = cand_scores.get(planned_action_name, top_neural)
+                        if proposed.tool == planned_action_name:
+                            selected_tool_args = proposed.arguments
+                        else:
+                            selected_tool_args = plan_step_params
+                        selected_reason = f"Executing planned step {run.current_plan_step + 1} ({planned_action_name}) per validated sequential plan."
+                    else:
+                        selected_tool_name = top_action
+                        selected_neural_score = top_neural
+                        if proposed.tool == top_action:
+                            selected_tool_args = proposed.arguments
+            except Exception as e:
+                logger.debug(f"Candidate ranking exception: {e}")
+
+        # Check if tool is complete_task (Phase 3)
+        if selected_tool_name == "complete_task":
+            # Independent ground truth verification
+            if run.verification_spec:
+                v_spec = VerificationSpec.model_validate(run.verification_spec)
+                v_res = OutcomeVerifier.verify(spec=v_spec, sandbox_root=self.sandbox_root)
+                if not v_res.verified:
+                    # Refute LLM's claim of completion!
+                    run.history.append({
+                        "step": run.step_count + 1,
+                        "tool": "complete_task",
+                        "gate_decision": "rejected",
+                        "success": False,
+                        "error": f"Task verification failed: {v_res.failure_reason}",
+                        "provenance": v_res.provenance,
+                    })
+                    run.step_count += 1
+                    # Trigger replanning after verification failure
+                    if working_state.active_goals:
+                        replan_res = self.cognitive_engine.planning_engine.generate_plan(
+                            target_goal=working_state.active_goals[0],
+                            available_actions=candidate_tools,
+                            current_world_state=world_state,
+                            reasoning_trace=reasoning_trace,
+                            prohibited_actions=run.prohibited_actions,
+                            tenant_id=run.tenant_id,
+                            task="replan_after_verification_failure",
+                        )
+                        if replan_res and replan_res.steps:
+                            run.active_plan = replan_res.model_dump()
+                            run.current_plan_step = 0
+                    self.store.save_run(run)
+                    return run
+
+                # Confirmed goal achievement!
+                run.status = "completed"
+                run.verification_status = "verified_complete"
+                if hasattr(self.cognitive_engine, "feedback_collector"):
+                    self.cognitive_engine.feedback_collector.record_feedback(
+                        decision_id=f"dec_{run.run_id}_goal",
+                        predicted_decision={"tool": "complete_task", "claim_goal_met": True},
+                        predicted_outcome={"expected_success": True},
+                        actual_outcome={"goal_verified": True, "details": v_res.details},
+                        is_success=True,
+                        tenant_id=run.tenant_id,
+                        review_status="verified",
+                    )
+                run.history.append({
+                    "step": run.step_count + 1,
+                    "tool": "complete_task",
+                    "gate_decision": "allow",
+                    "success": True,
+                    "output": "Task goal verified and completed.",
+                    "provenance": v_res.provenance,
+                })
+                run.step_count += 1
+                self.store.save_run(run)
+                return run
+            else:
+                run.status = "completed"
+                run.verification_status = "unverified"
+                run.history.append({
+                    "step": run.step_count + 1,
+                    "tool": "complete_task",
+                    "gate_decision": "allow",
+                    "success": True,
+                    "output": "Task completed without independent verification (status: unverified).",
+                })
+                run.step_count += 1
+                self.store.save_run(run)
+                return run
+
+        # Loop Detection: intercept repeated identical actions
+        if self._is_action_loop(run.history, selected_tool_name, selected_tool_args):
+            step_num = run.step_count + 1
+            logger.warning(f"Run {run.run_id}: Step {step_num} loop detected for action '{selected_tool_name}'. Halting repeated action.")
+            run.history.append({
+                "step": step_num,
+                "tool": selected_tool_name,
+                "arguments": selected_tool_args,
+                "gate_decision": "blocked_loop",
+                "success": False,
+                "error": f"Action loop detected: action '{selected_tool_name}' with identical arguments repeated 3 times without progress.",
+            })
+            run.step_count += 1
+            loop_count = sum(1 for h in run.history[-2:] if h.get("gate_decision") == "blocked_loop")
+            if loop_count >= 2:
+                run.status = "loop_detected"
+            self.store.save_run(run)
+            return run
+
+        # =====================================================================
+        # Layer 3: Policy Gate & Risk Evaluation
+        # =====================================================================
+        action_item = ProposedAction(tool=selected_tool_name, args=selected_tool_args, reason=selected_reason)
+        gate_res = self.policy_gate.evaluate(
+            action=action_item,
+            tenant_id=run.tenant_id,
+            world_state=world_state,
+            tenant_policies=run.tenant_policies,
+            prohibited_actions=run.prohibited_actions,
+        )
+
+        step_num = run.step_count + 1
+
+        if gate_res.decision == GateDecisionType.BLOCK:
+            logger.warning(f"Run {run.run_id}: Step {step_num} BLOCKED by Policy Gate: {gate_res.reason}")
+            self.audit.record_step(
+                run_id=run.run_id,
+                step_number=step_num,
+                tenant_id=run.tenant_id,
+                proposed_action={"tool": selected_tool_name, "arguments": selected_tool_args, "reason": selected_reason},
+                gate_decision=gate_res.model_dump(),
+                execution_result=None,
+                verification_result={"verified": False, "reason": "Blocked by policy gate"},
+            )
+            run.history.append({
+                "step": step_num,
+                "tool": selected_tool_name,
+                "arguments": selected_tool_args,
+                "gate_decision": "block",
+                "success": False,
+                "error": f"Policy Gate Blocked Action: {gate_res.reason}",
+                "alternatives_evaluated": alternatives_evaluated,
+                "model_version": cdm_model_version,
+            })
+            run.step_count += 1
+            self.store.save_run(run)
+            return run
+
         if gate_res.decision == GateDecisionType.REQUIRE_HUMAN_APPROVAL:
             logger.info(f"Run {run.run_id}: Step {step_num} suspended for HUMAN APPROVAL.")
             run.status = "waiting_for_approval"
-            run.pending_action = proposed.model_dump()
+            run.pending_action = {"tool": selected_tool_name, "arguments": selected_tool_args, "reason": selected_reason}
             run.pending_reason = gate_res.reason
             self.store.save_run(run)
             return run
@@ -646,85 +858,122 @@ class AgentControlLoop:
         # =====================================================================
         # Layer 4: Execution & Verification
         # =====================================================================
-        tool = self.tools.get(proposed.tool)
+        tool = self.tools.get(selected_tool_name)
         if not tool:
-            exec_res = ToolResult(success=False, error=f"Tool '{proposed.tool}' is not registered.", tool_name=proposed.tool)
+            exec_res = ToolResult(success=False, error=f"Tool '{selected_tool_name}' is not registered.", tool_name=selected_tool_name)
         else:
-            exec_res = tool.execute(args=proposed.arguments, tenant_id=run.tenant_id)
+            exec_res = tool.execute(args=selected_tool_args, tenant_id=run.tenant_id)
             run.tool_call_count += 1
 
-        # Ground truth verification check if specified
-        verif_res = None
-        if run.verification_spec:
-            v_spec = VerificationSpec.model_validate(run.verification_spec)
-            verif_res = OutcomeVerifier.verify(spec=v_spec, execution_output=exec_res.output, sandbox_root=self.sandbox_root)
+        # Phase 3: Action-level postcondition verification
+        action_verif_res = None
+        if selected_tool_name in ("create_file", "write_file", "edit_file") and "path" in selected_tool_args:
+            action_spec = VerificationSpec(check_type="file_exists", target=selected_tool_args["path"], scope="action")
+            action_verif_res = OutcomeVerifier.verify(spec=action_spec, sandbox_root=self.sandbox_root)
+        elif selected_tool_name == "run_tests":
+            action_spec = VerificationSpec(check_type="exit_code_zero", target="exit_code", scope="action")
+            action_verif_res = OutcomeVerifier.verify(spec=action_spec, execution_output=exec_res.output, sandbox_root=self.sandbox_root)
+
+        # Plan progress & replanning on failure (Phase 2)
+        if exec_res.success:
+            run.current_plan_step += 1
+            # Check if ground truth verifier confirms goal met after this action
+            if run.verification_spec:
+                v_spec = VerificationSpec.model_validate(run.verification_spec)
+                goal_res = OutcomeVerifier.verify(spec=v_spec, execution_output=exec_res.output, sandbox_root=self.sandbox_root)
+                if goal_res.verified:
+                    run.status = "completed"
+                    run.verification_status = "verified_complete"
+        else:
+            # Action failed: trigger replanning!
+            logger.info(f"Run {run.run_id}: Step {step_num} action '{selected_tool_name}' failed. Triggering replanning...")
+            if working_state.active_goals:
+                replan_res = self.cognitive_engine.planning_engine.generate_plan(
+                    target_goal=working_state.active_goals[0],
+                    available_actions=candidate_tools,
+                    current_world_state=world_state,
+                    reasoning_trace=reasoning_trace,
+                    prohibited_actions=run.prohibited_actions,
+                    tenant_id=run.tenant_id,
+                    task="replan_after_action_failure",
+                )
+                if replan_res and replan_res.steps:
+                    run.active_plan = replan_res.model_dump()
+                    run.current_plan_step = 0
+
+        # Phase 4: Verification-Driven Learning
+        is_goal_verified = (run.status == "completed")
+        if is_goal_verified:
+            step_reward = 1.0
+            step_review_status = "verified"
+        elif not exec_res.success:
+            step_reward = -0.5
+            step_review_status = "rejected_for_training"
+        else:
+            # Tool succeeded but goal outcome is unverified / in-progress!
+            step_reward = 0.0
+            step_review_status = "unverified"
+
+        # Update episodic memory & world model
+        try:
+            self.cognitive_engine.episodic_memory.record_episode(
+                session_id=run.session_id,
+                goal=run.goal,
+                action_taken=f"{selected_tool_name}({selected_tool_args})",
+                observed_outcome=str(exec_res.output if exec_res.success else exec_res.error)[:512],
+                reward_signal=step_reward,
+                tenant_id=run.tenant_id,
+            )
+            world_model.record_transition(
+                session_id=run.session_id,
+                action_name=selected_tool_name,
+                action_args=selected_tool_args,
+                outcome_observed={"success": exec_res.success, "output": str(exec_res.output if exec_res.success else exec_res.error)[:256]},
+                tenant_id=run.tenant_id,
+            )
+            world_model.record_observed_fact(f"action_executed_{selected_tool_name}", True)
+            working_memory.write_scratchpad(f"step_{step_num}_action", selected_tool_name)
+            working_memory.write_scratchpad(f"step_{step_num}_success", exec_res.success)
+
+            if hasattr(self.cognitive_engine, "feedback_collector"):
+                self.cognitive_engine.feedback_collector.record_feedback(
+                    decision_id=f"dec_{run.run_id}_{step_num}",
+                    predicted_decision={"tool": selected_tool_name, "args": selected_tool_args, "reason": selected_reason},
+                    predicted_outcome={"expected_risk": gate_res.risk_score, "predicted_action": selected_tool_name},
+                    actual_outcome={"success": exec_res.success, "goal_verified": is_goal_verified, "action_verified": action_verif_res.verified if action_verif_res else None},
+                    is_success=is_goal_verified,
+                    tenant_id=run.tenant_id,
+                    review_status=step_review_status,
+                )
+        except Exception as e:
+            logger.debug(f"Feedback writeback warning: {e}")
 
         # Audit persistence with signed provenance record
         self.audit.record_step(
             run_id=run.run_id,
             step_number=step_num,
             tenant_id=run.tenant_id,
-            proposed_action=proposed.model_dump(),
+            proposed_action={"tool": selected_tool_name, "arguments": selected_tool_args, "reason": selected_reason},
             gate_decision=gate_res.model_dump(),
             execution_result=exec_res.model_dump(),
-            verification_result=verif_res.model_dump() if verif_res else None,
+            verification_result=action_verif_res.model_dump() if action_verif_res else None,
         )
-
-        # =====================================================================
-        # Loop: Metacognitive Review, Memory, World State & Feedback Updates
-        # =====================================================================
-        try:
-            # 1. Update episodic memory
-            reward = 1.0 if exec_res.success else -0.5
-            self.cognitive_engine.episodic_memory.record_episode(
-                session_id=run.session_id,
-                goal=run.goal,
-                action_taken=f"{proposed.tool}({proposed.arguments})",
-                observed_outcome=str(exec_res.output if exec_res.success else exec_res.error)[:512],
-                reward_signal=reward,
-                tenant_id=run.tenant_id,
-            )
-            # 2. Update tenant-and-session isolated world model
-            world_model.record_transition(
-                session_id=run.session_id,
-                action_name=proposed.tool,
-                action_args=proposed.arguments,
-                outcome_observed={"success": exec_res.success, "output": str(exec_res.output if exec_res.success else exec_res.error)[:256]},
-                tenant_id=run.tenant_id,
-            )
-            # 3. Update working memory scratchpad
-            working_memory.write_scratchpad(f"step_{step_num}_action", proposed.tool)
-            working_memory.write_scratchpad(f"step_{step_num}_success", exec_res.success)
-
-            # 4. Metacognitive Outcome Verification & Feedback Collection
-            if verif_res is not None and hasattr(self.cognitive_engine, "feedback_collector"):
-                self.cognitive_engine.feedback_collector.record_feedback(
-                    decision_id=f"dec_{run.run_id}_{step_num}",
-                    predicted_decision={"tool": proposed.tool, "args": proposed.arguments, "reason": proposed.reason},
-                    predicted_outcome={"expected_risk": gate_res.risk_score, "predicted_action": proposed.tool},
-                    actual_outcome={"success": exec_res.success, "verified": verif_res.verified, "details": verif_res.details},
-                    is_success=bool(verif_res.verified),
-                    tenant_id=run.tenant_id,
-                    review_status="verified" if verif_res.verified else "rejected_for_training",
-                )
-        except Exception as e:
-            logger.debug(f"Feedback writeback warning: {e}")
 
         run.history.append({
             "step": step_num,
-            "tool": proposed.tool,
-            "arguments": proposed.arguments,
+            "tool": selected_tool_name,
+            "arguments": selected_tool_args,
             "gate_decision": "allow",
             "success": exec_res.success,
             "output": exec_res.output,
             "error": exec_res.error,
+            "action_verified": action_verif_res.verified if action_verif_res else None,
+            "alternatives_evaluated": alternatives_evaluated,
+            "neural_score": selected_neural_score,
+            "model_version": cdm_model_version,
+            "provenance": cdm_prov,
         })
         run.step_count += 1
-
-        # Check if ground truth verifier confirms goal met after this action
-        if verif_res and verif_res.verified:
-            run.status = "completed"
-
         self.store.save_run(run)
         return run
 
@@ -767,6 +1016,21 @@ class AgentControlLoop:
         if run.verification_spec:
             v_spec = VerificationSpec.model_validate(run.verification_spec)
             verif_res = OutcomeVerifier.verify(spec=v_spec, execution_output=exec_res.output, sandbox_root=self.sandbox_root)
+            if getattr(v_spec, "scope", "goal") == "goal" and verif_res.verified:
+                run.status = "completed"
+                run.verification_status = "verified_complete"
+
+        # Phase 4: Verification-Driven Learning for approved execution
+        is_goal_verified = (run.status == "completed")
+        if is_goal_verified:
+            step_reward = 1.0
+            step_review_status = "verified"
+        elif not exec_res.success:
+            step_reward = -0.5
+            step_review_status = "rejected_for_training"
+        else:
+            step_reward = 0.0
+            step_review_status = "unverified"
 
         # Audit record
         self.audit.record_step(
@@ -786,7 +1050,7 @@ class AgentControlLoop:
                 goal=run.goal,
                 action_taken=f"{proposed.tool}({proposed.arguments})",
                 observed_outcome=str(exec_res.output if exec_res.success else exec_res.error)[:512],
-                reward_signal=1.0 if exec_res.success else -0.5,
+                reward_signal=step_reward,
                 tenant_id=run.tenant_id,
             )
             world_model = self.cognitive_engine.get_isolated_world_model(tenant_id=run.tenant_id, session_id=run.session_id)
@@ -797,15 +1061,15 @@ class AgentControlLoop:
                 outcome_observed={"success": exec_res.success, "output": str(exec_res.output if exec_res.success else exec_res.error)[:256]},
                 tenant_id=run.tenant_id,
             )
-            if verif_res is not None and hasattr(self.cognitive_engine, "feedback_collector"):
+            if hasattr(self.cognitive_engine, "feedback_collector"):
                 self.cognitive_engine.feedback_collector.record_feedback(
                     decision_id=f"dec_{run.run_id}_{step_num}",
                     predicted_decision={"tool": proposed.tool, "args": proposed.arguments},
                     predicted_outcome={"human_approved": True},
-                    actual_outcome={"success": exec_res.success, "verified": verif_res.verified},
-                    is_success=bool(verif_res.verified),
+                    actual_outcome={"success": exec_res.success, "goal_verified": is_goal_verified, "verified": verif_res.verified if verif_res else None},
+                    is_success=is_goal_verified,
                     tenant_id=run.tenant_id,
-                    review_status="verified" if verif_res.verified else "rejected_for_training",
+                    review_status=step_review_status,
                 )
         except Exception as e:
             logger.debug(f"Approval feedback writeback skipped: {e}")
@@ -822,7 +1086,7 @@ class AgentControlLoop:
         run.step_count += 1
         run.pending_action = None
         run.pending_reason = None
-        run.status = "completed" if (verif_res and verif_res.verified) else "running"
+        run.status = "completed" if is_goal_verified else "running"
         self.store.save_run(run)
 
         # Resume loop if requested and still running

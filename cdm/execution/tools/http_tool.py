@@ -115,6 +115,14 @@ class HttpCallTool(BaseTool):
         self.max_response_bytes = max_response_bytes
         self.max_redirects = max_redirects
 
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("url") or not isinstance(args.get("url"), str):
+            return "Parameter 'url' is required and must be a non-empty string."
+        return None
+
     def _get_tenant_allowlist(self, tenant_id: str) -> Set[str]:
         """Retrieve the configured allowed domains for a given tenant."""
         if tenant_id in self.tenant_allowlists:

@@ -23,6 +23,14 @@ class FileReadTool(BaseTool):
         super().__init__(name="read_file", description="Reads text contents of a file within sandbox.")
         self.sandbox_root = sandbox_root or os.getcwd()
 
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("path") or not isinstance(args.get("path"), str):
+            return "Parameter 'path' is required and must be a non-empty string."
+        return None
+
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         path = args.get("path")
         if not path:
@@ -43,6 +51,14 @@ class FileWriteTool(BaseTool):
         super().__init__(name="write_file", description="Writes text content to a file within sandbox.")
         self.sandbox_root = sandbox_root or os.getcwd()
 
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("path") or not isinstance(args.get("path"), str):
+            return "Parameter 'path' is required and must be a non-empty string."
+        return None
+
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         path = args.get("path")
         content = args.get("content", "")
@@ -61,6 +77,16 @@ class FileEditTool(BaseTool):
     def __init__(self, sandbox_root: Optional[str] = None):
         super().__init__(name="edit_file", description="Replaces occurrences of text in a file within sandbox.")
         self.sandbox_root = sandbox_root or os.getcwd()
+
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("path") or not isinstance(args.get("path"), str):
+            return "Parameter 'path' is required and must be a non-empty string."
+        if args.get("find") is None or args.get("replace") is None:
+            return "Parameters 'find' and 'replace' are required."
+        return None
 
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         path = args.get("path")

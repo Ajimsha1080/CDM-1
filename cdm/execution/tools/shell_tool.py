@@ -53,6 +53,14 @@ class SandboxedShellTool(BaseTool):
         self.pids_limit = pids_limit
         self.user = user
 
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("command") or not isinstance(args.get("command"), str):
+            return "Parameter 'command' is required and must be a non-empty string."
+        return None
+
     def is_docker_available(self) -> bool:
         """Verify if Docker CLI and daemon are accessible."""
         try:

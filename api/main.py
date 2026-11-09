@@ -271,16 +271,27 @@ async def lifespan(app: FastAPI):
     # Fail startup in production if secrets are missing or default
     KEY_MANAGER.check_production_safety()
 
+    is_prod = (os.environ.get("CDM_ENV", "production").lower() in ("production", "prod")) or (
+        os.environ.get("CDM_PRODUCTION_MODE", "").strip().lower() in ("1", "true", "yes")
+    )
     model_path = os.environ.get("CDM_MODEL_PATH", "experiments/release/cdm-1-general")
     if not os.path.exists(model_path):
         model_path = "experiments/checkpoints/cdm-1-general"
 
-    logger.info(f"Loading CDM-1 Model from {model_path}...")
+    logger.info(f"Loading CDM-1 Model from {model_path} (production_mode={is_prod})...")
     try:
-        runtime_model = CognitiveDecisionModel.from_pretrained(model_path, allow_fallback=True)
+        runtime_model = CognitiveDecisionModel.from_pretrained(
+            model_path,
+            allow_fallback=not is_prod,
+            production_mode=is_prod,
+        )
+        if is_prod and getattr(runtime_model, "is_fallback", False):
+            raise RuntimeError("CRITICAL PRODUCTION FAILURE: Model loaded in fallback mode during production startup.")
+
         runtime_cognitive_engine = CognitiveEngine(
             decision_model=runtime_model,
             db_path=MEMORY_DB_PATH,
+            production_mode=is_prod,
         )
         runtime_agent_loop = AgentControlLoop(
             cognitive_engine=runtime_cognitive_engine,
@@ -293,7 +304,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         model_load_error = str(e)
         logger.critical(f"FATAL: Failed to load CDM-1 model: {e}", exc_info=True)
-        if os.environ.get("CDM_ENV", "production").lower() == "production":
+        if is_prod:
             raise RuntimeError(f"CRITICAL PRODUCTION FAILURE: CDM-1 model failed to load at startup: {e}")
     yield
 

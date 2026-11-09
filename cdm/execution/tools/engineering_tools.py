@@ -27,6 +27,14 @@ class RepoSearchTool(BaseTool):
         self.max_results = max_results
         self.max_file_size = max_file_size
 
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("query") or not isinstance(args.get("query"), str):
+            return "Parameter 'query' is required and must be a non-empty string."
+        return None
+
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         query = args.get("query")
         if not query or not isinstance(query, str):
@@ -108,6 +116,14 @@ class EnhancedFileReadTool(BaseTool):
         self.max_lines = max_lines
         self.max_bytes = max_bytes
 
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("path") or not isinstance(args.get("path"), str):
+            return "Parameter 'path' is required and must be a non-empty string."
+        return None
+
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         path = args.get("path")
         if not path:
@@ -161,6 +177,18 @@ class EnhancedFileEditTool(BaseTool):
         )
         self.sandbox_root = sandbox_root or os.getcwd()
 
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("path") or not isinstance(args.get("path"), str):
+            return "Parameter 'path' is required and must be a non-empty string."
+        old_str = args.get("old_str") or args.get("find")
+        new_str = args.get("new_str") if "new_str" in args else args.get("replace")
+        if old_str is None or new_str is None:
+            return "Parameters 'old_str' (or 'find') and 'new_str' (or 'replace') are required."
+        return None
+
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         path = args.get("path")
         old_str = args.get("old_str") or args.get("find")
@@ -202,6 +230,14 @@ class FileCreateTool(BaseTool):
             description="Creates a new file or overwrites an existing file in the sandbox.",
         )
         self.sandbox_root = sandbox_root or os.getcwd()
+
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        base_err = super().validate_args(args)
+        if base_err:
+            return base_err
+        if not args.get("path") or not isinstance(args.get("path"), str):
+            return "Parameter 'path' is required and must be a non-empty string."
+        return None
 
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Dict[str, Any]:
         path = args.get("path")

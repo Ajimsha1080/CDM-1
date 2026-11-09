@@ -1003,6 +1003,23 @@ class AgentControlLoop:
         proposed = AgentActionProposal.model_validate(run.pending_action)
         step_num = run.step_count + 1
 
+        # Re-check policy: explicitly prohibited actions cannot be executed even with human approval
+        if proposed.tool in run.prohibited_actions:
+            run.status = "rejected"
+            run.pending_action = None
+            run.pending_reason = None
+            run.history.append({
+                "step": step_num,
+                "tool": proposed.tool,
+                "arguments": proposed.arguments,
+                "gate_decision": "blocked_prohibited",
+                "success": False,
+                "error": f"Tool '{proposed.tool}' is explicitly prohibited by policy.",
+            })
+            run.step_count += 1
+            self.store.save_run(run)
+            return run
+
         # Execute approved action
         tool = self.tools.get(proposed.tool)
         if not tool:
@@ -1010,6 +1027,15 @@ class AgentControlLoop:
         else:
             exec_res = tool.execute(args=proposed.arguments, tenant_id=run.tenant_id)
             run.tool_call_count += 1
+
+        # Action-level postcondition verification
+        action_verif_res = None
+        if proposed.tool in ("create_file", "write_file", "edit_file") and "path" in proposed.arguments:
+            action_spec = VerificationSpec(check_type="file_exists", target=proposed.arguments["path"], scope="action")
+            action_verif_res = OutcomeVerifier.verify(spec=action_spec, sandbox_root=self.sandbox_root)
+        elif proposed.tool == "run_tests":
+            action_spec = VerificationSpec(check_type="exit_code_zero", target="exit_code", scope="action")
+            action_verif_res = OutcomeVerifier.verify(spec=action_spec, execution_output=exec_res.output, sandbox_root=self.sandbox_root)
 
         # Verifier
         verif_res = None

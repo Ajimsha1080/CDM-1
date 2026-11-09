@@ -28,14 +28,28 @@ class BaseTool(ABC):
         self.name = name
         self.description = description
 
+    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+        """Validates arguments against the tool schema. Returns error string if invalid, None if valid."""
+        if not isinstance(args, dict):
+            return "Arguments must be a key-value dictionary."
+        return None
+
     @abstractmethod
     def _run(self, args: Dict[str, Any], tenant_id: str) -> Any:
         """Internal execution method. Can raise exceptions that are caught safely by execute()."""
         pass
 
     def execute(self, args: Dict[str, Any], tenant_id: str = "default_tenant") -> ToolResult:
-        """Safe tool execution envelope catching all errors."""
+        """Safe tool execution envelope catching all errors and validating arguments."""
         start_time = time.time()
+        val_err = self.validate_args(args)
+        if val_err:
+            return ToolResult(
+                success=False,
+                error=f"Argument validation failed for tool '{self.name}': {val_err}",
+                latency_ms=0.0,
+                tool_name=self.name,
+            )
         try:
             output = self._run(args, tenant_id)
             latency_ms = (time.time() - start_time) * 1000.0

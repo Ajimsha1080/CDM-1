@@ -90,7 +90,7 @@ jobs:
           python scripts/check_no_skips.py test-results.xml
 
   docker-tests:
-    needs: [lint-and-compliance]
+    needs: [manifest-integrity, lint-and-compliance]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -145,7 +145,7 @@ jobs:
           python scripts/check_no_skips.py weights-results.xml
 
   docker-build-and-live-api:
-    needs: [lint-and-compliance]
+    needs: [manifest-integrity, lint-and-compliance]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code

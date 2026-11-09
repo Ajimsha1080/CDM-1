@@ -1,9 +1,13 @@
 # CDM-1 Automation Makefile
-.PHONY: all lint test no-skips verify docker-smoke clean
+.PHONY: all lint test no-skips verify docker-smoke manifest clean
 
 PYTHON ?= python
 
 all: lint test no-skips verify
+
+manifest:
+	@echo "==> Regenerating and Signing Release Manifest..."
+	$(PYTHON) scripts/generate_and_sign_manifest.py
 
 lint:
 	@echo "==> Running Lint and Compliance Checks..."

@@ -115,6 +115,7 @@ def test_manifest_fails_on_forged_signature(mock_release_dir):
 
 
 def test_manifest_signing_requires_private_key(monkeypatch):
+    monkeypatch.delenv("CDM_RELEASE_PRIVATE_KEY", raising=False)
     monkeypatch.delenv("CDM_RELEASE_SIGNING_PRIVATE_KEY", raising=False)
     with pytest.raises(ValueError, match="Ed25519 private key not provided"):
         sign_manifest({"release_version": "1.0.0"})

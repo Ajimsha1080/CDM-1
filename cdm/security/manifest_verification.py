@@ -41,14 +41,14 @@ def sign_manifest(
     private_key_hex: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Signs the release manifest using an Ed25519 private key.
-    The private key must come from an environment variable (CDM_RELEASE_SIGNING_PRIVATE_KEY) only,
+    The private key must come from an environment variable (CDM_RELEASE_PRIVATE_KEY) only,
     or explicitly passed in tests. Private keys are NEVER hardcoded or embedded in the codebase.
     """
-    priv_hex = private_key_hex or os.environ.get("CDM_RELEASE_SIGNING_PRIVATE_KEY")
+    priv_hex = private_key_hex or os.environ.get("CDM_RELEASE_PRIVATE_KEY") or os.environ.get("CDM_RELEASE_SIGNING_PRIVATE_KEY")
     if not priv_hex:
         raise ValueError(
             "Cannot sign release manifest: Ed25519 private key not provided. "
-            "Set CDM_RELEASE_SIGNING_PRIVATE_KEY in environment or pass private_key_hex explicitly."
+            "Set CDM_RELEASE_PRIVATE_KEY in environment or pass private_key_hex explicitly."
         )
 
     try:

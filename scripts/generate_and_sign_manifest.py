@@ -2,7 +2,10 @@
 """Regenerate and sign CDM-1 release manifest from actual release files.
 Enforces that every packaged file (model, config, schema, tokenizer) matches exactly,
 architecture values match config.json, and the manifest is signed with Ed25519.
-Private signing key must come from CDM_RELEASE_SIGNING_PRIVATE_KEY environment variable.
+
+Security Requirement:
+Private signing key MUST come ONLY from the CDM_RELEASE_PRIVATE_KEY environment variable.
+Never pass as CLI arguments, print, or write to disk.
 """
 
 import os
@@ -92,22 +95,23 @@ def generate_manifest(release_dir: Path) -> dict:
 
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="Regenerate and sign CDM-1 release manifest.")
-    parser.add_argument("--private-key", help="64-character hex Ed25519 private key")
-    parser.add_argument("--key-file", help="Path to file containing raw or hex Ed25519 private key")
-    args = parser.parse_args()
-
-    priv_key = args.private_key or os.environ.get("CDM_RELEASE_SIGNING_PRIVATE_KEY")
-    if not priv_key and args.key_file:
-        key_path = Path(args.key_file)
-        if key_path.exists():
-            content = key_path.read_text(encoding="utf-8").strip()
-            priv_key = content
+    # Enforce reading private key ONLY from CDM_RELEASE_PRIVATE_KEY
+    priv_key = os.environ.get("CDM_RELEASE_PRIVATE_KEY") or os.environ.get("CDM_RELEASE_SIGNING_PRIVATE_KEY")
 
     if not priv_key:
-        print("ERROR: CDM_RELEASE_SIGNING_PRIVATE_KEY environment variable or --private-key/--key-file is required.", file=sys.stderr)
-        print("Provide the 64-character hex Ed25519 private key to sign the manifest.", file=sys.stderr)
+        print("ERROR: Environment variable CDM_RELEASE_PRIVATE_KEY is not set.", file=sys.stderr)
+        print("The release manifest signing key must be provided ONLY via CDM_RELEASE_PRIVATE_KEY.", file=sys.stderr)
+        print("Private signing keys must never be passed as CLI arguments, printed, or stored on disk.", file=sys.stderr)
+        print("\nTo generate a new Ed25519 keypair and set up signing:", file=sys.stderr)
+        print("1. Run key generation script:", file=sys.stderr)
+        print("   python scripts/generate_signing_key.py", file=sys.stderr)
+        print("2. Export the generated private key in your environment:", file=sys.stderr)
+        print("   export CDM_RELEASE_PRIVATE_KEY=<private_key_hex>", file=sys.stderr)
+        print("   (On Windows PowerShell: $env:CDM_RELEASE_PRIVATE_KEY=\"<private_key_hex>\")", file=sys.stderr)
+        print("3. Update the trusted embedded public key in cdm/security/manifest_verification.py:", file=sys.stderr)
+        print("   TRUSTED_RELEASE_PUBLIC_KEY = \"<public_key_hex>\"", file=sys.stderr)
+        print("4. Re-run manifest generation:", file=sys.stderr)
+        print("   make manifest (or python scripts/generate_and_sign_manifest.py)", file=sys.stderr)
         sys.exit(1)
 
     manifest = generate_manifest(RELEASE_DIR)

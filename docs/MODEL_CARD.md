@@ -99,5 +99,5 @@ The system was evaluated using the multi-task held-out benchmark suite (`researc
 
 ## Cryptographic Security & Provenance
 
-- **Release Manifest**: Signed with Ed25519 digital signature (`cdm-release-public-v9`). Model weights are strictly verified for SHA-256 and digital signature before being loaded into memory.
+- **Release Manifest**: Signed with Ed25519 digital signature (`cdm-release-public-v10`). Model weights are strictly verified for SHA-256 and digital signature before being loaded into memory.
 - **Audit Trails**: Every step (action proposal, policy gate decision, tool execution result, and ground-truth verification) is recorded as a signed HMAC-SHA256 provenance record with key ID support and rotation capability across process restarts.

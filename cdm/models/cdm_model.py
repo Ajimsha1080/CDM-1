@@ -377,7 +377,7 @@ class CDMModel(nn.Module):
         os.makedirs(save_directory, exist_ok=True)
 
         config_path = os.path.join(save_directory, "config.json")
-        with open(config_path, "w", encoding="utf-8") as f:
+        with open(config_path, "w", encoding="utf-8", newline="\n") as f:
             json.dump(self.config.to_dict(), f, indent=2)
 
         weights_path = os.path.join(save_directory, "model.safetensors")

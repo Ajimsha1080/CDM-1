@@ -87,7 +87,13 @@ def train_multitask(
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_decision_batch)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_decision_batch)
 
-    cfg = CDMModelConfig()
+    cfg_path = "experiments/release/cdm-1-general/config.json"
+    if os.path.exists(cfg_path):
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = CDMModelConfig.from_dict(json.load(f))
+    else:
+        cfg = CDMModelConfig()
+        cfg.language_encoder.local_files_only = True
     model = CDMModel(cfg).to(device)
     model.language_encoder.freeze_backbone()
 

@@ -54,3 +54,4 @@ build/
 *.key
 experiments/*.key
 experiments/agent_runs/
+experiments/checkpoints/

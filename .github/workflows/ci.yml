@@ -58,9 +58,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install cryptography
 
-      - name: Recompute Manifest Hashes and Verify Authenticity
+      - name: Recompute Manifest Hashes and Verify Authenticity (Software-Only)
         run: |
-          python scripts/check_manifest_integrity.py
+          python scripts/check_manifest_integrity.py --mode software_only
 
   test-and-verify:
     needs: [lint-and-compliance, manifest-integrity]
@@ -138,6 +138,10 @@ jobs:
       - name: Download Neural Checkpoint Weights
         run: |
           python scripts/download_weights.py
+
+      - name: Verify Full Model Manifest Integrity
+        run: |
+          python scripts/check_manifest_integrity.py --mode full_model
 
       - name: Run Neural Checkpoint Verification Tests
         run: |

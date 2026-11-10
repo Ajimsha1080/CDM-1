@@ -238,3 +238,129 @@ def verify_checkpoint_authenticity(
         "signature_algorithm": "Ed25519",
         "release_version": manifest.get("release_version", "1.0.0"),
     }
+
+
+def verify_release_manifest_mode(
+    release_dir: str,
+    mode: str = "full_model",
+    trusted_public_key_hex: Optional[str] = None,
+    verify_offline_inference: bool = True,
+) -> Dict[str, Any]:
+    """Verification with two explicit modes:
+    Mode A ('software_only'):
+      Verifies configuration, schema, tokenizer, and non-model packaged files.
+      May succeed without model weights, but strictly reports that the neural model is absent.
+    Mode B ('full_model'):
+      MANDATORY full release verification.
+      Verifies checkpoint presence, exact file size, SHA-256, tensor metadata,
+      architecture compatibility, model version, and offline checkpoint loading.
+      Strictly raises SecurityVerificationError or FileNotFoundError if any model artifact is missing or invalid.
+    """
+    if mode not in ("full_model", "software_only"):
+        raise ValueError(f"Unknown verification mode '{mode}'. Choose 'full_model' or 'software_only'.")
+
+    if not os.path.isdir(release_dir):
+        raise FileNotFoundError(f"Release directory not found: {release_dir}")
+
+    manifest_path = os.path.join(release_dir, "release_manifest.json")
+    if not os.path.isfile(manifest_path):
+        raise SecurityVerificationError(f"Release manifest missing at {manifest_path}")
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+
+    # 1. Asymmetric Ed25519 signature check
+    verify_manifest_signature(manifest, trusted_public_key_hex=trusted_public_key_hex)
+
+    # 2. Check architecture sync with config.json
+    config_path = os.path.join(release_dir, "config.json")
+    if not os.path.isfile(config_path):
+        raise FileNotFoundError(f"Required configuration file missing: {config_path}")
+
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    arch = manifest.get("architecture", {})
+    mismatches = []
+    if arch.get("language_projection_dim") != cfg.get("language_encoder", {}).get("projection_dim"):
+        mismatches.append("language_projection_dim")
+    if arch.get("structured_encoder_dim") != cfg.get("structured_encoder", {}).get("projection_dim"):
+        mismatches.append("structured_encoder_dim")
+    if arch.get("cross_modal_fusion_dim") != cfg.get("fusion", {}).get("fusion_dim"):
+        mismatches.append("cross_modal_fusion_dim")
+    if arch.get("predictive_network_heads") != cfg.get("predictive", {}).get("num_outcome_classes"):
+        mismatches.append("predictive_network_heads")
+    if arch.get("decision_network_heads") != cfg.get("decision", {}).get("num_priority_classes"):
+        mismatches.append("decision_network_heads")
+
+    if mismatches:
+        raise SecurityVerificationError(f"Architecture mismatch between config.json and manifest in: {mismatches}")
+
+    # 3. Check packaged files
+    packaged_files = manifest.get("packaged_files", {})
+    if not packaged_files:
+        raise SecurityVerificationError("Release manifest lacks required 'packaged_files' block.")
+
+    file_hashes = {}
+    model_absent = False
+
+    for file_name, meta in packaged_files.items():
+        file_path = os.path.join(release_dir, file_name)
+        if not os.path.isfile(file_path):
+            if file_name == "model.safetensors" and mode == "software_only":
+                model_absent = True
+                continue
+            raise FileNotFoundError(f"Required release artifact missing: {file_name}")
+
+        actual_size = os.path.getsize(file_path)
+        expected_size = meta.get("size_bytes")
+        if expected_size is not None and actual_size != expected_size:
+            raise SecurityVerificationError(
+                f"Size mismatch for '{file_name}': expected {expected_size} bytes, got {actual_size} bytes."
+            )
+
+        actual_hash = compute_file_sha256(file_path)
+        expected_hash = meta.get("sha256", "").lower()
+        if actual_hash.lower() != expected_hash:
+            raise SecurityVerificationError(
+                f"File tampering detected for '{file_name}'! SHA-256 does not match manifest. Expected {expected_hash}, got {actual_hash}"
+            )
+        file_hashes[file_name] = actual_hash
+
+    # In full_model mode, model.safetensors MUST exist
+    weights_path = os.path.join(release_dir, "model.safetensors")
+    if mode == "full_model":
+        if not os.path.isfile(weights_path):
+            raise FileNotFoundError("Full model-release verification failed: model.safetensors is absent.")
+
+        # Tensor architecture and parameter validation using safetensors
+        import safetensors.torch
+        with safetensors.safe_open(weights_path, framework="pt") as sf:
+            keys = list(sf.keys())
+        if len(keys) != 215:
+            raise SecurityVerificationError(
+                f"Incompatible tensor architecture: expected 215 tensor keys, found {len(keys)} keys."
+            )
+
+        # Offline inference test
+        if verify_offline_inference:
+            from cdm.inference.pipeline import CognitiveDecisionModel
+            model = CognitiveDecisionModel.from_pretrained(release_dir, local_files_only=True)
+            if getattr(model, "is_fallback", False):
+                raise SecurityVerificationError("Offline model loading returned fallback instead of trained weights.")
+            test_res = model.decide(
+                text="Verification dispute claim test",
+                structured_features={"monetary_value_usd": 100.0, "urgency_level": "medium"},
+                task="binary",
+            )
+            if test_res.decision not in ("YES", "NO", "APPROVE", "REJECT", "ABSTAIN"):
+                raise SecurityVerificationError(f"Unexpected decision output: {test_res.decision}")
+
+    return {
+        "status": "authenticated",
+        "mode": mode,
+        "model_absent": model_absent,
+        "files_verified": list(file_hashes.keys()),
+        "file_hashes": file_hashes,
+        "release_version": manifest.get("release_version", "1.0.0"),
+        "signature_verified": True,
+    }

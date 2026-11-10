@@ -148,3 +148,116 @@ def test_no_carriage_return_in_release_text_files():
                     violating_files.append(str(fpath.relative_to(release_dir)))
 
     assert violating_files == [], f"Found carriage return characters (CRLF/CR) in release files: {violating_files}"
+
+
+from cdm.security.manifest_verification import verify_release_manifest_mode
+import shutil
+
+
+def test_mode_b_1_complete_package_succeeds():
+    """1. Complete package: Mode B verification succeeds on genuine release package."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    res = verify_release_manifest_mode(str(actual_release_dir), mode="full_model", verify_offline_inference=True)
+    assert res["status"] == "authenticated"
+    assert res["model_absent"] is False
+    assert "model.safetensors" in res["files_verified"]
+
+
+def test_mode_b_2_missing_checkpoint_fails(tmp_path):
+    """2. Missing checkpoint: Mode B fails when model.safetensors is absent."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    # Copy all files except model.safetensors
+    for f in actual_release_dir.iterdir():
+        if f.name != "model.safetensors" and f.is_file():
+            shutil.copy2(f, tmp_path / f.name)
+
+    with pytest.raises(FileNotFoundError, match=r"(Required release artifact missing: model\.safetensors|model\.safetensors is absent)"):
+        verify_release_manifest_mode(str(tmp_path), mode="full_model")
+
+
+def test_mode_b_3_incorrect_file_size_fails(tmp_path):
+    """3. Incorrect file size: Mode B fails when checkpoint size does not match."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    for f in actual_release_dir.iterdir():
+        if f.is_file():
+            shutil.copy2(f, tmp_path / f.name)
+
+    # Truncate model.safetensors
+    (tmp_path / "model.safetensors").write_bytes(b"truncated_bytes_12345")
+
+    with pytest.raises(SecurityVerificationError, match="Size mismatch for 'model.safetensors'"):
+        verify_release_manifest_mode(str(tmp_path), mode="full_model")
+
+
+def test_mode_b_4_incorrect_hash_fails(tmp_path):
+    """4. Incorrect hash: Mode B fails when checkpoint hash does not match."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    for f in actual_release_dir.iterdir():
+        if f.is_file():
+            shutil.copy2(f, tmp_path / f.name)
+
+    # Pad with same size but altered bytes
+    ckpt_path = tmp_path / "model.safetensors"
+    orig_size = ckpt_path.stat().st_size
+    ckpt_path.write_bytes(b"X" * orig_size)
+
+    with pytest.raises(SecurityVerificationError, match="SHA-256 does not match manifest"):
+        verify_release_manifest_mode(str(tmp_path), mode="full_model")
+
+
+def test_mode_b_5_corrupted_checkpoint_fails(tmp_path):
+    """5. Corrupted checkpoint: Mode B fails when weights file is corrupt."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    for f in actual_release_dir.iterdir():
+        if f.name != "model.safetensors" and f.is_file():
+            shutil.copy2(f, tmp_path / f.name)
+
+    (tmp_path / "model.safetensors").write_bytes(b"CORRUPTED_HEADER_NOT_VALID_SAFETENSORS")
+    with pytest.raises((SecurityVerificationError, FileNotFoundError, Exception)):
+        verify_release_manifest_mode(str(tmp_path), mode="full_model")
+
+
+def test_mode_b_6_missing_configuration_fails(tmp_path):
+    """6. Missing configuration: Mode B fails when config.json is absent."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    for f in actual_release_dir.iterdir():
+        if f.name != "config.json" and f.is_file():
+            shutil.copy2(f, tmp_path / f.name)
+
+    with pytest.raises(FileNotFoundError, match="Required configuration file missing"):
+        verify_release_manifest_mode(str(tmp_path), mode="full_model")
+
+
+def test_mode_b_7_incompatible_tensor_architecture_fails(tmp_path):
+    """7. Incompatible tensor architecture: Mode B fails when architecture parameters mismatch."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    for f in actual_release_dir.iterdir():
+        if f.is_file():
+            shutil.copy2(f, tmp_path / f.name)
+
+    # Modify config.json projection dim
+    cfg_path = tmp_path / "config.json"
+    cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    cfg["language_encoder"]["projection_dim"] = 1024  # Mismatch with manifest 256
+    cfg_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
+
+    with pytest.raises(SecurityVerificationError, match="Architecture mismatch"):
+        verify_release_manifest_mode(str(tmp_path), mode="full_model")
+
+
+def test_mode_a_8_valid_software_only_package_succeeds(tmp_path):
+    """8. Valid software-only package: Mode A succeeds without model weights and explicitly reports model absent."""
+    actual_release_dir = Path(__file__).resolve().parent.parent / "experiments" / "release" / "cdm-1-general"
+    # Copy all software/config files EXCEPT model.safetensors
+    for f in actual_release_dir.iterdir():
+        if f.name != "model.safetensors" and f.is_file():
+            shutil.copy2(f, tmp_path / f.name)
+
+    res = verify_release_manifest_mode(str(tmp_path), mode="software_only")
+    assert res["status"] == "authenticated"
+    assert res["mode"] == "software_only"
+    assert res["model_absent"] is True  # Clearly reports that neural model is absent
+    assert "config.json" in res["files_verified"]
+    assert "feature_schema.json" in res["files_verified"]
+    assert "tokenizer.json" in res["files_verified"]
+    assert "tokenizer_config.json" in res["files_verified"]

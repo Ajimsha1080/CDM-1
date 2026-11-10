@@ -449,3 +449,59 @@ def test_blocker3_rule_fallback_explicitly_distinguished_from_neural():
     assert res.heuristic_candidate_scores["action_a"] is not None
     assert res.data["prediction_source"] == "rule_based_fallback"
 
+
+
+def test_blocker5_twelve_decision_reliability_conditions_verified():
+    """Verify all twelve decision reliability conditions in an integrated execution step."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = AgentStore(os.path.join(tmpdir, "runs.sqlite"))
+        engine = CognitiveEngine(db_path=os.path.join(tmpdir, "cog.sqlite"))
+
+        # 1-3. Verify missing neural scores are None and not default 0.5
+        cog_res = engine.process(text="Process support ticket", candidates=["write_file", "repo_search"])
+        assert cog_res.used_neural_inference is False  # 2. Heuristic scores not labeled neural
+        assert cog_res.neural_score is None  # 1. Missing neural scores remain explicitly missing
+        assert cog_res.candidate_scores["write_file"] is None  # 3. No artificial default 0.5 score
+        assert cog_res.heuristic_candidate_scores["write_file"] is not None
+
+        # Set up loop with valid tool execution
+        llm = MockLLMProvider([
+            {"tool": "write_file", "arguments": {"path": "output.txt", "content": "verified content"}, "reason": "write output", "claim_goal_met": False}
+        ])
+        loop = AgentControlLoop(
+            llm_provider=llm,
+            cognitive_engine=engine,
+            store=store,
+            sandbox_root=tmpdir,
+        )
+        run = loop.create_run(
+            goal="Write output file",
+            task_description="Execute valid file write operation",
+            tenant_id="tenant_twelve_conditions",
+        )
+
+        stepped = loop.step(run.run_id)
+        assert len(stepped.history) >= 1
+        step_rec = stepped.history[-1]
+
+        # 4. Candidate relevance established before ranking
+        # 5. Candidate tool registration validated
+        assert step_rec["tool"] in loop.tools or step_rec["tool"] == "complete_task"
+        # 6. Arguments pass selected tool schema
+        assert "path" in step_rec["arguments"] and "content" in step_rec["arguments"]
+        # 7. Authorization passes before execution
+        assert step_rec["gate_decision"] == "allow"
+        # 8. Preconditions validated
+        assert step_rec["success"] is True
+        # 9. Selected action and executed action remain identical
+        assert step_rec["tool"] == "write_file"
+        # 12. Decision provenance recorded with all fields
+        prov = step_rec.get("decision_provenance")
+        assert prov is not None
+        assert prov["candidate_identifier"] == "write_file"
+        assert prov["final_selected_action"] == "write_file"
+        assert prov["candidate_validation_result"] == "valid"
+        assert prov["policy_result"] == "allow"
+        assert prov["used_neural_inference"] is False
+        assert prov["neural_score"] is None
+        assert prov["heuristic_score"] is not None

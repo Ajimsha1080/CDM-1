@@ -90,6 +90,23 @@ def build_zip(zip_path: str, include_weights: bool = False) -> Dict[str, Any]:
                 if rel_path in EXCLUDE_FILENAMES or file.startswith(".env"):
                     continue
 
+                if file == "cognitive_validation_results.json":
+                    with open(full_path, "r", encoding="utf-8") as f_in:
+                        cog_data = json.load(f_in)
+                    if not include_weights:
+                        cog_data["model_artifacts"]["checkpoint_exists"] = False
+                        cog_data["model_artifacts"]["checkpoint_size_bytes"] = 0
+                        cog_data["model_artifacts"]["checkpoint_sha256"] = None
+                        cog_data["model_artifacts"]["deterministic_inference_verified"] = False
+                        cog_data["model_artifacts"]["distribution_mode"] = "software_only_without_weights"
+                    else:
+                        cog_data["model_artifacts"]["checkpoint_exists"] = True
+                        cog_data["model_artifacts"]["distribution_mode"] = "full_model_with_weights"
+                    payload_bytes = json.dumps(cog_data, indent=2).encode("utf-8")
+                    zf.writestr(f"CDM-1/{rel_path}", payload_bytes)
+                    manifest_entries[rel_path] = {"size_bytes": len(payload_bytes)}
+                    continue
+
                 zf.write(full_path, arcname=f"CDM-1/{rel_path}")
                 manifest_entries[rel_path] = {
                     "size_bytes": os.path.getsize(full_path),

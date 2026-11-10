@@ -103,7 +103,8 @@
     "trainable_parameters": 9345732,
     "frozen_parameters": 149014272,
     "total_parameters": 158360004,
-    "deterministic_inference_verified": true
+    "deterministic_inference_verified": true,
+    "distribution_mode": "full_model_with_weights"
   },
   "failure_analysis": {
     "detected_failure_modes": [],

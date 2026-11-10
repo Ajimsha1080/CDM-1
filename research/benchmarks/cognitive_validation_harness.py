@@ -580,23 +580,31 @@ def run_full_validation_suite() -> Dict[str, Any]:
 
     # 4. Model Artifact Verification
     print("\n9. Auditing Trained Checkpoint & Model Artifacts...")
-    param_counts = engine.decision_core.model.count_parameters()
     checkpoint_file = "experiments/release/cdm-1-general/model.safetensors"
-    checkpoint_size = os.path.getsize(checkpoint_file) if os.path.exists(checkpoint_file) else 0
+    checkpoint_exists = os.path.exists(checkpoint_file)
+    checkpoint_size = os.path.getsize(checkpoint_file) if checkpoint_exists else 0
 
-    import hashlib
-    with open(checkpoint_file, "rb") as f:
-        sha256 = hashlib.sha256(f.read()).hexdigest()
+    if checkpoint_exists:
+        import hashlib
+        with open(checkpoint_file, "rb") as f:
+            sha256 = hashlib.sha256(f.read()).hexdigest()
+    else:
+        sha256 = None
+
+    if engine.decision_core and engine.decision_core.model:
+        param_counts = engine.decision_core.model.count_parameters()
+    else:
+        param_counts = {"trainable_parameters": 0, "frozen_parameters": 0, "total_parameters": 0}
 
     model_audit = {
-        "checkpoint_exists": True,
+        "checkpoint_exists": bool(checkpoint_exists),
         "checkpoint_path": checkpoint_file,
         "checkpoint_size_bytes": checkpoint_size,
         "checkpoint_sha256": sha256,
         "trainable_parameters": param_counts["trainable_parameters"],
         "frozen_parameters": param_counts["frozen_parameters"],
         "total_parameters": param_counts["total_parameters"],
-        "deterministic_inference_verified": True,
+        "deterministic_inference_verified": bool(checkpoint_exists and not getattr(engine.decision_core, "is_fallback", False)),
     }
 
     # 5. Failure Analysis

@@ -642,8 +642,21 @@ def save_dataset_to_disk(examples: List[DecisionExample], output_path: str) -> N
 
 
 def load_dataset_from_disk(input_path: str) -> List[DecisionExample]:
+    resolved_path = input_path
+    if not os.path.exists(resolved_path):
+        candidate_path = os.path.join("research", input_path)
+        if os.path.exists(candidate_path):
+            resolved_path = candidate_path
+        else:
+            root_research_candidate = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "research", input_path))
+            root_candidate = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", input_path))
+            if os.path.exists(root_research_candidate):
+                resolved_path = root_research_candidate
+            elif os.path.exists(root_candidate):
+                resolved_path = root_candidate
+
     examples = []
-    with open(input_path, "r", encoding="utf-8") as f:
+    with open(resolved_path, "r", encoding="utf-8") as f:
         for line in f:
             if line.strip():
                 data = json.loads(line.strip())

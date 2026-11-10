@@ -1,0 +1,531 @@
+{
+  "test_sample_count": 58,
+  "correct_choices": 58,
+  "total_choices": 58,
+  "choice_accuracy": 1.0,
+  "neural_inference_rate": 1.0,
+  "eval_results": [
+    {
+      "example_id": "SYN-CUS-341",
+      "decision": "act_issue_refund",
+      "target": "act_issue_refund",
+      "match": true,
+      "confidence": 0.9963,
+      "neural_score": 89.69,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-342",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9962,
+      "neural_score": 83.6,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-361",
+      "decision": "act_issue_refund",
+      "target": "act_issue_refund",
+      "match": true,
+      "confidence": 0.9963,
+      "neural_score": 89.64,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-362",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9962,
+      "neural_score": 83.65,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-381",
+      "decision": "act_issue_refund",
+      "target": "act_issue_refund",
+      "match": true,
+      "confidence": 0.9963,
+      "neural_score": 89.66,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-382",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9964,
+      "neural_score": 83.78,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-343",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9881,
+      "neural_score": 15.96,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-344",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.983,
+      "neural_score": 29.91,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-363",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.988,
+      "neural_score": 16.03,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-364",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.983,
+      "neural_score": 29.97,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-383",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9878,
+      "neural_score": 16.06,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-CUS-384",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.9831,
+      "neural_score": 29.79,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-353",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.994,
+      "neural_score": 88.66,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-354",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.9685,
+      "neural_score": 89.15,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-373",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9942,
+      "neural_score": 88.69,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-374",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.9694,
+      "neural_score": 89.21,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-393",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9943,
+      "neural_score": 88.71,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-394",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.9696,
+      "neural_score": 89.24,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-356",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.9908,
+      "neural_score": 18.98,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-375",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.7763,
+      "neural_score": 59.19,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-376",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.9908,
+      "neural_score": 18.89,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-395",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.7677,
+      "neural_score": 59.87,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-COM-396",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.9906,
+      "neural_score": 19.04,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-359",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.9877,
+      "neural_score": 21.63,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-360",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9918,
+      "neural_score": 19.81,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-379",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.9874,
+      "neural_score": 21.74,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-380",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9917,
+      "neural_score": 19.82,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-399",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.9895,
+      "neural_score": 21.05,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-400",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9916,
+      "neural_score": 19.82,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-357",
+      "decision": "act_issue_refund",
+      "target": "act_issue_refund",
+      "match": true,
+      "confidence": 0.9966,
+      "neural_score": 89.78,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-358",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9951,
+      "neural_score": 82.63,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-377",
+      "decision": "act_issue_refund",
+      "target": "act_issue_refund",
+      "match": true,
+      "confidence": 0.9967,
+      "neural_score": 89.81,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-378",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9949,
+      "neural_score": 82.45,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-397",
+      "decision": "act_issue_refund",
+      "target": "act_issue_refund",
+      "match": true,
+      "confidence": 0.9966,
+      "neural_score": 89.77,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-RET-398",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9951,
+      "neural_score": 82.6,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-345",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.9764,
+      "neural_score": 89.94,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-346",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9948,
+      "neural_score": 82.98,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-365",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.9745,
+      "neural_score": 89.77,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-366",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9947,
+      "neural_score": 82.89,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-385",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.9764,
+      "neural_score": 89.94,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-386",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9946,
+      "neural_score": 82.76,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-348",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.8999,
+      "neural_score": 40.54,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-367",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.5907,
+      "neural_score": 68.88,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-368",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.8981,
+      "neural_score": 40.8,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-387",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.5985,
+      "neural_score": 68.54,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-BUS-388",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.8961,
+      "neural_score": 41.2,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-351",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.8265,
+      "neural_score": 48.84,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-352",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.8766,
+      "neural_score": 42.75,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-371",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.8248,
+      "neural_score": 48.72,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-372",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.8759,
+      "neural_score": 42.85,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-391",
+      "decision": "act_escalate_tier2",
+      "target": "act_escalate_tier2",
+      "match": true,
+      "confidence": 0.8292,
+      "neural_score": 48.53,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-392",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.8752,
+      "neural_score": 42.77,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-349",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9922,
+      "neural_score": 81.85,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-350",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.7846,
+      "neural_score": 45.01,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-369",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9923,
+      "neural_score": 81.84,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-370",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.7847,
+      "neural_score": 45.11,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-389",
+      "decision": "act_auto_resolve",
+      "target": "act_auto_resolve",
+      "match": true,
+      "confidence": 0.9922,
+      "neural_score": 81.78,
+      "used_neural": true
+    },
+    {
+      "example_id": "SYN-FIN-390",
+      "decision": "act_request_info",
+      "target": "act_request_info",
+      "match": true,
+      "confidence": 0.783,
+      "neural_score": 45.25,
+      "used_neural": true
+    }
+  ]
+}

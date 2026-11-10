@@ -377,3 +377,75 @@ def test_blocker1_checkpoint_manifest_and_tensor_contract():
     assert sig_meta["algorithm"] == "Ed25519"
     assert len(sig_meta["signature"]) == 128
     assert len(sig_meta["public_key"]) == 64
+
+
+def test_blocker3_missing_scores_represented_explicitly_and_provenance_complete():
+    """Verify missing neural scores are represented explicitly as None (never default 0.5) and decision provenance is complete."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = AgentStore(os.path.join(tmpdir, "runs.sqlite"))
+        # Engine without neural weights (development mode)
+        engine = CognitiveEngine(db_path=os.path.join(tmpdir, "cog.sqlite"))
+        assert engine.decision_core is None
+
+        # Verify CognitiveEngineResult explicitly represents missing neural scores as None
+        cog_res = engine.process(text="Review user query", candidates=["create_file", "repo_search"])
+        assert cog_res.used_neural_inference is False
+        assert cog_res.neural_score is None
+        assert cog_res.candidate_scores.get("create_file") is None
+        assert cog_res.heuristic_candidate_scores.get("create_file") is not None
+
+        # Run control loop step
+        llm = MockLLMProvider([
+            {"tool": "create_file", "arguments": {"path": "test.txt", "content": "hello"}, "reason": "create test file", "claim_goal_met": False}
+        ])
+        loop = AgentControlLoop(
+            llm_provider=llm,
+            cognitive_engine=engine,
+            store=store,
+            sandbox_root=tmpdir,
+        )
+        run = loop.create_run(goal="Create test file", task_description="Write test file", tenant_id="tenant_prov_test")
+        stepped = loop.step(run.run_id)
+
+        last_step = stepped.history[-1]
+        assert last_step["success"] is True
+        assert last_step["used_neural_inference"] is False
+        assert last_step["neural_score"] is None
+        assert last_step["heuristic_score"] is not None
+
+        # Verify decision_provenance fields
+        prov = last_step.get("decision_provenance")
+        assert prov is not None, "Step history must include decision_provenance."
+        assert prov["candidate_identifier"] == "create_file"
+        assert prov["candidate_validation_result"] == "valid"
+        assert prov["decision_model_version"] is not None
+        assert prov["used_neural_inference"] is False
+        assert prov["neural_score"] is None
+        assert prov["heuristic_score"] is not None
+        assert prov["risk_estimate"] is not None
+        assert prov["confidence"] is not None
+        assert prov["policy_result"] == "allow"
+        assert prov["final_selected_action"] == "create_file"
+        assert prov["reason_for_rejection_or_abstention"] is None
+
+
+def test_blocker3_rule_fallback_explicitly_distinguished_from_neural():
+    """Verify rule fallback never masquerades as neural inference."""
+    fb_model = CognitiveDecisionModel.from_pretrained(
+        "non_existent_path",
+        allow_fallback=True,
+        production_mode=False,
+    )
+    assert fb_model.is_fallback is True
+    res = fb_model.decide(
+        text="Sample request",
+        task="choice",
+        candidates=["action_a", "action_b"],
+    )
+    assert res.used_neural_inference is False
+    assert res.neural_score is None
+    assert res.heuristic_score is not None
+    assert res.candidate_scores["action_a"] is not None
+    assert res.heuristic_candidate_scores["action_a"] is not None
+    assert res.data["prediction_source"] == "rule_based_fallback"
+

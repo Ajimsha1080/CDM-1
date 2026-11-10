@@ -661,6 +661,11 @@ class AgentControlLoop:
 
             eligible_candidates.append(cand)
 
+        core_obj = getattr(self.cognitive_engine, "decision_core", None)
+        is_neural = bool(core_obj is not None and getattr(core_obj, "is_fallback", False) is not True)
+        cand_scores = cog_result.candidate_scores or {}
+        heur_scores = getattr(cog_result, "heuristic_candidate_scores", {}) or {}
+
         # 3. Abstain when no valid candidate exists
         if not eligible_candidates:
             step_num = run.step_count + 1
@@ -671,6 +676,19 @@ class AgentControlLoop:
                 err_msg = "No valid candidate actions satisfy tool registration, authorization, argument schema, and dynamic world state preconditions."
 
             logger.warning(f"Run {run.run_id}: Step {step_num} candidate validation rejected all options: {err_msg}")
+            dec_prov = {
+                "candidate_identifier": proposed.tool,
+                "candidate_validation_result": gate_decision,
+                "decision_model_version": cdm_model_version,
+                "used_neural_inference": is_neural,
+                "neural_score": None,
+                "heuristic_score": None,
+                "risk_estimate": round(pred_risk, 4),
+                "confidence": round(cog_result.confidence, 4) if cog_result.confidence is not None else None,
+                "policy_result": gate_decision,
+                "final_selected_action": None,
+                "reason_for_rejection_or_abstention": err_msg,
+            }
             run.history.append({
                 "step": step_num,
                 "tool": proposed.tool,
@@ -679,6 +697,7 @@ class AgentControlLoop:
                 "success": False,
                 "error": err_msg,
                 "model_version": cdm_model_version,
+                "decision_provenance": dec_prov,
             })
             run.step_count += 1
             run.status = "waiting_for_approval"
@@ -706,40 +725,82 @@ class AgentControlLoop:
         selected_tool_name = eligible_candidates[0]["tool"]
         selected_tool_args = eligible_candidates[0]["arguments"]
         selected_reason = eligible_candidates[0]["reason"]
-        selected_neural_score = None
+        
+        # Determine base candidate scores
+        c0_name = selected_tool_name
+        raw_c0_neural = cand_scores.get(c0_name)
+        if is_neural and raw_c0_neural is not None:
+            selected_neural_score = float(raw_c0_neural)
+            selected_heuristic_score = None
+            used_neural_inference = True
+        else:
+            selected_neural_score = None
+            raw_c0_heur = heur_scores.get(c0_name)
+            selected_heuristic_score = float(raw_c0_heur) if raw_c0_heur is not None else 0.0
+            used_neural_inference = False
 
         if len(eligible_candidates) > 1:
             try:
-                cand_scores = cog_result.candidate_scores or {}
                 ranked_candidates = []
                 for cand in eligible_candidates:
                     c_name = cand["tool"]
-                    c_neural = cand_scores.get(c_name, 0.5)
+                    raw_neural = cand_scores.get(c_name)
+                    if is_neural and raw_neural is not None:
+                        c_neural = float(raw_neural)
+                        c_heuristic = None
+                        c_used_neural = True
+                        c_effective_score = c_neural
+                    else:
+                        c_neural = None  # Explicitly None: missing model scores are never labeled with artificial defaults
+                        raw_heur = heur_scores.get(c_name)
+                        c_heuristic = float(raw_heur) if raw_heur is not None else 0.0
+                        c_used_neural = False
+                        c_effective_score = c_heuristic
+
                     c_risk = pred_risk
                     if c_name in causal_consequences and isinstance(causal_consequences[c_name], dict):
                         c_risk = max(c_risk, causal_consequences[c_name].get("expected_risk", 0.0))
+
                     # Plan alignment bonus: prioritize the planned step of validated plan
                     c_plan_bonus = 0.35 if (planned_action_name and c_name == planned_action_name) else 0.0
                     c_proposed_bonus = 0.05 if (c_name == proposed.tool) else 0.0
-                    composite_score = (c_neural * (cog_result.confidence or 0.85)) - (c_risk * 0.4) + c_plan_bonus + c_proposed_bonus
-                    ranked_candidates.append((composite_score, cand, c_neural, c_risk))
+                    composite_score = (c_effective_score * (cog_result.confidence or 0.85)) - (c_risk * 0.4) + c_plan_bonus + c_proposed_bonus
+                    ranked_candidates.append((composite_score, cand, c_neural, c_heuristic, c_risk, c_used_neural))
                     alternatives_evaluated.append({
                         "action": c_name,
                         "composite_score": round(composite_score, 4),
-                        "neural_score": round(c_neural, 4),
+                        "used_neural_inference": c_used_neural,
+                        "neural_score": round(c_neural, 4) if c_neural is not None else None,
+                        "heuristic_score": round(c_heuristic, 4) if c_heuristic is not None else None,
                         "risk": round(c_risk, 4),
                         "in_active_plan": (c_name == planned_action_name),
+                        "candidate_validation_result": "valid",
                     })
 
                 ranked_candidates.sort(key=lambda x: x[0], reverse=True)
-                top_composite, top_cand, top_neural, top_c_risk = ranked_candidates[0]
+                top_composite, top_cand, top_neural, top_heur, top_c_risk, top_used_neural = ranked_candidates[0]
                 selected_tool_name = top_cand["tool"]
                 selected_tool_args = top_cand["arguments"]
                 selected_reason = top_cand["reason"]
                 selected_neural_score = top_neural
+                selected_heuristic_score = top_heur
+                used_neural_inference = top_used_neural
             except Exception as e:
                 logger.error(f"Candidate ranking exception: {e}")
                 step_num = run.step_count + 1
+                fail_prov = {
+                    "candidate_identifier": proposed.tool,
+                    "candidate_validation_result": "fail_closed_ranking_error",
+                    "decision_model_version": cdm_model_version,
+                    "used_neural_inference": False,
+                    "neural_score": None,
+                    "heuristic_score": None,
+                    "risk_estimate": round(pred_risk, 4),
+                    "confidence": round(cog_result.confidence, 4) if cog_result.confidence is not None else None,
+                    "policy_result": "fail_closed_ranking_error",
+                    "final_selected_action": None,
+                    "reason_for_rejection_or_abstention": f"Decision ranking failed closed: {e}",
+                }
                 run.history.append({
                     "step": step_num,
                     "tool": proposed.tool,
@@ -749,6 +810,7 @@ class AgentControlLoop:
                     "error": f"Decision ranking failed closed: {e}",
                     "alternatives_evaluated": alternatives_evaluated,
                     "model_version": cdm_model_version,
+                    "decision_provenance": fail_prov,
                 })
                 run.status = "waiting_for_approval"
                 run.pending_reason = f"Candidate ranking error: {e}"
@@ -872,6 +934,19 @@ class AgentControlLoop:
                 execution_result=None,
                 verification_result={"verified": False, "reason": "Blocked by policy gate"},
             )
+            block_prov = {
+                "candidate_identifier": selected_tool_name,
+                "candidate_validation_result": "blocked_by_policy",
+                "decision_model_version": cdm_model_version,
+                "used_neural_inference": used_neural_inference,
+                "neural_score": selected_neural_score,
+                "heuristic_score": selected_heuristic_score,
+                "risk_estimate": round(pred_risk, 4),
+                "confidence": round(cog_result.confidence, 4) if cog_result.confidence is not None else None,
+                "policy_result": "block",
+                "final_selected_action": None,
+                "reason_for_rejection_or_abstention": f"Policy Gate Blocked Action: {gate_res.reason}",
+            }
             run.history.append({
                 "step": step_num,
                 "tool": selected_tool_name,
@@ -881,6 +956,7 @@ class AgentControlLoop:
                 "error": f"Policy Gate Blocked Action: {gate_res.reason}",
                 "alternatives_evaluated": alternatives_evaluated,
                 "model_version": cdm_model_version,
+                "decision_provenance": block_prov,
             })
             run.step_count += 1
             self.store.save_run(run)
@@ -1006,6 +1082,20 @@ class AgentControlLoop:
             goal_verified=is_goal_verified,
         ).value
 
+        allow_prov = {
+            "candidate_identifier": selected_tool_name,
+            "candidate_validation_result": "valid",
+            "decision_model_version": cdm_model_version,
+            "used_neural_inference": used_neural_inference,
+            "neural_score": round(selected_neural_score, 4) if selected_neural_score is not None else None,
+            "heuristic_score": round(selected_heuristic_score, 4) if selected_heuristic_score is not None else None,
+            "risk_estimate": round(pred_risk, 4),
+            "confidence": round(cog_result.confidence, 4) if cog_result.confidence is not None else None,
+            "policy_result": "allow",
+            "final_selected_action": selected_tool_name,
+            "reason_for_rejection_or_abstention": None,
+        }
+
         run.history.append({
             "step": step_num,
             "tool": selected_tool_name,
@@ -1018,8 +1108,11 @@ class AgentControlLoop:
             "action_verified": action_verif_res.verified if action_verif_res else None,
             "alternatives_evaluated": alternatives_evaluated,
             "neural_score": selected_neural_score,
+            "heuristic_score": selected_heuristic_score,
+            "used_neural_inference": used_neural_inference,
             "model_version": cdm_model_version,
             "provenance": cdm_prov,
+            "decision_provenance": allow_prov,
         })
         run.step_count += 1
         self.store.save_run(run)

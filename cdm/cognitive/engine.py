@@ -346,12 +346,16 @@ class CognitiveEngine:
                     "decision": candidate_list[0] if candidate_list else "abstain",
                     "confidence": 0.5,
                     "calibrated": False,
-                    "score": 0.5,
-                    "candidate_scores": {c: 0.5 for c in candidate_list},
+                    "score": None,  # Explicitly None: missing neural scores are never labeled with artificial defaults
+                    "neural_score": None,
+                    "heuristic_score": 0.5,
+                    "used_neural_inference": False,
+                    "candidate_scores": {c: None for c in candidate_list},
+                    "heuristic_candidate_scores": {c: 0.5 for c in candidate_list},
                     "risk": 0.05,
                     "predicted_outcome": {"status": "development_baseline"},
                     "abstain": False,
-                    "provenance": {"mode": "development_without_weights"},
+                    "provenance": {"mode": "development_without_weights", "used_neural_inference": False},
                 })
             else:
                 try:
@@ -369,13 +373,17 @@ class CognitiveEngine:
                         "decision": "abstain",
                         "confidence": 0.0,
                         "calibrated": True,
-                        "score": 0.0,
-                        "candidate_scores": {c: 0.0 for c in candidate_list},
+                        "score": None,
+                        "neural_score": None,
+                        "heuristic_score": None,
+                        "used_neural_inference": False,
+                        "candidate_scores": {c: None for c in candidate_list},
+                        "heuristic_candidate_scores": {c: 0.0 for c in candidate_list},
                         "risk": 1.0,
                         "predicted_outcome": {"error": str(e)},
                         "abstain": True,
                         "abstention_reason": f"Decision core failure: {e}",
-                        "provenance": {"error": str(e)},
+                        "provenance": {"error": str(e), "used_neural_inference": False},
                     })
 
             decision = cdm_result.decision
@@ -470,8 +478,12 @@ class CognitiveEngine:
                 priority=priority,
                 risk=round(risk, 4),
                 operational_score=operational_score,
+                neural_score=getattr(cdm_result, "neural_score", None),
+                heuristic_score=getattr(cdm_result, "heuristic_score", None),
+                used_neural_inference=getattr(cdm_result, "used_neural_inference", False),
                 predicted_outcomes=predicted_outcomes,
                 candidate_scores=cdm_result.candidate_scores or {},
+                heuristic_candidate_scores=getattr(cdm_result, "heuristic_candidate_scores", {}) or {},
                 selected_plan=generated_plan,
                 reasoning_evidence=reasoning_trace,
                 causal_analysis=causal_analysis,

@@ -158,7 +158,7 @@ class PlanningEngine:
             )
             if pred_risk is None and "candidate_scores" in predicted_outcome:
                 cand_scores = predicted_outcome["candidate_scores"]
-                if isinstance(cand_scores, dict) and action in cand_scores:
+                if isinstance(cand_scores, dict) and action in cand_scores and cand_scores[action] is not None:
                     norm_score = max(0.0, min(1.0, cand_scores[action]))
                     pred_risk = round(1.0 - norm_score, 4)
 
@@ -517,9 +517,10 @@ class PlanningEngine:
                     final_simulated_metrics=alt_final_metrics,
                 )
 
-                alt_score = 0.5
+                alt_score = None
                 if predicted_outcome and "candidate_scores" in predicted_outcome:
-                    alt_score = predicted_outcome["candidate_scores"].get(alt_act, 0.5)
+                    raw_alt = predicted_outcome["candidate_scores"].get(alt_act)
+                    alt_score = raw_alt if raw_alt is not None else predicted_outcome.get("heuristic_candidate_scores", {}).get(alt_act)
 
                 alt_risk_sources = [s.risk_source for s in alt_plan_steps]
                 alt_dom_src = (
@@ -532,7 +533,7 @@ class PlanningEngine:
                     "name": f"Alternative Branch: {alt_act}",
                     "first_action": alt_act,
                     "steps": [s.model_dump() for s in alt_plan_steps],
-                    "predicted_outcome_score": round(float(alt_score), 4),
+                    "predicted_outcome_score": round(float(alt_score), 4) if alt_score is not None else None,
                     "cumulative_risk": round(alt_cum_risk, 3),
                     "expected_risk": round(alt_cum_risk, 3),
                     "risk_source": alt_dom_src,

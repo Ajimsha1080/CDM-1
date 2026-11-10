@@ -26,6 +26,9 @@ class DecisionResult:
         self.confidence = data.get("confidence")
         self.calibrated = data.get("calibrated", True)
         self.score = data.get("score")
+        self.neural_score = data.get("neural_score")
+        self.heuristic_score = data.get("heuristic_score")
+        self.used_neural_inference = data.get("used_neural_inference", False)
         self.priority = data.get("priority")
         self.risk = data.get("risk")
         self.predicted_outcome = data.get("predicted_outcome")
@@ -34,12 +37,14 @@ class DecisionResult:
         self.abstention_reason = data.get("abstention_reason")
         self.selected_candidate = data.get("selected_candidate")
         self.candidate_scores = data.get("candidate_scores")
+        self.heuristic_candidate_scores = data.get("heuristic_candidate_scores") or {}
 
     def to_dict(self) -> Dict[str, Any]:
         return self.data
 
     def __repr__(self) -> str:
-        return f"<DecisionResult task={self.task} decision={self.decision} confidence={self.confidence:.4f} abstain={self.abstain}>"
+        conf_str = f"{self.confidence:.4f}" if isinstance(self.confidence, (int, float)) else str(self.confidence)
+        return f"<DecisionResult task={self.task} decision={self.decision} confidence={conf_str} abstain={self.abstain}>"
 
 
 class CognitiveDecisionModel:
@@ -251,7 +256,10 @@ class CognitiveDecisionModel:
             "binary_prediction": bin_pred_val,
             "confidence": confidence_val,
             "calibrated": True,
-            "score": score_val,
+            "score": None,  # Explicitly None: never present heuristic fallback as neural score
+            "neural_score": None,
+            "heuristic_score": score_val,
+            "used_neural_inference": False,
             "priority": priority_str,
             "risk": risk_val,
             "abstain": abstain_val,
@@ -276,6 +284,7 @@ class CognitiveDecisionModel:
                 result_payload["abstention_reason"] = "all_candidates_prohibited"
                 result_payload["selected_candidate"] = None
                 result_payload["candidate_scores"] = {c: 0.0 for c in candidates}
+                result_payload["heuristic_candidate_scores"] = {c: 0.0 for c in candidates}
                 if task == "choice":
                     result_payload["decision"] = "ABSTAIN"
             else:
@@ -289,6 +298,7 @@ class CognitiveDecisionModel:
                 selected = valid_cands[0]
                 result_payload["selected_candidate"] = selected
                 result_payload["candidate_scores"] = cand_scores
+                result_payload["heuristic_candidate_scores"] = cand_scores
                 if task == "choice":
                     result_payload["decision"] = selected
 
@@ -419,6 +429,10 @@ class CognitiveDecisionModel:
             "confidence": confidence_val,
             "calibrated": True,
             "score": score_val,
+            "neural_score": score_val,
+            "heuristic_score": None,
+            "used_neural_inference": True,
+            "heuristic_candidate_scores": {},
             "priority": priority_str,
             "risk": risk_val,
             "abstain": abstain_val,

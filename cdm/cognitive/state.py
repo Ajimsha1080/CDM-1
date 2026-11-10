@@ -197,8 +197,12 @@ class CognitiveEngineResult(BaseModel):
     priority: str
     risk: float
     operational_score: Optional[float] = None
+    neural_score: Optional[float] = None
+    heuristic_score: Optional[float] = None
+    used_neural_inference: bool = False
     predicted_outcomes: Dict[str, Any] = Field(default_factory=dict)
-    candidate_scores: Dict[str, float] = Field(default_factory=dict)
+    candidate_scores: Dict[str, Optional[float]] = Field(default_factory=dict)
+    heuristic_candidate_scores: Dict[str, float] = Field(default_factory=dict)
     selected_plan: Optional[Plan] = None
     reasoning_evidence: ReasoningTrace
     causal_analysis: Optional[Dict[str, Any]] = None

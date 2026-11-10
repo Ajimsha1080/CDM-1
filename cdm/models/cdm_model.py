@@ -5,11 +5,15 @@ Predictive Network, Multi-Head Decision Network, and Candidate Selection Scorer.
 
 from typing import Dict, List, Optional, Tuple, Any, Union
 import os
+import sys
+import time
+import shutil
 import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from safetensors.torch import save_file, load_file
+from safetensors import safe_open
 
 from cdm.config.model_config import CDMModelConfig
 from cdm.config.feature_schema import FeatureSchema
@@ -373,16 +377,47 @@ class CDMModel(nn.Module):
         return total_loss, loss_dict
 
     def save_pretrained(self, save_directory: str) -> None:
-        """Export CDM-1 weights in SafeTensors format with full configuration."""
-        os.makedirs(save_directory, exist_ok=True)
+        """Export CDM-1 weights in SafeTensors format with atomic staging and verification.
+        Ensures a temporary staging directory is used, the serialized tensors are strictly
+        validated before atomic replacement, and existing valid checkpoints are never corrupted.
+        """
+        save_path = os.path.abspath(save_directory)
+        os.makedirs(save_path, exist_ok=True)
+        stage_dir = f"{save_path}.tmp_stage_{os.getpid()}_{int(time.time() * 1000)}"
+        os.makedirs(stage_dir, exist_ok=True)
 
-        config_path = os.path.join(save_directory, "config.json")
-        with open(config_path, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(self.config.to_dict(), f, indent=2)
+        try:
+            # 1. Serialize config with strict Unix newlines
+            stage_config = os.path.join(stage_dir, "config.json")
+            with open(stage_config, "w", encoding="utf-8", newline="\n") as f:
+                json.dump(self.config.to_dict(), f, indent=2)
 
-        weights_path = os.path.join(save_directory, "model.safetensors")
-        state_dict = {k: v.contiguous() for k, v in self.state_dict().items()}
-        save_file(state_dict, weights_path)
+            # 2. Serialize weights in SafeTensors format
+            stage_weights = os.path.join(stage_dir, "model.safetensors")
+            state_dict = {k: v.contiguous() for k, v in self.state_dict().items()}
+            save_file(state_dict, stage_weights)
+
+            # 3. Validate staged weights before atomic move
+            if not os.path.isfile(stage_weights) or os.path.getsize(stage_weights) == 0:
+                raise RuntimeError(f"Staged checkpoint serialization failed: {stage_weights} is empty or missing.")
+
+            with safe_open(stage_weights, framework="pt") as sf:
+                staged_keys = set(sf.keys())
+                expected_keys = set(state_dict.keys())
+                if staged_keys != expected_keys:
+                    missing = expected_keys - staged_keys
+                    raise RuntimeError(f"Staged checkpoint validation mismatch: missing {len(missing)} tensors.")
+
+            # 4. Atomically move staged files to final destination
+            target_config = os.path.join(save_path, "config.json")
+            target_weights = os.path.join(save_path, "model.safetensors")
+
+            os.replace(stage_config, target_config)
+            os.replace(stage_weights, target_weights)
+
+        finally:
+            if os.path.isdir(stage_dir):
+                shutil.rmtree(stage_dir, ignore_errors=True)
 
     @classmethod
     def from_pretrained(cls, load_directory: str, strict: bool = True) -> "CDMModel":

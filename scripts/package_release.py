@@ -142,34 +142,88 @@ def build_zip(zip_path: str, include_weights: bool = False) -> Dict[str, Any]:
 
 
 def verify_clean_extraction_and_inference(zip_path: str) -> None:
-    """P0 Requirement 7: Extract the generated archive into a clean directory and run inference."""
+    """Requirement 4 & 5: Extract the generated archive into a clean directory,
+    recalculate checkpoint SHA-256 and size, confirm manifest match, verify full_model mode,
+    and execute predictive, decision, candidate scoring, and CognitiveEngine integration.
+    """
     import tempfile
-    print(f"Verifying clean extraction and offline inference from: {zip_path}...")
+    print(f"\n[*] Verifying clean extraction and offline inference from: {zip_path}...")
+
+    EXPECTED_SHA256 = "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
+    EXPECTED_SIZE = 633465536
+
     with tempfile.TemporaryDirectory() as tmpdir:
         with zipfile.ZipFile(zip_path, "r") as zf:
+            namelist = zf.namelist()
+            # 1. Verify ZIP contains model.safetensors
+            matching = [n for n in namelist if n.endswith("experiments/release/cdm-1-general/model.safetensors")]
+            if not matching:
+                raise RuntimeError(f"CRITICAL: model.safetensors is missing from zip archive: {zip_path}")
+            print(f"    [+] model.safetensors verified inside archive: {matching[0]}")
             zf.extractall(tmpdir)
 
         extracted_root = os.path.join(tmpdir, "CDM-1")
         if extracted_root not in sys.path:
             sys.path.insert(0, extracted_root)
-        model_dir = os.path.join(extracted_root, "experiments", "release", "cdm-1-general")
-        if not os.path.exists(model_dir):
-            model_dir = os.path.join(extracted_root, "experiments", "checkpoints", "cdm-1-general")
 
+        model_dir = os.path.join(extracted_root, "experiments", "release", "cdm-1-general")
         weights_file = os.path.join(model_dir, "model.safetensors")
         if not os.path.isfile(weights_file):
             raise FileNotFoundError(f"Verification failure: model.safetensors missing in extracted directory: {model_dir}")
 
-        # Run standalone offline inference using the packaged model
-        from cdm.inference.pipeline import CognitiveDecisionModel
-        offline_model = CognitiveDecisionModel.from_pretrained(model_dir, local_files_only=True)
-        res = offline_model.decide(
-            text="Emergency ICU triage: acute coronary syndrome presenting with diaphoresis and hypotension.",
-            structured_features={"monetary_value_usd": 5000.0, "urgency_level": "critical", "domain": "customer_support"},
-            task="binary",
+        # 2. Recalculate extracted checkpoint size and SHA-256
+        extracted_size = os.path.getsize(weights_file)
+        extracted_sha256 = compute_sha256(weights_file)
+        print(f"    [+] Extracted model size:   {extracted_size} bytes (matches manifest: {extracted_size == EXPECTED_SIZE})")
+        print(f"    [+] Extracted model SHA256: {extracted_sha256} (matches manifest: {extracted_sha256 == EXPECTED_SHA256})")
+
+        assert extracted_size == EXPECTED_SIZE, f"Extracted size mismatch: expected {EXPECTED_SIZE}, got {extracted_size}"
+        assert extracted_sha256 == EXPECTED_SHA256, f"Extracted SHA mismatch: expected {EXPECTED_SHA256}, got {extracted_sha256}"
+
+        # 3. Verify release manifest under full_model mode
+        from cdm.security.manifest_verification import verify_release_manifest_mode, TRUSTED_RELEASE_PUBLIC_KEY
+        print("    [*] Verifying extracted release manifest in full_model mode...")
+        verify_release_manifest_mode(
+            release_dir=model_dir,
+            mode="full_model",
+            trusted_public_key_hex=TRUSTED_RELEASE_PUBLIC_KEY,
+            verify_offline_inference=True,
         )
-        assert res.decision in {"APPROVE", "REJECT", "YES", "NO", "ABSTAIN"}, f"Unexpected decision from extracted archive: {res.decision}"
-        print(f"Verification successful: Clean extraction and offline inference passed! (Decision={res.decision}, Conf={res.confidence:.4f})")
+        print("    [+] Extracted release manifest authenticated with Ed25519 signature under full_model mode.")
+
+        # 4. Actual inference validation: Predictive, Decision, Candidate Scoring, and CognitiveEngine
+        print("    [*] Running end-to-end cognitive runtime validation on extracted release...")
+        from cdm.cognitive.engine import CognitiveEngine
+        from cdm.inference.pipeline import CognitiveDecisionModel
+
+        # Standalone decision model test
+        offline_model = CognitiveDecisionModel.from_pretrained(model_dir, local_files_only=True)
+        res_standalone = offline_model.decide(
+            text="High-value subscription renewal payment processing gateway timeout.",
+            structured_features={"domain": 0, "channel": 1, "customer_tier": 4, "urgency_level": 3},
+            candidates=["act_issue_refund", "act_auto_resolve", "act_escalate_tier2"],
+            task="choice",
+        )
+        assert res_standalone.used_neural_inference is True
+        print(f"    [+] Extracted standalone inference passed: selected={res_standalone.decision}, conf={res_standalone.confidence:.4f}")
+
+        # CognitiveEngine integrated test
+        engine = CognitiveEngine.from_pretrained(model_dir, local_files_only=True)
+        cog_res = engine.process(
+            text="High-value subscription renewal payment processing gateway timeout.",
+            candidates=["act_issue_refund", "act_auto_resolve", "act_escalate_tier2"],
+            prohibited_actions=["act_auto_resolve"],
+            structured_features={"domain": 0, "channel": 1, "customer_tier": 4, "urgency_level": 3},
+            tenant_id="tenant-extracted-verify",
+        )
+        assert cog_res.used_neural_inference is True
+        assert cog_res.decision != "act_auto_resolve"
+        assert cog_res.candidate_scores["act_auto_resolve"] == 0.0
+        assert cog_res.neural_score is not None
+        assert cog_res.heuristic_score is None
+        print(f"    [+] Extracted CognitiveEngine integration passed: decision={cog_res.decision}, neural_score={cog_res.neural_score}, prohibited_score={cog_res.candidate_scores.get('act_auto_resolve')}")
+
+    print(f"[*] Complete release packaging verification PASSED for: {zip_path}\n")
 
 
 def main():

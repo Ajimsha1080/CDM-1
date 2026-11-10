@@ -1,9 +1,7 @@
 # Global line ending normalization (LF across all platforms)
 * text=auto eol=lf
-
 # Shipped release artifacts must never have bytes or line endings altered
 experiments/release/** -text
-
 # Binary formats
 *.safetensors binary
 *.sqlite binary
@@ -11,3 +9,4 @@ experiments/release/** -text
 *.png binary
 *.jpg binary
 *.jpeg binary
+experiments/release/cdm-1-general/model.safetensors filter=lfs diff=lfs merge=lfs -text

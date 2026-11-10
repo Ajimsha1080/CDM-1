@@ -4,11 +4,16 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Large Model Weights (Safetensors / PyTorch checkpoints - hosted on Hugging Face Hub)
-*.safetensors
+# Large Model Weights (Safetensors / PyTorch checkpoints - intermediate training checkpoints excluded)
+experiments/checkpoints/
 *.pt
 *.bin
 *.onnx
+
+# Allow explicit release checkpoint artifacts to be tracked/packaged
+*.safetensors
+!experiments/release/cdm-1-general/model.safetensors
+!experiments/release/cdm-1-general/*.json
 
 # Pytest / Cache
 .pytest_cache/

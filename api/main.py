@@ -127,12 +127,15 @@ class DecisionResponse(BaseModel):
     decision: Any
     confidence: float
     calibrated: bool = True
-    score: float
+    score: Optional[float] = None
+    neural_score: Optional[float] = None
+    heuristic_score: Optional[float] = None
+    used_neural_inference: bool = True
     priority: str
     risk: float
     abstain: bool
     selected_candidate: Optional[str] = None
-    candidate_scores: Optional[Dict[str, float]] = None
+    candidate_scores: Optional[Dict[str, Optional[float]]] = None
     predicted_outcome: PredictedOutcomeSchema
     tenant_id: str
     latency_ms: float
@@ -567,6 +570,9 @@ def create_decision(
         confidence=data["confidence"],
         calibrated=data.get("calibrated", True),
         score=data["score"],
+        neural_score=data.get("neural_score"),
+        heuristic_score=data.get("heuristic_score"),
+        used_neural_inference=data.get("used_neural_inference", True),
         priority=data["priority"],
         risk=data["risk"],
         abstain=data["abstain"],

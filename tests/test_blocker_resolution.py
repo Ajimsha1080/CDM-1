@@ -206,6 +206,88 @@ def test_blocker4_decision_scores_control_candidate_selection_and_prevent_arg_re
         assert last_step["tool"] == "repo_search"
         # Verify arguments from read_file were NOT reused for repo_search
         assert "path" not in last_step["arguments"]
+        # Item 3: Verify single authoritative decision inference (NO duplicate decide() call in step())
+        assert mock_core.decide.call_count == 1
+
+
+def test_blocker4_abstain_when_no_valid_candidate_exists():
+    """Verify that the engine cleanly abstains when no valid candidate passes pre-ranking validation."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = AgentStore(os.path.join(tmpdir, "runs.sqlite"))
+        engine = CognitiveEngine(db_path=os.path.join(tmpdir, "cog.sqlite"))
+
+        # LLM proposes an unregistered tool and no fallback exists
+        llm = MockLLMProvider([
+            {"tool": "completely_unknown_tool", "arguments": {}, "reason": "invalid tool", "claim_goal_met": False}
+        ])
+
+        loop = AgentControlLoop(
+            llm_provider=llm,
+            cognitive_engine=engine,
+            store=store,
+            sandbox_root=tmpdir,
+        )
+
+        run = loop.create_run(
+            goal="Do impossible task",
+            task_description="Execute unsupported tool",
+            tenant_id="tenant_abstain_test",
+        )
+
+        stepped_run = loop.step(run.run_id)
+        assert stepped_run.status == "waiting_for_approval"
+        last_step = stepped_run.history[-1]
+        assert last_step["gate_decision"] in ("rejected_unregistered_tool", "abstain_no_valid_candidates")
+        assert last_step["success"] is False
+
+
+def test_blocker2_reproducible_dependencies_lockfile():
+    """Verify that requirements-lock.txt exists, contains pinned dependencies, and aligns with runtime."""
+    lockfile_path = "requirements-lock.txt"
+    assert os.path.exists(lockfile_path), "requirements-lock.txt must exist in repo root."
+    with open(lockfile_path, "r", encoding="utf-8") as f:
+        lines = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+
+    pinned_pkgs = {}
+    for line in lines:
+        if "==" in line:
+            pkg, ver = line.split("==", 1)
+            pinned_pkgs[pkg.lower()] = ver
+
+    for required in ["torch", "transformers", "safetensors", "pydantic", "pytest", "cryptography", "fastapi"]:
+        assert required in pinned_pkgs, f"Missing core pinned dependency: {required}"
+
+
+def test_blocker1_offline_neural_inference_verified():
+    """Verify that model.safetensors has exact size, SHA-256, 215 tensors, and runs offline inference without fallbacks."""
+    import safetensors.torch
+    import hashlib
+    ckpt_path = "experiments/release/cdm-1-general/model.safetensors"
+    assert os.path.exists(ckpt_path), f"Checkpoint missing at {ckpt_path}"
+    assert os.path.getsize(ckpt_path) == 633465536
+
+    h = hashlib.sha256()
+    with open(ckpt_path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    assert h.hexdigest() == "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
+
+    with safetensors.safe_open(ckpt_path, framework="pt") as sf:
+        keys = list(sf.keys())
+    assert len(keys) == 215
+
+    # Run actual offline inference
+    cdm = CognitiveDecisionModel.from_pretrained("experiments/release/cdm-1-general")
+    assert cdm.is_fallback is False
+    res = cdm.decide(
+        text="Review dispute claim",
+        structured_features={"step": 1, "accumulated_cost": 0.0},
+        task="choice",
+        candidates=["auto_resolve", "issue_refund"],
+    )
+    assert res.decision in ("auto_resolve", "issue_refund")
+    assert res.confidence is not None
+    assert res.risk is not None
 
 
 def test_blocker3_unified_cognitive_runtime_orchestration():

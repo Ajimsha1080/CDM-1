@@ -159,7 +159,7 @@ class AgentControlLoop:
         self.sandbox_root = sandbox_root or os.getcwd()
         self.llm = llm_provider or get_llm_provider()
         self.cognitive_engine = cognitive_engine or CognitiveEngine()
-        self.policy_gate = policy_gate or PolicyGate(decision_model=getattr(self.cognitive_engine, "decision_model", None))
+        self.policy_gate = policy_gate or PolicyGate()
         self.store = store or AgentStore()
         self.audit = audit_manager or AuditTrailManager()
 
@@ -565,21 +565,8 @@ class AgentControlLoop:
             self.store.save_run(run)
             return run
 
-        # Validate proposed tool against registered tool interface
-        if proposed.tool not in self.tools and proposed.tool != "complete_task":
-            run.history.append({
-                "step": step_num,
-                "tool": proposed.tool,
-                "gate_decision": "rejected_unregistered_tool",
-                "success": False,
-                "error": f"Tool '{proposed.tool}' is not in the registered tool interface.",
-            })
-            run.step_count += 1
-            self.store.save_run(run)
-            return run
-
         # =====================================================================
-        # Phase 1 & 2: Decision Model Candidate Evaluation, Ranking & Plan Control
+        # Phase 1 & 2: Task-Relevant Candidate Generation & Pre-Ranking Validation
         # =====================================================================
         planned_action_name = None
         plan_step_params = {}
@@ -590,44 +577,152 @@ class AgentControlLoop:
                 planned_action_name = planned_step_obj.action_name
                 plan_step_params = planned_step_obj.parameters or {}
 
-        candidates_to_rank = []
-        if proposed.tool in self.tools:
-            candidates_to_rank.append(proposed.tool)
-        if planned_action_name and planned_action_name in self.tools and planned_action_name not in candidates_to_rank:
-            candidates_to_rank.append(planned_action_name)
-        for t_name in self.tools.keys():
-            if t_name not in candidates_to_rank and t_name not in run.prohibited_actions:
-                candidates_to_rank.append(t_name)
+        # 1. Task-relevant candidate generation (replaces indiscriminate all-tool ranking)
+        raw_candidates = []
+        raw_candidates.append({
+            "tool": proposed.tool,
+            "arguments": proposed.arguments or {},
+            "reason": proposed.reason,
+            "source": "proposed",
+        })
 
-        alternatives_evaluated = []
-        selected_tool_name = proposed.tool
-        selected_tool_args = proposed.arguments
-        selected_reason = proposed.reason
-        selected_neural_score = None
+        if planned_action_name and planned_action_name != proposed.tool:
+            clean_plan_args = {k: v for k, v in plan_step_params.items() if k != "target_goal"}
+            raw_candidates.append({
+                "tool": planned_action_name,
+                "arguments": clean_plan_args,
+                "reason": f"Executing planned step {run.current_plan_step + 1} ({planned_action_name}) per validated sequential plan.",
+                "source": "plan",
+            })
 
-        if candidates_to_rank and getattr(self.cognitive_engine, "decision_core", None) is not None:
-            try:
-                rank_res = self.cognitive_engine.decision_core.decide(
-                    text=f"Task: {run.task_description}. Goal: {run.goal}. Candidate evaluation.",
-                    structured_features={"step": run.step_count + 1, "accumulated_cost": run.accumulated_cost_usd},
-                    task="choice",
-                    candidates=candidates_to_rank[:8],
+        task_text = f"{run.goal} {run.task_description}".lower()
+        if "search" in task_text or "find" in task_text or "grep" in task_text:
+            if "repo_search" in self.tools and all(c["tool"] != "repo_search" for c in raw_candidates):
+                query_val = (
+                    proposed.arguments.get("path")
+                    or proposed.arguments.get("query")
+                    or (run.goal if "search" in run.goal.lower() else run.task_description)
+                )
+                raw_candidates.append({
+                    "tool": "repo_search",
+                    "arguments": {"query": str(query_val)},
+                    "reason": "Task-relevant repository search candidate derived from task intent.",
+                    "source": "task_relevance",
+                })
+
+        # 2. Pre-ranking validation: Tool registration, authorization, arguments, schema, and preconditions
+        eligible_candidates = []
+        validation_rejections = {}
+        for cand in raw_candidates:
+            c_tool = cand["tool"]
+            c_args = cand["arguments"]
+            c_reason = cand.get("reason", "")
+
+            # A. Registration validation
+            if c_tool not in self.tools and c_tool != "complete_task":
+                validation_rejections[c_tool] = ("rejected_unregistered_tool", f"Tool '{c_tool}' is not in the registered tool interface.")
+                continue
+
+            # B. Authorization validation (prohibited actions & policy gate)
+            if c_tool in run.prohibited_actions:
+                validation_rejections[c_tool] = ("block", f"Tool '{c_tool}' is prohibited by tenant execution policy.")
+                continue
+
+            action_item = ProposedAction(tool=c_tool, args=c_args, reason=c_reason)
+            gate_eval = self.policy_gate.evaluate(
+                action=action_item,
+                tenant_id=run.tenant_id,
+                world_state=world_state,
+                tenant_policies=run.tenant_policies,
+                prohibited_actions=run.prohibited_actions,
+            )
+            if gate_eval.decision == GateDecisionType.BLOCK:
+                validation_rejections[c_tool] = ("block", f"Policy Gate Blocked Action: {gate_eval.reason}")
+                continue
+
+            # C. Arguments & Schema validation (candidate must have valid arguments)
+            if c_tool in self.tools and c_tool != "complete_task":
+                tool_obj = self.tools[c_tool]
+                schema_err = tool_obj.validate_args(c_args) if hasattr(tool_obj, "validate_args") else None
+                if schema_err:
+                    validation_rejections[c_tool] = ("rejected_schema_validation", f"Tool argument schema validation failed: {schema_err}")
+                    continue
+
+            # D. Dynamic world state preconditions validation
+            if c_tool in self.tools and c_tool != "complete_task":
+                preconds, preconds_met = self.cognitive_engine.planning_engine._evaluate_preconditions(
+                    action=c_tool,
+                    current_world_state=world_state,
+                    forbidden_actions=set(run.prohibited_actions),
+                )
+                if not preconds_met:
+                    validation_rejections[c_tool] = ("rejected_world_state_preconditions", f"Action '{c_tool}' rejected: preconditions not satisfied under current world state metrics.")
+                    continue
+
+            eligible_candidates.append(cand)
+
+        # 3. Abstain when no valid candidate exists
+        if not eligible_candidates:
+            step_num = run.step_count + 1
+            if proposed.tool in validation_rejections:
+                gate_decision, err_msg = validation_rejections[proposed.tool]
+            else:
+                gate_decision = "abstain_no_valid_candidates"
+                err_msg = "No valid candidate actions satisfy tool registration, authorization, argument schema, and dynamic world state preconditions."
+
+            logger.warning(f"Run {run.run_id}: Step {step_num} candidate validation rejected all options: {err_msg}")
+            run.history.append({
+                "step": step_num,
+                "tool": proposed.tool,
+                "arguments": proposed.arguments,
+                "gate_decision": gate_decision,
+                "success": False,
+                "error": err_msg,
+                "model_version": cdm_model_version,
+            })
+            run.step_count += 1
+            run.status = "waiting_for_approval"
+            run.pending_reason = err_msg
+
+            if working_state.active_goals and gate_decision in ("rejected_schema_validation", "rejected_world_state_preconditions"):
+                replan_candidates = [a for a in candidate_tools if a != proposed.tool]
+                replan_res = self.cognitive_engine.planning_engine.generate_plan(
+                    target_goal=working_state.active_goals[0],
+                    available_actions=replan_candidates if replan_candidates else candidate_tools,
+                    current_world_state=world_state,
+                    reasoning_trace=reasoning_trace,
                     prohibited_actions=run.prohibited_actions,
                     tenant_id=run.tenant_id,
+                    task="replan_after_candidate_validation_failure",
                 )
-                cand_scores = rank_res.candidate_scores or {}
+                if replan_res and replan_res.steps:
+                    run.active_plan = replan_res.model_dump()
+                    run.current_plan_step = 0
+            self.store.save_run(run)
+            return run
+
+        # 4. Authoritative Decision Ranking (uses single authoritative result from cog_result, ZERO duplicate inference)
+        alternatives_evaluated = []
+        selected_tool_name = eligible_candidates[0]["tool"]
+        selected_tool_args = eligible_candidates[0]["arguments"]
+        selected_reason = eligible_candidates[0]["reason"]
+        selected_neural_score = None
+
+        if len(eligible_candidates) > 1:
+            try:
+                cand_scores = cog_result.candidate_scores or {}
                 ranked_candidates = []
-                for c_name in candidates_to_rank[:8]:
-                    if c_name in run.prohibited_actions:
-                        continue
+                for cand in eligible_candidates:
+                    c_name = cand["tool"]
                     c_neural = cand_scores.get(c_name, 0.5)
                     c_risk = pred_risk
                     if c_name in causal_consequences and isinstance(causal_consequences[c_name], dict):
                         c_risk = max(c_risk, causal_consequences[c_name].get("expected_risk", 0.0))
                     # Plan alignment bonus: prioritize the planned step of validated plan
                     c_plan_bonus = 0.35 if (planned_action_name and c_name == planned_action_name) else 0.0
-                    composite_score = (c_neural * (rank_res.confidence or 0.8)) - (c_risk * 0.4) + c_plan_bonus
-                    ranked_candidates.append((composite_score, c_name, c_neural, c_risk))
+                    c_proposed_bonus = 0.05 if (c_name == proposed.tool) else 0.0
+                    composite_score = (c_neural * (cog_result.confidence or 0.85)) - (c_risk * 0.4) + c_plan_bonus + c_proposed_bonus
+                    ranked_candidates.append((composite_score, cand, c_neural, c_risk))
                     alternatives_evaluated.append({
                         "action": c_name,
                         "composite_score": round(composite_score, 4),
@@ -637,22 +732,11 @@ class AgentControlLoop:
                     })
 
                 ranked_candidates.sort(key=lambda x: x[0], reverse=True)
-                if ranked_candidates:
-                    top_composite, top_action, top_neural, top_c_risk = ranked_candidates[0]
-                    selected_tool_name = top_action
-                    selected_neural_score = top_neural
-                    if proposed.tool == top_action:
-                        selected_tool_args = proposed.arguments
-                        selected_reason = proposed.reason
-                    elif top_action == planned_action_name:
-                        # Filter out internal planning metadata keys; never reuse proposed arguments from a different tool
-                        clean_plan_args = {k: v for k, v in plan_step_params.items() if k != "target_goal"}
-                        selected_tool_args = clean_plan_args
-                        selected_reason = f"Executing planned step {run.current_plan_step + 1} ({top_action}) per validated sequential plan."
-                    else:
-                        # Prevent argument reuse from a different candidate tool
-                        selected_tool_args = {}
-                        selected_reason = f"Selected candidate '{top_action}' with optimal decision score ({round(top_neural, 4)}) and risk ({round(top_c_risk, 4)})."
+                top_composite, top_cand, top_neural, top_c_risk = ranked_candidates[0]
+                selected_tool_name = top_cand["tool"]
+                selected_tool_args = top_cand["arguments"]
+                selected_reason = top_cand["reason"]
+                selected_neural_score = top_neural
             except Exception as e:
                 logger.error(f"Candidate ranking exception: {e}")
                 step_num = run.step_count + 1
@@ -669,79 +753,6 @@ class AgentControlLoop:
                 run.status = "waiting_for_approval"
                 run.pending_reason = f"Candidate ranking error: {e}"
                 run.step_count += 1
-                self.store.save_run(run)
-                return run
-
-        # Validate candidate arguments against selected tool's schema
-        if selected_tool_name in self.tools and selected_tool_name != "complete_task":
-            tool_obj = self.tools[selected_tool_name]
-            schema_err = tool_obj.validate_args(selected_tool_args) if hasattr(tool_obj, "validate_args") else None
-            if schema_err:
-                step_num = run.step_count + 1
-                logger.warning(f"Run {run.run_id}: Step {step_num} tool '{selected_tool_name}' argument schema validation failed: {schema_err}")
-                run.history.append({
-                    "step": step_num,
-                    "tool": selected_tool_name,
-                    "arguments": selected_tool_args,
-                    "gate_decision": "rejected_schema_validation",
-                    "success": False,
-                    "error": f"Tool argument schema validation failed: {schema_err}",
-                    "alternatives_evaluated": alternatives_evaluated,
-                    "model_version": cdm_model_version,
-                })
-                run.step_count += 1
-                if working_state.active_goals:
-                    replan_candidates = [a for a in candidate_tools if a != selected_tool_name]
-                    replan_res = self.cognitive_engine.planning_engine.generate_plan(
-                        target_goal=working_state.active_goals[0],
-                        available_actions=replan_candidates if replan_candidates else candidate_tools,
-                        current_world_state=world_state,
-                        reasoning_trace=reasoning_trace,
-                        prohibited_actions=run.prohibited_actions,
-                        tenant_id=run.tenant_id,
-                        task="replan_after_schema_validation_failure",
-                    )
-                    if replan_res and replan_res.steps:
-                        run.active_plan = replan_res.model_dump()
-                        run.current_plan_step = 0
-                self.store.save_run(run)
-                return run
-
-        # Revalidate selected action against dynamic world state preconditions
-        if selected_tool_name in self.tools and selected_tool_name != "complete_task":
-            preconds, preconds_met = self.cognitive_engine.planning_engine._evaluate_preconditions(
-                action=selected_tool_name,
-                current_world_state=world_state,
-                forbidden_actions=set(run.prohibited_actions),
-            )
-            if not preconds_met:
-                step_num = run.step_count + 1
-                logger.warning(f"Run {run.run_id}: Step {step_num} action '{selected_tool_name}' failed world state precondition revalidation: {preconds}")
-                run.history.append({
-                    "step": step_num,
-                    "tool": selected_tool_name,
-                    "arguments": selected_tool_args,
-                    "gate_decision": "rejected_world_state_preconditions",
-                    "success": False,
-                    "error": f"Action '{selected_tool_name}' rejected: preconditions not satisfied under current world state metrics.",
-                    "alternatives_evaluated": alternatives_evaluated,
-                    "model_version": cdm_model_version,
-                })
-                run.step_count += 1
-                if working_state.active_goals:
-                    replan_candidates = [a for a in candidate_tools if a != selected_tool_name]
-                    replan_res = self.cognitive_engine.planning_engine.generate_plan(
-                        target_goal=working_state.active_goals[0],
-                        available_actions=replan_candidates if replan_candidates else candidate_tools,
-                        current_world_state=world_state,
-                        reasoning_trace=reasoning_trace,
-                        prohibited_actions=run.prohibited_actions,
-                        tenant_id=run.tenant_id,
-                        task="replan_after_precondition_failure",
-                    )
-                    if replan_res and replan_res.steps:
-                        run.active_plan = replan_res.model_dump()
-                        run.current_plan_step = 0
                 self.store.save_run(run)
                 return run
 

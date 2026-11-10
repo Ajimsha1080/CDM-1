@@ -71,6 +71,7 @@ class PolicyGate:
         prohibited_tools: Optional[List[str]] = None,
         prohibited_actions: Optional[List[str]] = None,
         monetary_limit: float = 500.0,
+        authoritative_risk: Optional[float] = None,
     ) -> GateDecision:
         """Evaluates proposed action in strict deterministic sequence."""
         evaluated_rules: List[str] = []
@@ -208,10 +209,14 @@ class PolicyGate:
         calculated_risk = min(max(base_risk, 0.05), 0.95)
 
         # =====================================================================
-        # Stage (d): Optional Neural Model Risk Scoring (One input only)
+        # Stage (d): Authoritative Neural Model Risk Scoring (One input only)
         # =====================================================================
         neural_risk: Optional[float] = None
-        if self.decision_model is not None:
+        if authoritative_risk is not None:
+            evaluated_rules.append("stage_d:authoritative_neural_scoring")
+            neural_risk = float(authoritative_risk)
+            calculated_risk = max(calculated_risk, neural_risk)
+        elif self.decision_model is not None:
             evaluated_rules.append("stage_d:neural_scoring")
             try:
                 model_res = self.decision_model.decide(

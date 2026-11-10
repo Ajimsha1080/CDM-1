@@ -35,7 +35,7 @@ The Ed25519 private key is the root of trust for all distributed weights and man
 1. **Embedded Public Key**:
    - The verified public key (`TRUSTED_RELEASE_PUBLIC_KEY`) is hardcoded in `cdm/security/manifest_verification.py`:
      ```python
-     TRUSTED_RELEASE_PUBLIC_KEY = "6765c115e21dd648b1ac1d12a3183357e407deeb6d554a5caad1b8ab9dc0334d"
+     TRUSTED_RELEASE_PUBLIC_KEY = "4784afcf98a872ec65cc951f8803c6619e777923b559196f4cd9297bbadf56a5"
      ```
 2. **Distribution Channels**:
    - The trusted public key is published across out-of-band communication channels, including official release notes and GitHub release tags.

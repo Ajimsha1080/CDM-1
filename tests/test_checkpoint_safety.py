@@ -60,3 +60,56 @@ def test_missing_backbone_with_local_files_only_raises_clear_error():
     )
     with pytest.raises(RuntimeError, match="missing from local files/cache with local_files_only=True"):
         LanguageEncoder(cfg)
+
+
+def test_software_only_mode_works_without_weights():
+    """Verify software-only mode initializes and functions without neural weights."""
+    with tempfile.TemporaryDirectory() as empty_dir:
+        runtime = CognitiveDecisionModel.from_pretrained(
+            empty_dir,
+            allow_fallback=True,
+            production_mode=False,
+        )
+        assert runtime.is_fallback is True
+        assert runtime.loading_status["mode"] == "development_rule_fallback"
+
+        # Verify inference execution without weights
+        result = runtime.predict(
+            text="Customer requests refund for damaged order",
+            structured_features={"amount": 45.0, "risk_score": 0.1},
+            task="binary",
+        )
+        assert result.decision in ("YES", "NO")
+        assert result.used_neural_inference is False
+        assert result.neural_score is None
+        assert result.data["prediction_source"] == "rule_based_fallback"
+
+
+def test_production_mode_cannot_silently_use_fallback():
+    """Verify production mode strictly rejects silent fallbacks when weights are absent."""
+    with tempfile.TemporaryDirectory() as empty_dir:
+        # 1. Pipeline level check
+        with pytest.raises(FileNotFoundError, match="Production mode strictly requires"):
+            CognitiveDecisionModel.from_pretrained(
+                empty_dir,
+                allow_fallback=True,  # Overridden by production_mode=True
+                production_mode=True,
+            )
+
+        # 2. Environment variable enforcement
+        os.environ["CDM_PRODUCTION_MODE"] = "1"
+        try:
+            with pytest.raises(FileNotFoundError, match="Production mode strictly requires"):
+                CognitiveDecisionModel.from_pretrained(
+                    empty_dir,
+                    allow_fallback=True,
+                )
+        finally:
+            os.environ.pop("CDM_PRODUCTION_MODE", None)
+
+        # 3. CognitiveEngine level check: strictly fails fast during initialization
+        from cdm.cognitive.engine import CognitiveEngine
+        with pytest.raises(RuntimeError, match="Production mode startup failure"):
+            CognitiveEngine(decision_model=None, production_mode=True)
+
+

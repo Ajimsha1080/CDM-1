@@ -54,12 +54,10 @@ class CognitiveEngine:
     ):
         effective_model = decision_core if decision_core is not None else decision_model
         is_prod = production_mode or (os.environ.get("CDM_PRODUCTION_MODE", "").strip().lower() in ("1", "true", "yes"))
+        self.production_mode = is_prod
+
         if is_prod:
-            if effective_model is None or getattr(effective_model, "is_fallback", False):
-                raise RuntimeError(
-                    "Production mode startup failure: CDM-1 requires an authenticated, trained decision model checkpoint, "
-                    "but no trained checkpoint was loaded."
-                )
+            self.verify_model_trust(effective_model)
 
         # 1. Perception Subsystem
         self.perception_engine = PerceptionEngine()
@@ -154,12 +152,79 @@ class CognitiveEngine:
         )
         return cls(decision_model=decision_model, db_path=db_path, production_mode=production_mode)
 
+    @classmethod
+    def verify_model_trust(cls, model: Any) -> None:
+        """Independently verifies production readiness of a decision model instance.
+        Rejects:
+        1. None or fallback rule scorers.
+        2. Directly supplied unverified model objects (in-memory injection bypass).
+        3. Randomly initialized or unauthenticated model checkpoints.
+        4. Checkpoints with invalid/tampered artifact SHA-256 hashes or signatures.
+        5. Checkpoints missing genuine CDMModel architecture.
+        """
+        if model is None:
+            raise RuntimeError(
+                "Production mode startup failure: Production model trust failure: No decision model provided. "
+                "Production mode strictly requires an authenticated, trained CDM-1 model."
+            )
+        if getattr(model, "is_fallback", False):
+            raise RuntimeError(
+                "Production mode startup failure: Production model trust failure: Fallback rule scorer cannot be used in production mode. "
+                "A genuine trained neural checkpoint is strictly required."
+            )
+
+        status = getattr(model, "loading_status", None)
+        if not status or not isinstance(status, dict):
+            raise RuntimeError(
+                "Production mode startup failure: Production model trust failure: Directly supplied unverified model object rejected in production. "
+                "Model object was not loaded through authenticated checkpoint loader (loading_status missing)."
+            )
+
+        if not status.get("authenticated", False):
+            raise RuntimeError(
+                "Production mode startup failure: Production model trust failure: Directly supplied unverified model object rejected in production. "
+                "Model object lacks verified cryptographic authentication."
+            )
+
+        if not status.get("signature_verified", False):
+            raise RuntimeError(
+                "Production mode startup failure: Production model trust failure: Model manifest signature verification failed or was bypassed."
+            )
+
+        # Expected SHA-256 for release artifact
+        EXPECTED_RELEASE_SHA256 = "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a"
+        artifact_hash = status.get("artifact_hash")
+        if not artifact_hash or artifact_hash.lower() != EXPECTED_RELEASE_SHA256.lower():
+            raise RuntimeError(
+                f"Production mode startup failure: Production model trust failure: Artifact SHA-256 hash '{artifact_hash}' does not match "
+                f"expected release hash '{EXPECTED_RELEASE_SHA256}'."
+            )
+
+        # Verify underlying PyTorch model architecture and weights
+        py_model = getattr(model, "model", None)
+        if py_model is None:
+            raise RuntimeError("Production mode startup failure: Production model trust failure: Underlying PyTorch neural model is missing.")
+
+        from cdm.models.cdm_model import CDMModel
+        if not isinstance(py_model, CDMModel):
+            raise RuntimeError(
+                f"Production mode startup failure: Production model trust failure: Model architecture {type(py_model)} does not conform to CDMModel."
+            )
+
+        param_count = sum(p.numel() for p in py_model.parameters())
+        if param_count < 100_000_000:
+            raise RuntimeError(
+                f"Production mode startup failure: Production model trust failure: Model parameter count ({param_count}) is inconsistent with CDM-1 architecture."
+            )
+
     @property
     def decision_model(self) -> Optional[CognitiveDecisionModel]:
         return self.decision_core
 
     @decision_model.setter
     def decision_model(self, model: Optional[CognitiveDecisionModel]) -> None:
+        if self.production_mode and model is not None:
+            self.verify_model_trust(model)
         self.decision_core = model
 
     def get_isolated_world_model(self, tenant_id: str, session_id: str) -> WorldModel:

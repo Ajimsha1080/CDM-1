@@ -680,12 +680,32 @@ class PlanningEngine:
         """Explicit plan lifecycle transition: separates proposed plan from approved plan.
         Only approved plans may be dispatched for execution.
         """
-        if plan.plan_stage != "proposed":
+        if plan.plan_stage != "proposed" and getattr(plan, "status", None) != "proposed":
             raise ValueError(
                 f"Cannot approve plan in '{plan.plan_stage}' stage. Only 'proposed' plans can be approved."
             )
         plan.plan_stage = "approved"
+        plan.status = "approved"
+        plan.approved_by = approver_id
+        plan.approval_timestamp = time.time()
         return plan
+
+    def dispatch_plan(
+        self,
+        plan: Plan,
+        executor_role: str = "system",
+        authorization_token: Optional[str] = None,
+        prohibited_actions: Optional[List[str]] = None,
+    ) -> Plan:
+        """Dispatches an approved plan for execution via PlanDispatcher."""
+        from cdm.execution.dispatcher import PlanDispatcher
+        dispatcher = PlanDispatcher()
+        return dispatcher.dispatch_plan(
+            plan=plan,
+            executor_role=executor_role,
+            authorization_token=authorization_token,
+            prohibited_actions=prohibited_actions,
+        )
 
     def _evaluate_metric_condition(self, metric_name: str, obs_val: Any, target_condition: Any) -> Tuple[bool, str]:
         """Compares actual observed metric value against numeric or non-numeric target conditions.
@@ -763,10 +783,11 @@ class PlanningEngine:
         Enforces step ID legitimacy, sequential ordering, record completeness,
         and records real observed telemetry without mistaking proposed steps for outcomes.
         """
-        # Validate plan lifecycle stage
-        if plan.plan_stage not in ["proposed", "approved", "in_progress", "executing"]:
+        # Validate plan lifecycle stage: reject proposed, abstained, prohibited, and expired plans
+        if plan.plan_stage not in ["approved", "dispatched", "in_progress", "executing"]:
             raise ValueError(
-                f"Cannot record execution for plan in '{plan.plan_stage}' stage."
+                f"Execution Safety Violation: Cannot record execution for plan in '{plan.plan_stage}' stage. "
+                "Only approved/dispatched plans may execute."
             )
 
         # Validate step completeness

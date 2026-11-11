@@ -88,6 +88,13 @@ class PredictiveNetwork(nn.Module):
                 candidate_estimated_risk: [batch_size, num_cands, 1] (if candidate_embeddings provided)
                 candidate_outcome_entropy: [batch_size, num_cands] (if candidate_embeddings provided)
         """
+        if not torch.is_tensor(cognitive_state):
+            raise TypeError(f"cognitive_state must be a torch.Tensor, got {type(cognitive_state)}")
+        if not torch.isfinite(cognitive_state).all():
+            raise ValueError("Non-finite values (NaN/Inf) detected in cognitive_state input.")
+        if cognitive_state.dtype not in (torch.float32, torch.float64):
+            raise TypeError(f"cognitive_state must be float tensor, got {cognitive_state.dtype}")
+
         batch_size = cognitive_state.shape[0]
         device = cognitive_state.device
 
@@ -171,6 +178,16 @@ class PredictiveNetwork(nn.Module):
                 f"num_samples must be at least 2 for Monte Carlo variance estimation, got {num_samples}."
             )
 
+        if not torch.is_tensor(cognitive_state):
+            raise TypeError(f"cognitive_state must be a torch.Tensor, got {type(cognitive_state)}")
+        if not torch.isfinite(cognitive_state).all():
+            raise ValueError("Non-finite values (NaN/Inf) detected in cognitive_state input.")
+        if cognitive_state.dtype not in (torch.float32, torch.float64):
+            raise TypeError(f"cognitive_state must be float tensor, got {cognitive_state.dtype}")
+
+        batch_size = cognitive_state.shape[0]
+        device = cognitive_state.device
+
         was_training = self.training
         try:
             self.train(True)  # Enable dropout during sampling
@@ -196,6 +213,16 @@ class PredictiveNetwork(nn.Module):
             var_binary = torch.var(stacked_binary, dim=0, unbiased=False).squeeze(-1)  # [batch_size]
             var_risk = torch.var(stacked_risk, dim=0, unbiased=False).squeeze(-1)  # [batch_size]
             var_multi = torch.var(stacked_multi, dim=0, unbiased=False).mean(dim=-1)  # [batch_size]
+
+            for v_name, v_ten in [("var_binary", var_binary), ("var_risk", var_risk), ("var_multi", var_multi)]:
+                if not torch.isfinite(v_ten).all():
+                    raise ValueError(f"Non-finite values (NaN/Inf) encountered in computed {v_name}.")
+                if (v_ten < 0).any():
+                    raise ValueError(f"Negative variance encountered in {v_name}.")
+                if v_ten.shape != (batch_size,):
+                    raise ValueError(f"{v_name} shape mismatch: expected ({batch_size},), got {v_ten.shape}")
+                if v_ten.device != device:
+                    raise ValueError(f"{v_name} device mismatch: expected {device}, got {v_ten.device}")
 
             mean_binary = torch.mean(stacked_binary, dim=0).squeeze(-1)
             mean_risk = torch.mean(stacked_risk, dim=0).squeeze(-1)

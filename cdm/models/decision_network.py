@@ -65,8 +65,52 @@ class DecisionNetwork(nn.Module):
             Dictionary with logits, calibrated probabilities, continuous score,
             priority, risk, decoupled uncertainties, and individual/combined abstention flags.
         """
+        if not torch.is_tensor(cognitive_state):
+            raise TypeError(f"cognitive_state must be a torch.Tensor, got {type(cognitive_state)}")
+        if not torch.isfinite(cognitive_state).all():
+            raise ValueError("Non-finite values (NaN/Inf) detected in cognitive_state input.")
+        if cognitive_state.dtype not in (torch.float32, torch.float64):
+            raise TypeError(f"cognitive_state must be float tensor, got {cognitive_state.dtype}")
+
         batch_size = cognitive_state.shape[0]
         device = cognitive_state.device
+
+        # Uncertainty input validation
+        if predictive_uncertainty is not None:
+            if not torch.is_tensor(predictive_uncertainty):
+                raise TypeError(f"predictive_uncertainty must be a torch.Tensor, got {type(predictive_uncertainty)}")
+            if not torch.isfinite(predictive_uncertainty).all():
+                raise ValueError("Non-finite values (NaN/Inf) detected in predictive_uncertainty.")
+            if predictive_uncertainty.dim() == 2 and predictive_uncertainty.shape == (batch_size, 1):
+                predictive_uncertainty = predictive_uncertainty.squeeze(-1)
+            elif predictive_uncertainty.shape != (batch_size,):
+                raise ValueError(
+                    f"predictive_uncertainty shape mismatch: expected ({batch_size},), got {predictive_uncertainty.shape}"
+                )
+            predictive_uncertainty = predictive_uncertainty.to(device=device, dtype=torch.float32)
+
+        if candidate_uncertainty is not None:
+            if not torch.is_tensor(candidate_uncertainty):
+                raise TypeError(f"candidate_uncertainty must be a torch.Tensor, got {type(candidate_uncertainty)}")
+            if not torch.isfinite(candidate_uncertainty).all():
+                raise ValueError("Non-finite values (NaN/Inf) detected in candidate_uncertainty.")
+            if candidate_uncertainty.dim() == 2 and candidate_uncertainty.shape == (batch_size, 1):
+                candidate_uncertainty = candidate_uncertainty.squeeze(-1)
+            elif candidate_uncertainty.shape != (batch_size,):
+                raise ValueError(
+                    f"candidate_uncertainty shape mismatch: expected ({batch_size},), got {candidate_uncertainty.shape}"
+                )
+            candidate_uncertainty = candidate_uncertainty.to(device=device, dtype=torch.float32)
+
+        if policy_rejected is not None:
+            if not torch.is_tensor(policy_rejected):
+                raise TypeError(f"policy_rejected must be a torch.Tensor, got {type(policy_rejected)}")
+            if policy_rejected.dim() == 2 and policy_rejected.shape == (batch_size, 1):
+                policy_rejected = policy_rejected.squeeze(-1)
+            elif policy_rejected.shape != (batch_size,):
+                raise ValueError(
+                    f"policy_rejected shape mismatch: expected ({batch_size},), got {policy_rejected.shape}"
+                )
 
         rep = self.decision_trunk(cognitive_state)
 

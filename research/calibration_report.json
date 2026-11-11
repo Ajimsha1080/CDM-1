@@ -4,8 +4,39 @@
     "calibration_split": "datasets/val.jsonl",
     "held_out_test_split": "datasets/test.jsonl",
     "temperature_tuning_method": "NLL minimization via L-BFGS on validation logits",
-    "threshold_selection_method": "Sweep on calibrated validation probabilities (tau >= 0.50)"
+    "threshold_selection_method": "Sweep on calibrated validation probabilities (tau >= 0.50)",
+    "dataset_hashes": {
+      "train": "4b74b481599b63f4f6a22073695110c98e92cb227f63ee682178c66a260bbc37",
+      "val": "edb19a210bc537d3b1a66b2504a76c86f9d70b7fdfbb32eaa2a22afbe1bc0aac",
+      "test": "68a963fc4f8b4fbc5ec79b7f426a662bae3a81f642d3dbb6bcb1c936361b6938",
+      "heldout_domain_test": "6c2cd78cf0a354e5b86a1bb25079e616e12b923e4b7aa7e0c2428821d01af01f",
+      "ood_test": "389f33ed927fb4572d14463e0000fad17da8fe68f1be3fad28faff103c94474f"
+    },
+    "test_split_isolation": "Strictly untouched during calibration and threshold search"
   },
+  "nested_validation_folds": [
+    {
+      "fold": 1,
+      "train_samples": 27,
+      "val_samples": 13,
+      "optimal_temperature": 0.9412,
+      "calibrated_ece": 0.009
+    },
+    {
+      "fold": 2,
+      "train_samples": 27,
+      "val_samples": 13,
+      "optimal_temperature": 1.0301,
+      "calibrated_ece": 0.0568
+    },
+    {
+      "fold": 3,
+      "train_samples": 26,
+      "val_samples": 14,
+      "optimal_temperature": 0.9087,
+      "calibrated_ece": 0.2164
+    }
+  ],
   "optimal_temperature": 0.9736,
   "selected_abstention_threshold": 0.9,
   "validation_calibration_metrics": {

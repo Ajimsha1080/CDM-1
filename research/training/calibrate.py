@@ -197,13 +197,67 @@ def calibrate_and_evaluate(
     model = CDMModel.from_pretrained(checkpoint_dir).to(device)
     model.eval()
 
+    import hashlib
+
+    def compute_sha256(filepath: str) -> str:
+        resolved = filepath
+        if not os.path.exists(resolved):
+            cand = os.path.join("research", filepath)
+            if os.path.exists(cand):
+                resolved = cand
+        if not os.path.exists(resolved):
+            return "not_found"
+        h = hashlib.sha256()
+        with open(resolved, "rb") as f:
+            while chunk := f.read(65536):
+                h.update(chunk)
+        return h.hexdigest()
+
+    dataset_hashes = {
+        "train": compute_sha256("datasets/train.jsonl"),
+        "val": compute_sha256("datasets/val.jsonl"),
+        "test": compute_sha256("datasets/test.jsonl"),
+        "heldout_domain_test": compute_sha256("datasets/heldout_domain_test.jsonl"),
+        "ood_test": compute_sha256("datasets/ood_test.jsonl"),
+    }
+
     # --- Phase 1: Collect calibration predictions (validation split only) ---
     val_logits, val_targets = collect_model_predictions(model, val_loader, device)
 
     # Uncalibrated baseline metrics on validation data
     uncal_val_metrics = evaluate_split_metrics(val_logits, val_targets, temperature=1.0, threshold=0.55)
 
-    # --- Phase 2: Optimize Temperature T strictly on validation calibration data ---
+    # --- Phase 2: Nested Validation Procedure on Calibration Data (3-fold) ---
+    n_val = len(val_targets)
+    fold_size = n_val // 3
+    nested_folds = []
+    for fold in range(3):
+        val_idx = list(range(fold * fold_size, (fold + 1) * fold_size if fold < 2 else n_val))
+        train_idx = [i for i in range(n_val) if i not in val_idx]
+        fold_train_logits = val_logits[train_idx]
+        fold_train_targets = val_targets[train_idx]
+        fold_val_logits = val_logits[val_idx]
+        fold_val_targets = val_targets[val_idx]
+
+        f_temp = nn.Parameter(torch.ones(1, device=device) * 1.5)
+        f_opt = torch.optim.LBFGS([f_temp], lr=0.01, max_iter=50)
+        def fold_loss():
+            f_opt.zero_grad()
+            l = F.cross_entropy(fold_train_logits / torch.clamp(f_temp, min=0.1, max=10.0), fold_train_targets)
+            l.backward()
+            return l
+        f_opt.step(fold_loss)
+        f_optimal = float(f_temp.detach().cpu().item())
+        f_metrics = evaluate_split_metrics(fold_val_logits, fold_val_targets, temperature=f_optimal, threshold=0.55)
+        nested_folds.append({
+            "fold": fold + 1,
+            "train_samples": len(train_idx),
+            "val_samples": len(val_idx),
+            "optimal_temperature": round(f_optimal, 4),
+            "calibrated_ece": f_metrics["ece"],
+        })
+
+    # Optimize overall Temperature T strictly on full validation calibration data
     temp_param = nn.Parameter(torch.ones(1, device=device) * 1.5)
     optimizer = torch.optim.LBFGS([temp_param], lr=0.01, max_iter=50)
 
@@ -258,7 +312,10 @@ def calibrate_and_evaluate(
             "held_out_test_split": "datasets/test.jsonl",
             "temperature_tuning_method": "NLL minimization via L-BFGS on validation logits",
             "threshold_selection_method": "Sweep on calibrated validation probabilities (tau >= 0.50)",
+            "dataset_hashes": dataset_hashes,
+            "test_split_isolation": "Strictly untouched during calibration and threshold search",
         },
+        "nested_validation_folds": nested_folds,
         "optimal_temperature": round(optimal_temp, 4),
         "selected_abstention_threshold": round(best_thresh, 2),
         "validation_calibration_metrics": {

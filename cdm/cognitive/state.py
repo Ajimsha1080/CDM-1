@@ -171,7 +171,13 @@ class Plan(BaseModel):
     """
     plan_id: str = Field(default_factory=lambda: f"plan_{uuid.uuid4().hex[:8]}")
     target_goal_id: str
-    plan_stage: str = "proposed"  # 'proposed', 'dispatched', 'in_progress', 'completed', 'failed'
+    plan_stage: str = "proposed"  # 'proposed', 'approved', 'abstained', 'prohibited', 'expired', 'dispatched', 'in_progress', 'completed', 'failed', 'rejected'
+    status: str = "proposed"
+    approved_by: Optional[str] = None
+    approval_timestamp: Optional[float] = None
+    expires_at: Optional[float] = None
+    authorization_token: Optional[str] = None
+    authorized_actions: List[str] = Field(default_factory=list)
     steps: List[PlanStep] = Field(default_factory=list)
     executed_steps: List[ExecutedActionStep] = Field(default_factory=list)
     observed_outcomes: List[Dict[str, Any]] = Field(default_factory=list)

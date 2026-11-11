@@ -24,25 +24,23 @@ from cdm.data.preprocessor import DecisionPreprocessor
 from cdm.utils.training_utils import set_seed, EarlyStopping
 
 
-def cache_multitask_batches(model: CDMModel, loader: DataLoader, device: torch.device):
-    """Pre-computes sequence token pooling through the frozen transformer backbone,
-    allowing the language projection layer, structured encoder, fusion, predictive network,
-    decision heads, and candidate scorer to be trained end-to-end with live backpropagation.
+def cache_multitask_examples(model: CDMModel, loader: DataLoader, device: torch.device) -> List[Dict[str, Any]]:
+    """Caches individual pre-computed contextual and candidate representations.
+    Extracts individual examples rather than rigid batches to enable genuine per-epoch
+    reshuffling of individual training examples before batch construction.
     """
     model.eval()
-    cached_batches = []
-    print("Pre-computing context and candidate representations with frozen backbone...", flush=True)
+    cached_examples: List[Dict[str, Any]] = []
+    print("Pre-computing individual representations with frozen backbone...", flush=True)
 
     with torch.no_grad():
         for batch in loader:
             input_ids = batch["input_ids"].to(device)
             attention_mask = batch["attention_mask"].to(device)
 
-            # Extract sequence output from transformer backbone and pool
             seq_out = model.language_encoder.transformer(input_ids=input_ids, attention_mask=attention_mask)[0]
             pooled_text = model.language_encoder.pool_tokens(seq_out, attention_mask)
 
-            # Pre-extract candidate embeddings through transformer backbone
             c_input_ids = batch["candidate_input_ids"]
             c_attention_mask = batch["candidate_attention_mask"]
             candidate_pooled = None
@@ -55,17 +53,98 @@ def cache_multitask_batches(model: CDMModel, loader: DataLoader, device: torch.d
                 flat_pooled = model.language_encoder.pool_tokens(flat_out, flat_mask)
                 candidate_pooled = flat_pooled.reshape(b_size, n_cands, -1)
 
-            cached_batches.append({
-                "pooled_text": pooled_text.detach(),
-                "candidate_pooled": candidate_pooled.detach() if candidate_pooled is not None else None,
-                "numeric_values": batch["numeric_values"].to(device),
-                "missing_indicators": batch["missing_indicators"].to(device),
-                "categorical_indices": {k: v.to(device) for k, v in batch["categorical_indices"].items()},
-                "targets": {k: v.to(device) for k, v in batch["targets"].items()},
-                "constraint_mask": batch["constraint_mask"].to(device) if batch["constraint_mask"] is not None else None,
-                "existence_mask": batch["existence_mask"].to(device) if batch["existence_mask"] is not None else None,
-            })
-    return cached_batches
+            b_size = pooled_text.shape[0]
+            for i in range(b_size):
+                n_c = 0
+                if batch["existence_mask"] is not None:
+                    n_c = int(batch["existence_mask"][i].sum().item())
+
+                cand_p = None
+                if candidate_pooled is not None and n_c > 0:
+                    cand_p = candidate_pooled[i : i + 1, :n_c, :].detach()
+
+                c_mask = None
+                if batch["constraint_mask"] is not None and n_c > 0:
+                    c_mask = batch["constraint_mask"][i, :n_c].to(device)
+
+                cached_examples.append({
+                    "pooled_text": pooled_text[i : i + 1].detach(),
+                    "candidate_pooled": cand_p,
+                    "num_candidates": n_c,
+                    "numeric_values": batch["numeric_values"][i].to(device),
+                    "missing_indicators": batch["missing_indicators"][i].to(device),
+                    "categorical_indices": {k: v[i].to(device) for k, v in batch["categorical_indices"].items()},
+                    "targets": {k: v[i].to(device) for k, v in batch["targets"].items()},
+                    "constraint_mask": c_mask,
+                })
+    return cached_examples
+
+
+def collate_cached_examples(examples: List[Dict[str, Any]], device: torch.device) -> Dict[str, Any]:
+    """Collates a dynamically shuffled slice of individual cached examples into a training batch.
+    Preserves all candidate, feature, mask, and multi-task target associations.
+    """
+    batch_size = len(examples)
+    pooled_text = torch.cat([ex["pooled_text"] for ex in examples], dim=0)
+    numeric_values = torch.stack([ex["numeric_values"] for ex in examples], dim=0)
+    missing_indicators = torch.stack([ex["missing_indicators"] for ex in examples], dim=0)
+
+    cat_keys = examples[0]["categorical_indices"].keys()
+    categorical_indices = {
+        k: torch.stack([ex["categorical_indices"][k] for ex in examples], dim=0)
+        for k in cat_keys
+    }
+
+    target_keys = examples[0]["targets"].keys()
+    targets = {
+        k: torch.stack([ex["targets"][k] for ex in examples], dim=0)
+        for k in target_keys
+    }
+
+    max_cands = max(ex["num_candidates"] for ex in examples)
+    candidate_pooled = None
+    constraint_mask = None
+    existence_mask = None
+
+    if max_cands > 0:
+        hidden_dim = 768
+        for ex in examples:
+            if ex["candidate_pooled"] is not None:
+                hidden_dim = ex["candidate_pooled"].shape[-1]
+                break
+
+        candidate_pooled = torch.zeros((batch_size, max_cands, hidden_dim), device=device)
+        constraint_mask = torch.zeros((batch_size, max_cands), device=device)
+        existence_mask = torch.zeros((batch_size, max_cands), device=device)
+
+        for b_idx, ex in enumerate(examples):
+            nc = ex["num_candidates"]
+            if nc > 0 and ex["candidate_pooled"] is not None:
+                candidate_pooled[b_idx, :nc, :] = ex["candidate_pooled"][0]
+                existence_mask[b_idx, :nc] = 1.0
+                if ex["constraint_mask"] is not None:
+                    constraint_mask[b_idx, :nc] = ex["constraint_mask"]
+
+    return {
+        "pooled_text": pooled_text,
+        "candidate_pooled": candidate_pooled,
+        "numeric_values": numeric_values,
+        "missing_indicators": missing_indicators,
+        "categorical_indices": categorical_indices,
+        "targets": targets,
+        "constraint_mask": constraint_mask,
+        "existence_mask": existence_mask,
+    }
+
+
+def cache_multitask_batches(model: CDMModel, loader: DataLoader, device: torch.device):
+    """Backward compatibility wrapper: caches examples and groups them."""
+    examples = cache_multitask_examples(model, loader, device)
+    batches = []
+    bs = 16
+    for i in range(0, len(examples), bs):
+        batches.append(collate_cached_examples(examples[i : i + bs], device))
+    return batches
 
 
 def train_multitask(
@@ -107,9 +186,15 @@ def train_multitask(
     initial_proj_weight = model.language_encoder.projection[0].weight.clone().detach()
     initial_scorer_weight = model.candidate_scorer.scorer_mlp[0].weight.clone().detach()
 
-    # Pre-compute representations
-    cached_train = cache_multitask_batches(model, train_loader, device)
-    cached_val = cache_multitask_batches(model, val_loader, device)
+    # Pre-compute individual representations
+    cached_train_examples = cache_multitask_examples(model, train_loader, device)
+    cached_val_examples = cache_multitask_examples(model, val_loader, device)
+
+    # Static deterministic batches for validation
+    val_batches = [
+        collate_cached_examples(cached_val_examples[i : i + batch_size], device)
+        for i in range(0, len(cached_val_examples), batch_size)
+    ]
 
     # Train all custom neural components (including candidate scorer & projection)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
@@ -138,10 +223,17 @@ def train_multitask(
         epoch_grad_norms = []
         epoch_head_grad_norms = defaultdict(list)
 
-        # Shuffle training batches each epoch while preserving batch internal associations
-        batch_indices = list(range(len(cached_train)))
-        random.shuffle(batch_indices)
-        shuffled_train = [cached_train[i] for i in batch_indices]
+        # Reshuffle individual training examples before batch construction with seed-controlled reproducibility
+        epoch_rng = random.Random(42 + epoch)
+        permuted_indices = list(range(len(cached_train_examples)))
+        epoch_rng.shuffle(permuted_indices)
+
+        # Build batches dynamically from reshuffled individual examples
+        shuffled_train = []
+        for b_start in range(0, len(permuted_indices), batch_size):
+            b_ids = permuted_indices[b_start : b_start + batch_size]
+            b_examples = [cached_train_examples[idx] for idx in b_ids]
+            shuffled_train.append(collate_cached_examples(b_examples, device))
 
         for batch in shuffled_train:
             text_emb = model.language_encoder.projection(batch["pooled_text"])
@@ -214,7 +306,7 @@ def train_multitask(
                 epoch_task_losses[k] = epoch_task_losses.get(k, 0.0) + (v / len(shuffled_train))
 
         scheduler.step()
-        avg_train_loss = train_loss / len(cached_train)
+        avg_train_loss = train_loss / max(len(shuffled_train), 1)
         avg_grad_norm = float(np.mean(epoch_grad_norms))
 
         # Validation step across all modalities and domains
@@ -228,7 +320,7 @@ def train_multitask(
         val_domain_correct = defaultdict(lambda: {"correct": 0, "total": 0})
 
         with torch.no_grad():
-            for b_idx, batch in enumerate(cached_val):
+            for b_idx, batch in enumerate(val_batches):
                 text_emb = model.language_encoder.projection(batch["pooled_text"])
                 cand_pooled = batch["candidate_pooled"]
                 cand_raw = (
@@ -303,7 +395,7 @@ def train_multitask(
                     val_correct_choice += ((choice_preds == targets["choice_target"]) * choice_mask).sum().item()
                     val_total_choice += choice_mask.sum().item()
 
-        avg_val_loss = val_loss / len(cached_val)
+        avg_val_loss = val_loss / max(len(val_batches), 1)
         val_bin_acc = val_correct_bin / max(val_total_bin, 1)
         val_choice_acc = val_correct_choice / max(val_total_choice, 1)
         val_prio_acc = val_correct_prio / max(val_total_prio, 1)

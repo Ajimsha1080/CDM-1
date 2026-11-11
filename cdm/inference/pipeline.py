@@ -79,6 +79,17 @@ class CognitiveDecisionModel:
             self.model = None
             self.tokenizer = None
 
+        if not hasattr(self, "loading_status"):
+            self.loading_status = {
+                "loaded": not self.is_fallback,
+                "authenticated": False,
+                "signature_verified": False,
+                "is_fallback": self.is_fallback,
+                "artifact_hash": self.artifact_hash if not self.is_fallback else None,
+                "production_mode": False,
+                "mode": "injected_unverified" if not self.is_fallback else "fallback",
+            }
+
     @classmethod
     def from_pretrained(
         cls,
@@ -158,6 +169,9 @@ class CognitiveDecisionModel:
         instance = cls(model=model, tokenizer=tokenizer, schema=schema, device=device, artifact_hash=artifact_hash, is_fallback=False)
         instance.loading_status = {
             "loaded": True,
+            "authenticated": True,
+            "signature_verified": bool(auth_info.get("signature_verified", False)),
+            "checkpoint_path": os.path.abspath(resolved_path),
             "param_count": param_count,
             "model_id": getattr(model.config, "model_name", "CDM-1-General"),
             "model_version": getattr(model.config, "model_version", "1.0.0"),

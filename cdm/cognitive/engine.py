@@ -414,7 +414,25 @@ class CognitiveEngine:
                 if act != decision
             ]
 
-            # Step H: Planning Intelligence (when enabled)
+            # Compute ranked candidate list from decision model scores
+            candidate_ranking: List[Tuple[str, float]] = []
+            if cdm_result.candidate_scores:
+                candidate_ranking = sorted(
+                    [(k, float(v)) for k, v in cdm_result.candidate_scores.items() if v is not None],
+                    key=lambda x: x[1],
+                    reverse=True,
+                )
+
+            # Step H: Metacognitive Safety Check (evaluated before plan generation)
+            if reasoning_trace.contradictions_found and not abstain:
+                if calibrated_conf < 0.75:
+                    abstain = True
+                    abstention_reason = (
+                        f"Metacognitive Abstention: Discovered contradictions ({len(reasoning_trace.contradictions_found)}) "
+                        f"with marginal confidence ({calibrated_conf:.3f})."
+                    )
+
+            # Step I: Planning Intelligence (when enabled)
             generated_plan: Optional[Plan] = None
             if execute_planning and working_state.active_goals:
                 primary_goal = working_state.active_goals[0]
@@ -435,22 +453,21 @@ class CognitiveEngine:
                     predicted_outcome=pred_for_planning,
                     tenant_id=tenant_id,
                     task=task,
+                    selected_decision=decision,
+                    candidate_ranking=candidate_ranking,
+                    abstain=abstain,
+                    abstention_reason=abstention_reason,
                 )
 
-            # Step I: Metacognitive Review & Safety Gate
-            # Check if reasoning discovered severe contradictions or high world uncertainty
-            if reasoning_trace.contradictions_found and not abstain:
-                if calibrated_conf < 0.75:
-                    abstain = True
-                    abstention_reason = (
-                        f"Metacognitive Abstention: Discovered contradictions ({len(reasoning_trace.contradictions_found)}) "
-                        f"with marginal confidence ({calibrated_conf:.3f})."
-                    )
+            if abstain and generated_plan is not None:
+                generated_plan.is_executable = False
+                generated_plan.requires_human_approval = True
+                generated_plan.approval_reason = abstention_reason
 
             # Formulate execution recommendation
             recommendation = "Execute primary recommended action"
             if abstain:
-                recommendation = "Escalate to human supervisor for manual intervention due to active abstention policy."
+                recommendation = f"Escalate to human supervisor for manual intervention: {abstention_reason}"
             elif generated_plan and generated_plan.steps:
                 recommendation = f"Proceed with plan '{generated_plan.plan_id}' starting with step: {generated_plan.steps[0].action_name}"
 

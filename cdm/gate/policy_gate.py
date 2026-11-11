@@ -11,6 +11,8 @@ LLMs can NEVER override a BLOCK or REQUIRE_HUMAN_APPROVAL decision.
 
 from typing import Dict, Any, List, Optional
 from enum import Enum
+from decimal import Decimal, InvalidOperation
+import math
 import logging
 from pydantic import BaseModel, Field
 
@@ -117,22 +119,109 @@ class PolicyGate:
                     is_blocked=True,
                 )
 
-        # 4. Financial transaction bound check
-        amount = 0.0
-        for k in ("amount", "refund_amount", "monetary_value", "usd"):
-            if k in action.args and isinstance(action.args[k], (int, float)):
-                amount = float(action.args[k])
+        # 4. Financial transaction bound and numerical safety check
+        amount_decimal = Decimal("0.0")
+        has_monetary_arg = False
+        raw_currency = action.args.get("currency") or action.args.get("curr")
+        if raw_currency:
+            curr_str = str(raw_currency).strip().upper()
+            allowed_currencies = {"USD", "EUR", "GBP", "CAD", "AUD", "JPY"}
+            if curr_str not in allowed_currencies:
+                evaluated_rules.append("stage_a:unsupported_currency")
+                return GateDecision(
+                    decision=GateDecisionType.BLOCK,
+                    reason=f"Financial policy violation: Unsupported or unapproved currency '{curr_str}'.",
+                    risk_score=1.0,
+                    evaluated_rules=evaluated_rules,
+                    is_blocked=True,
+                )
+
+        for k in ("amount", "refund_amount", "monetary_value", "usd", "payment_amount", "transaction_value"):
+            if k in action.args:
+                val = action.args[k]
+                has_monetary_arg = True
+                # Check for NaN or Inf in float values
+                if isinstance(val, (float, int)):
+                    if math.isnan(val) or math.isinf(val):
+                        evaluated_rules.append("stage_a:nan_inf_amount_blocked")
+                        return GateDecision(
+                            decision=GateDecisionType.BLOCK,
+                            reason="Financial security violation: NaN or infinite monetary amount detected.",
+                            risk_score=1.0,
+                            evaluated_rules=evaluated_rules,
+                            is_blocked=True,
+                        )
+                    amount_decimal = Decimal(str(val))
+                elif isinstance(val, str):
+                    clean_str = val.strip().replace("$", "").replace("€", "").replace("£", "").replace(",", "")
+                    if clean_str.lower() in ("nan", "inf", "-inf", "+inf", "infinity"):
+                        evaluated_rules.append("stage_a:nan_inf_amount_blocked")
+                        return GateDecision(
+                            decision=GateDecisionType.BLOCK,
+                            reason="Financial security violation: NaN or infinite monetary amount detected.",
+                            risk_score=1.0,
+                            evaluated_rules=evaluated_rules,
+                            is_blocked=True,
+                        )
+                    try:
+                        amount_decimal = Decimal(clean_str)
+                    except (InvalidOperation, ValueError):
+                        evaluated_rules.append("stage_a:malformed_numeric_string")
+                        return GateDecision(
+                            decision=GateDecisionType.BLOCK,
+                            reason=f"Financial validation error: Malformed numeric string input '{val}'.",
+                            risk_score=1.0,
+                            evaluated_rules=evaluated_rules,
+                            is_blocked=True,
+                        )
+                else:
+                    evaluated_rules.append("stage_a:invalid_numeric_type")
+                    return GateDecision(
+                        decision=GateDecisionType.BLOCK,
+                        reason=f"Financial validation error: Invalid non-numeric type for monetary argument '{k}'.",
+                        risk_score=1.0,
+                        evaluated_rules=evaluated_rules,
+                        is_blocked=True,
+                    )
                 break
 
-        if amount > monetary_limit:
-            evaluated_rules.append("stage_a:financial_limit_exceeded")
-            return GateDecision(
-                decision=GateDecisionType.REQUIRE_HUMAN_APPROVAL,
-                reason=f"Financial action amount (${amount:.2f}) exceeds autonomous limit (${monetary_limit:.2f}).",
-                risk_score=0.75,
-                evaluated_rules=evaluated_rules,
-                requires_human=True,
-            )
+        if has_monetary_arg:
+            # Reject negative transaction amounts
+            if amount_decimal < Decimal("0"):
+                evaluated_rules.append("stage_a:negative_amount_blocked")
+                return GateDecision(
+                    decision=GateDecisionType.BLOCK,
+                    reason=f"Financial safety violation: Negative transaction amount ({amount_decimal}) is strictly prohibited.",
+                    risk_score=1.0,
+                    evaluated_rules=evaluated_rules,
+                    is_blocked=True,
+                )
+
+            # Hard maximum threshold check
+            hard_max_limit = Decimal("10000.00")
+            if amount_decimal > hard_max_limit:
+                evaluated_rules.append("stage_a:hard_maximum_limit_exceeded")
+                return GateDecision(
+                    decision=GateDecisionType.BLOCK,
+                    reason=f"Financial hard limit violation: Transaction amount (${amount_decimal}) exceeds hard boundary (${hard_max_limit}).",
+                    risk_score=1.0,
+                    evaluated_rules=evaluated_rules,
+                    is_blocked=True,
+                )
+
+            # Autonomous threshold check
+            limit_decimal = Decimal(str(monetary_limit))
+            if amount_decimal > limit_decimal:
+                evaluated_rules.append("stage_a:financial_limit_exceeded")
+                return GateDecision(
+                    decision=GateDecisionType.REQUIRE_HUMAN_APPROVAL,
+                    reason=f"Financial action amount (${amount_decimal}) exceeds autonomous limit (${limit_decimal}).",
+                    risk_score=0.75,
+                    evaluated_rules=evaluated_rules,
+                    requires_human=True,
+                )
+
+        amount = float(amount_decimal)
 
         # 5. Tenant explicit policy rules
         if tenant_policies:

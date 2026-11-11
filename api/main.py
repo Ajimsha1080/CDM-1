@@ -288,8 +288,20 @@ async def lifespan(app: FastAPI):
             allow_fallback=not is_prod,
             production_mode=is_prod,
         )
-        if is_prod and getattr(runtime_model, "is_fallback", False):
-            raise RuntimeError("CRITICAL PRODUCTION FAILURE: Model loaded in fallback mode during production startup.")
+        if is_prod:
+            if getattr(runtime_model, "is_fallback", False) or runtime_model is None:
+                raise RuntimeError("CRITICAL PRODUCTION FAILURE: Model loaded in fallback mode during production startup.")
+            auth_check = verify_checkpoint_authenticity(model_path)
+            if auth_check.get("status") != "authenticated":
+                raise RuntimeError(f"CRITICAL PRODUCTION FAILURE: Checkpoint authenticity check failed: {auth_check}")
+            smoke_res = runtime_model.decide(
+                text="Production startup smoke test.",
+                structured_features={"domain": 0, "urgency_level": 1},
+                candidates=["act_pass", "act_verify"],
+                task="choice",
+            )
+            if not getattr(smoke_res, "used_neural_inference", False):
+                raise RuntimeError("CRITICAL PRODUCTION FAILURE: Production startup smoke test did not execute neural weights.")
 
         runtime_cognitive_engine = CognitiveEngine(
             decision_model=runtime_model,
@@ -462,6 +474,11 @@ def readiness_check():
         )
 
     if getattr(runtime_model, "is_fallback", False):
+        if is_prod:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Production readiness check failed: rule-based fallback mode is active in production.",
+            )
         return {
             "status": "ready",
             "model_loaded": True,

@@ -106,6 +106,19 @@ ACTION_SPECIFICATIONS: Dict[str, Dict[str, Any]] = {
     },
 }
 
+CONTRADICTORY_ACTION_PAIRS = {
+    frozenset(["act_issue_refund", "act_deny_refund"]),
+    frozenset(["issue_refund", "deny_refund"]),
+    frozenset(["act_refund_customer", "act_deny_request"]),
+    frozenset(["refund_customer", "deny_request"]),
+    frozenset(["act_auto_resolve", "act_escalate_tier2"]),
+    frozenset(["auto_resolve", "escalate_tier2"]),
+    frozenset(["act_close_account", "act_upgrade_account"]),
+    frozenset(["close_account", "upgrade_account"]),
+    frozenset(["act_allow", "act_block"]),
+    frozenset(["allow", "block"]),
+}
+
 
 class PlanningEngine:
     """Multi-step action sequencing, precondition validation, verified prediction risk evaluation,
@@ -382,11 +395,16 @@ class PlanningEngine:
         predicted_outcome: Optional[Dict[str, Any]] = None,
         tenant_id: Optional[str] = None,
         task: Optional[str] = None,
+        selected_decision: Optional[str] = None,
+        candidate_ranking: Optional[List[Tuple[str, float]]] = None,
+        abstain: bool = False,
+        abstention_reason: Optional[str] = None,
     ) -> Plan:
         """Constructs and evaluates a proposed multi-step plan to achieve the target goal while adhering to constraints.
         Executes sequential forward world-state simulation: S_{t+1} = T(S_t, A_t), passing resulting state
         to subsequent steps, re-evaluating preconditions at each intermediate state, and evaluating alternatives independently.
         Never marks proposed plans as verified complete.
+        Ensures the primary plan is strictly consistent with the selected decision and candidate rankings.
         """
         forbidden = set(prohibited_actions or [])
         for v in reasoning_trace.violated_constraints:
@@ -396,12 +414,78 @@ class PlanningEngine:
 
         valid_actions = [a for a in available_actions if a not in forbidden]
 
+        is_executable = True
+        requires_human = False
+        approval_reason = None
+        contradictory_detected: List[str] = []
+
+        if abstain:
+            is_executable = False
+            requires_human = True
+            approval_reason = abstention_reason or "Policy or confidence abstention active. Requires human approval."
+
+        # Decision-to-planning consistency: determine primary action sequence
+        planned_action_sequence: List[str] = []
+        if selected_decision:
+            if selected_decision in forbidden:
+                is_executable = False
+                requires_human = True
+                approval_reason = f"Selected decision '{selected_decision}' is prohibited by active governance constraints."
+                planned_action_sequence = []
+            else:
+                planned_action_sequence = [selected_decision]
+                # Multi-step action only when goal specifically requires multiple subgoals or postconditions
+                if target_goal.subgoal_ids or (len(target_goal.required_postconditions) > 1):
+                    sel_spec = ACTION_SPECIFICATIONS.get(selected_decision, {})
+                    sel_post = set(sel_spec.get("postconditions", []))
+                    remaining = [r for r in target_goal.required_postconditions if r not in sel_post]
+                    if remaining:
+                        for act in valid_actions:
+                            if act == selected_decision or act in forbidden:
+                                continue
+                            if any(frozenset([act, p]) in CONTRADICTORY_ACTION_PAIRS for p in planned_action_sequence):
+                                continue
+                            act_spec = ACTION_SPECIFICATIONS.get(act, {})
+                            act_post = set(act_spec.get("postconditions", []))
+                            if any(r in act_post for r in remaining):
+                                planned_action_sequence.append(act)
+                                remaining = [r for r in remaining if r not in act_post]
+                                if not remaining or len(planned_action_sequence) >= 3:
+                                    break
+        else:
+            # Rank available actions by candidate_ranking or model prediction scores
+            ranked_actions = list(valid_actions)
+            if candidate_ranking:
+                rank_dict = dict(candidate_ranking)
+                ranked_actions.sort(key=lambda a: rank_dict.get(a, 0.0), reverse=True)
+            elif predicted_outcome and "candidate_scores" in predicted_outcome:
+                rank_dict = predicted_outcome["candidate_scores"]
+                ranked_actions.sort(key=lambda a: rank_dict.get(a, 0.0), reverse=True)
+
+            if ranked_actions:
+                planned_action_sequence = [ranked_actions[0]]
+                if target_goal.subgoal_ids or (len(target_goal.required_postconditions) > 1):
+                    for act in ranked_actions[1:]:
+                        if any(frozenset([act, p]) in CONTRADICTORY_ACTION_PAIRS for p in planned_action_sequence):
+                            continue
+                        planned_action_sequence.append(act)
+                        if len(planned_action_sequence) >= 3:
+                            break
+
+        # Check for contradictory actions within planned sequence
+        for i in range(len(planned_action_sequence)):
+            for j in range(i + 1, len(planned_action_sequence)):
+                pair = frozenset([planned_action_sequence[i], planned_action_sequence[j]])
+                if pair in CONTRADICTORY_ACTION_PAIRS:
+                    contradictory_detected.append(f"{planned_action_sequence[i]} <-> {planned_action_sequence[j]}")
+                    is_executable = False
+
         # Sequential world-state simulation for proposed plan
         current_sim_state = current_world_state.model_copy(deep=True)
         plan_steps: List[PlanStep] = []
         cumulative_risk = 0.0
 
-        for idx, action in enumerate(valid_actions[:4], start=1):
+        for idx, action in enumerate(planned_action_sequence, start=1):
             preconditions, preconditions_met = self._evaluate_preconditions(
                 action=action,
                 current_world_state=current_sim_state,
@@ -409,6 +493,10 @@ class PlanningEngine:
             )
 
             if not preconditions_met:
+                is_executable = False
+                requires_human = True
+                if not approval_reason:
+                    approval_reason = f"Preconditions for action '{action}' not satisfied in world state."
                 continue
 
             simulated_next_state = self.world_model.simulate_transition(action, base_state=current_sim_state)
@@ -575,12 +663,17 @@ class PlanningEngine:
             risk_source=dominant_risk_source,
             risk_provenance=overall_provenance,
             plan_efficiency_score=round(efficiency, 2),
-            constraint_compliance=constraint_compliance,
+            constraint_compliance=constraint_compliance and (len(contradictory_detected) == 0),
             goal_satisfied=goal_satisfied,
             simulated_goal_achieved=goal_satisfied,
             is_verified_goal_completion=False,  # ALWAYS False for proposed plans
             goal_satisfaction_details=satisfaction_details,
             alternative_plans=alternatives,
+            is_executable=is_executable and (len(contradictory_detected) == 0),
+            requires_human_approval=requires_human or abstain or (len(contradictory_detected) > 0),
+            approval_reason=approval_reason,
+            primary_decision=selected_decision or (plan_steps[0].action_name if plan_steps else None),
+            contradictory_actions_detected=contradictory_detected,
         )
 
     def approve_plan(self, plan: Plan, approver_id: str = "system_safety_controller") -> Plan:

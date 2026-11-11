@@ -4,6 +4,7 @@ Perception, Context, Memory, World Model, Reasoning, Planning, CDM-1 Decisions, 
 """
 
 from typing import Dict, List, Optional, Any, Union
+from enum import Enum
 import time
 import uuid
 from pydantic import BaseModel, Field
@@ -42,17 +43,28 @@ class ContextFrame(BaseModel):
     relevance_scores: Dict[str, float] = Field(default_factory=dict)
 
 
+class GoalStatus(str, Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SUSPENDED = "suspended"
+    BLOCKED = "blocked"
+
+
 class GoalNode(BaseModel):
     """Structured goal in the goal hierarchy with explicit verification conditions."""
     goal_id: str
     description: str
     priority: int = 1  # 1 (Highest) to 5 (Lowest)
-    status: str = "active"  # 'active', 'completed', 'blocked', 'abandoned'
+    status: str = "active"  # 'active', 'completed', 'failed', 'cancelled', 'suspended', 'blocked'
     parent_goal_id: Optional[str] = None
     subgoal_ids: List[str] = Field(default_factory=list)
     success_criteria: Dict[str, Any] = Field(default_factory=dict)
     required_postconditions: List[str] = Field(default_factory=list)
     target_state_metrics: Dict[str, Any] = Field(default_factory=dict)
+    lifecycle_history: List[Dict[str, Any]] = Field(default_factory=list)
+    verified_completed_at: Optional[float] = None
 
 
 class WorkingMemoryState(BaseModel):
@@ -84,7 +96,8 @@ class WorldRelation(BaseModel):
 
 class WorldState(BaseModel):
     """Explicit internal representation of the operational environment.
-    Strictly distinguishes observed facts, inferred state, simulated state, and predicted future state.
+    Strictly distinguishes observed facts, retrieved historical facts, inferred state,
+    simulated state, predicted future state, and unverified hypotheses.
     """
     state_id: str = Field(default_factory=lambda: f"ws_{uuid.uuid4().hex[:8]}")
     tenant_id: str = "default_tenant"
@@ -94,9 +107,12 @@ class WorldState(BaseModel):
     environment_metrics: Dict[str, Any] = Field(default_factory=dict)
     active_constraints: List[str] = Field(default_factory=list)
     observed_facts: Dict[str, Any] = Field(default_factory=dict)
+    retrieved_historical_facts: Dict[str, Any] = Field(default_factory=dict)
     inferred_state: Dict[str, Any] = Field(default_factory=dict)
     simulated_state: Dict[str, Any] = Field(default_factory=dict)
     predicted_future_state: Dict[str, Any] = Field(default_factory=dict)
+    unverified_hypotheses: List[Dict[str, Any]] = Field(default_factory=list)
+    fact_provenance: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     overall_state_uncertainty: float = 0.0
     timestamp: float = Field(default_factory=time.time)
 
@@ -169,6 +185,11 @@ class Plan(BaseModel):
     is_verified_goal_completion: bool = False
     goal_satisfaction_details: Dict[str, Any] = Field(default_factory=dict)
     alternative_plans: List[Dict[str, Any]] = Field(default_factory=list)
+    is_executable: bool = True
+    requires_human_approval: bool = False
+    approval_reason: Optional[str] = None
+    primary_decision: Optional[str] = None
+    contradictory_actions_detected: List[str] = Field(default_factory=list)
 
 
 class SharedCognitiveState(BaseModel):

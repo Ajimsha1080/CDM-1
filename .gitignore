@@ -54,6 +54,12 @@ build/
 
 # Archives
 *.zip
+*.tar.gz
+
+# Scratch / temporary
+scratch/
+temp/
+tmp/
 
 # Secrets and keys
 *.key

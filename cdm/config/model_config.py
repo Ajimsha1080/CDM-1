@@ -125,7 +125,19 @@ class DecisionNetworkConfig(BaseModel):
     )
     uncertainty_threshold: float = Field(
         default=0.45,
-        description="Maximum predictive entropy/variance allowed before abstaining."
+        description="Maximum normalized decision entropy allowed before abstaining."
+    )
+    decision_uncertainty_threshold: float = Field(
+        default=0.45,
+        description="Maximum normalized decision entropy allowed before abstaining."
+    )
+    predictive_uncertainty_threshold: float = Field(
+        default=0.40,
+        description="Maximum predictive outcome uncertainty (entropy/variance) allowed before abstaining."
+    )
+    candidate_uncertainty_threshold: float = Field(
+        default=0.60,
+        description="Maximum candidate choice entropy allowed before abstaining."
     )
     dropout: float = Field(default=0.1)
 

@@ -158,16 +158,55 @@ class PredictiveNetwork(nn.Module):
         self,
         cognitive_state: torch.Tensor,
         action_embedding: Optional[torch.Tensor] = None,
+        candidate_embeddings: Optional[torch.Tensor] = None,
         num_samples: int = 10,
     ) -> Dict[str, torch.Tensor]:
-        """Performs Monte Carlo Dropout sampling to compute epistemic uncertainty (variance)."""
-        self.train()  # Enable dropout during inference
-        preds = []
-        for _ in range(num_samples):
-            with torch.no_grad():
-                out = self.forward(cognitive_state, action_embedding)
-                preds.append(torch.sigmoid(out["binary_outcome_logits"]))
-        stacked = torch.stack(preds, dim=0)  # [num_samples, batch_size, 1]
-        variance = torch.var(stacked, dim=0).squeeze(-1)  # [batch_size]
-        self.eval()
-        return {"epistemic_variance": variance}
+        """Performs Monte Carlo Dropout sampling to compute epistemic uncertainty (variance).
+
+        Requires num_samples >= 2. Uses unbiased=False for sample variance computation.
+        Safely restores the original model training/evaluation mode in a finally block.
+        """
+        if num_samples < 2:
+            raise ValueError(
+                f"num_samples must be at least 2 for Monte Carlo variance estimation, got {num_samples}."
+            )
+
+        was_training = self.training
+        try:
+            self.train(True)  # Enable dropout during sampling
+            binary_preds = []
+            risk_preds = []
+            multiclass_preds = []
+            for _ in range(num_samples):
+                with torch.no_grad():
+                    out = self.forward(
+                        cognitive_state=cognitive_state,
+                        action_embedding=action_embedding,
+                        candidate_embeddings=candidate_embeddings,
+                    )
+                    binary_preds.append(torch.sigmoid(out["binary_outcome_logits"]))
+                    risk_preds.append(out["estimated_risk"])
+                    multiclass_preds.append(F.softmax(out["multiclass_outcome_logits"], dim=-1))
+
+            stacked_binary = torch.stack(binary_preds, dim=0)  # [num_samples, batch_size, 1]
+            stacked_risk = torch.stack(risk_preds, dim=0)  # [num_samples, batch_size, 1]
+            stacked_multi = torch.stack(multiclass_preds, dim=0)  # [num_samples, batch_size, num_classes]
+
+            # Monte Carlo variance with unbiased=False as specified
+            var_binary = torch.var(stacked_binary, dim=0, unbiased=False).squeeze(-1)  # [batch_size]
+            var_risk = torch.var(stacked_risk, dim=0, unbiased=False).squeeze(-1)  # [batch_size]
+            var_multi = torch.var(stacked_multi, dim=0, unbiased=False).mean(dim=-1)  # [batch_size]
+
+            mean_binary = torch.mean(stacked_binary, dim=0).squeeze(-1)
+            mean_risk = torch.mean(stacked_risk, dim=0).squeeze(-1)
+
+            return {
+                "epistemic_variance": var_binary,
+                "risk_variance": var_risk,
+                "multiclass_variance": var_multi,
+                "mean_binary_prob": mean_binary,
+                "mean_risk": mean_risk,
+                "num_samples": num_samples,
+            }
+        finally:
+            self.train(was_training)

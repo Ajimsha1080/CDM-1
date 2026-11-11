@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import time
+import random
 import numpy as np
 from collections import defaultdict
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -71,7 +72,7 @@ def train_multitask(
     epochs: int = 15,
     lr: float = 1e-3,
     batch_size: int = 16,
-    checkpoint_dir: str = "experiments/checkpoints/cdm-1-general",
+    checkpoint_dir: str = "experiments/checkpoints/cdm-1-multitask",
 ):
     set_seed(42)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -120,13 +121,29 @@ def train_multitask(
     best_val_loss = float("inf")
     start_time = time.time()
 
+    head_submodules = [
+        ("language_projection", model.language_encoder.projection),
+        ("candidate_text_proj", model.candidate_text_proj),
+        ("structured_encoder", model.structured_encoder),
+        ("fusion", model.fusion),
+        ("predictive_network", model.predictive_network),
+        ("decision_network", model.decision_network),
+        ("candidate_scorer", model.candidate_scorer),
+    ]
+
     for epoch in range(epochs):
         model.train()
         train_loss = 0.0
         epoch_task_losses = {}
         epoch_grad_norms = []
+        epoch_head_grad_norms = defaultdict(list)
 
-        for batch in cached_train:
+        # Shuffle training batches each epoch while preserving batch internal associations
+        batch_indices = list(range(len(cached_train)))
+        random.shuffle(batch_indices)
+        shuffled_train = [cached_train[i] for i in batch_indices]
+
+        for batch in shuffled_train:
             text_emb = model.language_encoder.projection(batch["pooled_text"])
             cand_pooled = batch["candidate_pooled"]
             cand_raw = (
@@ -178,13 +195,23 @@ def train_multitask(
 
             loss, loss_dict = model.compute_multitask_loss(outputs, targets)
             loss.backward()
+
+            # Track head-specific gradient norms to verify every head receives non-zero gradient updates
+            for head_name, submod in head_submodules:
+                head_grads = [p.grad.detach() for p in submod.parameters() if p.grad is not None]
+                if head_grads:
+                    h_norm = torch.norm(torch.stack([torch.norm(g) for g in head_grads])).item()
+                else:
+                    h_norm = 0.0
+                epoch_head_grad_norms[head_name].append(h_norm)
+
             grad_norm = torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0).item()
             optimizer.step()
 
             train_loss += loss.item()
             epoch_grad_norms.append(grad_norm)
             for k, v in loss_dict.items():
-                epoch_task_losses[k] = epoch_task_losses.get(k, 0.0) + (v / len(cached_train))
+                epoch_task_losses[k] = epoch_task_losses.get(k, 0.0) + (v / len(shuffled_train))
 
         scheduler.step()
         avg_train_loss = train_loss / len(cached_train)
@@ -298,6 +325,8 @@ def train_multitask(
             flush=True,
         )
 
+        avg_head_grads = {k: round(float(np.mean(v)), 4) for k, v in epoch_head_grad_norms.items()}
+
         history_entry = {
             "epoch": epoch + 1,
             "train_loss": round(avg_train_loss, 4),
@@ -305,6 +334,7 @@ def train_multitask(
             "generalization_gap": gen_gap,
             "overfitting_diagnostic": overfitting_flag,
             "average_grad_norm": round(avg_grad_norm, 4),
+            "head_gradient_norms": avg_head_grads,
             "validation_metrics": {
                 "binary_accuracy": round(val_bin_acc, 4),
                 "choice_top1_accuracy": round(val_choice_acc, 4),
@@ -319,10 +349,8 @@ def train_multitask(
         if avg_val_loss < best_val_loss:
             best_val_loss = avg_val_loss
             print(f"--> Val loss improved to {best_val_loss:.4f}. Saving checkpoint to {checkpoint_dir}", flush=True)
+            os.makedirs(checkpoint_dir, exist_ok=True)
             model.save_pretrained(checkpoint_dir)
-            release_dir = "experiments/release/cdm-1-general"
-            os.makedirs(release_dir, exist_ok=True)
-            model.save_pretrained(release_dir)
 
         if early_stopping(avg_val_loss):
             print(f"Early stopping triggered at epoch {epoch+1}.", flush=True)
@@ -355,6 +383,106 @@ def train_multitask(
         }, f, indent=2)
 
     return model
+
+
+def run_loss_weight_sensitivity(model: CDMModel, cached_val: list, device: torch.device) -> dict:
+    """Evaluates task loss behavior and gradient interference across different loss weighting schemes."""
+    schemes = {
+        "equal_weight": {"lambda_binary": 1.0, "lambda_choice": 1.0, "lambda_ranking": 1.0, "lambda_score": 1.0, "lambda_priority": 1.0, "lambda_risk": 1.0},
+        "choice_prioritized": {"lambda_binary": 0.5, "lambda_choice": 2.0, "lambda_ranking": 1.5, "lambda_score": 0.2, "lambda_priority": 0.5, "lambda_risk": 0.5},
+        "decision_prioritized": {"lambda_binary": 2.0, "lambda_choice": 0.5, "lambda_ranking": 0.2, "lambda_score": 1.0, "lambda_priority": 1.5, "lambda_risk": 1.5},
+        "calibrated_production": {"lambda_binary": 1.0, "lambda_choice": 1.0, "lambda_ranking": 0.5, "lambda_score": 0.5, "lambda_priority": 0.8, "lambda_risk": 0.8},
+    }
+    results = {}
+    model.eval()
+
+    orig_weights = model.config.loss_weights.model_dump()
+    for name, weights in schemes.items():
+        for k, v in weights.items():
+            setattr(model.config.loss_weights, k, v)
+
+        total_loss = 0.0
+        task_losses = defaultdict(float)
+        with torch.no_grad():
+            for batch in cached_val:
+                text_emb = model.language_encoder.projection(batch["pooled_text"])
+                cand_pooled = batch["candidate_pooled"]
+                cand_raw = model.language_encoder.projection(cand_pooled) if cand_pooled is not None else None
+                struct_emb = model.structured_encoder(batch["numeric_values"], batch["missing_indicators"], batch["categorical_indices"])
+                cog_state = model.fusion(text_emb, struct_emb)
+                cand_embs = model.candidate_text_proj(cand_raw) if cand_raw is not None else None
+                pred_out = model.predictive_network(cog_state, candidate_embeddings=cand_embs)
+                dec_out = model.decision_network(cog_state)
+                cand_out = None
+                if cand_embs is not None:
+                    cand_outcomes = torch.sigmoid(pred_out["candidate_binary_outcome_logits"]) if "candidate_binary_outcome_logits" in pred_out else None
+                    cand_out = model.candidate_scorer(cog_state, cand_embs, cand_outcomes, pred_out.get("candidate_estimated_risk"), batch["constraint_mask"], batch["existence_mask"])
+                outputs = {"cognitive_state": cog_state, "decision": dec_out, "predictive": pred_out, "candidates": cand_out}
+                loss, l_dict = model.compute_multitask_loss(outputs, batch["targets"])
+                total_loss += loss.item()
+                for tk, tv in l_dict.items():
+                    task_losses[tk] += tv / len(cached_val)
+
+        results[name] = {
+            "weights": weights,
+            "average_loss": round(total_loss / len(cached_val), 4),
+            "task_losses": {k: round(v, 4) for k, v in task_losses.items()},
+        }
+
+    # Restore original weights
+    for k, v in orig_weights.items():
+        setattr(model.config.loss_weights, k, v)
+
+    return results
+
+
+def run_head_ablation_study(model: CDMModel, cached_val: list, device: torch.device) -> dict:
+    """Evaluates multi-task validation loss and metric degradation under head ablations."""
+    ablations = [
+        ("full_model", []),
+        ("without_candidate_scorer", ["candidates"]),
+        ("without_predictive_network", ["predictive"]),
+        ("without_decision_network", ["decision"]),
+    ]
+    results = {}
+    model.eval()
+
+    for name, disabled_heads in ablations:
+        val_loss = 0.0
+        val_correct_choice, val_total_choice = 0, 0
+        with torch.no_grad():
+            for batch in cached_val:
+                text_emb = model.language_encoder.projection(batch["pooled_text"])
+                cand_pooled = batch["candidate_pooled"]
+                cand_raw = model.language_encoder.projection(cand_pooled) if cand_pooled is not None else None
+                struct_emb = model.structured_encoder(batch["numeric_values"], batch["missing_indicators"], batch["categorical_indices"])
+                cog_state = model.fusion(text_emb, struct_emb)
+                cand_embs = model.candidate_text_proj(cand_raw) if cand_raw is not None else None
+
+                pred_out = model.predictive_network(cog_state, candidate_embeddings=cand_embs) if "predictive" not in disabled_heads else {"candidate_binary_outcome_logits": None}
+                dec_out = model.decision_network(cog_state) if "decision" not in disabled_heads else {}
+                cand_out = None
+                if cand_embs is not None and "candidates" not in disabled_heads:
+                    cand_outcomes = torch.sigmoid(pred_out["candidate_binary_outcome_logits"]) if pred_out.get("candidate_binary_outcome_logits") is not None else None
+                    cand_out = model.candidate_scorer(cog_state, cand_embs, cand_outcomes, pred_out.get("candidate_estimated_risk"), batch["constraint_mask"], batch["existence_mask"])
+
+                outputs = {"cognitive_state": cog_state, "decision": dec_out, "predictive": pred_out, "candidates": cand_out}
+                loss, _ = model.compute_multitask_loss(outputs, batch["targets"])
+                val_loss += loss.item()
+
+                if cand_out is not None:
+                    choice_preds = cand_out["selected_candidate_idx"]
+                    choice_mask = batch["targets"]["choice_mask"]
+                    val_correct_choice += ((choice_preds == batch["targets"]["choice_target"]) * choice_mask).sum().item()
+                    val_total_choice += choice_mask.sum().item()
+
+        results[name] = {
+            "disabled_heads": disabled_heads,
+            "average_val_loss": round(val_loss / len(cached_val), 4),
+            "choice_accuracy": round(val_correct_choice / max(val_total_choice, 1), 4) if val_total_choice > 0 else 0.0,
+        }
+
+    return results
 
 
 if __name__ == "__main__":

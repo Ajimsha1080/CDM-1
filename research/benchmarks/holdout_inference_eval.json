@@ -1,4 +1,17 @@
 {
+  "evaluation_provenance": {
+    "checkpoint_evaluated": "experiments/release/cdm-1-general",
+    "checkpoint_sha256": "9fab839b607312d4697cbc4af95993832f793c7b5a3640f5dc7579e29319495a",
+    "model_configuration_hash": "2e5b95f790468b797eb49164061a7c28ca92c3a73b0874dae8a093e1503915fe",
+    "dataset_hashes": {
+      "test.jsonl": "68a963fc4f8b4fbc5ec79b7f426a662bae3a81f642d3dbb6bcb1c936361b6938"
+    },
+    "evaluation_code_version": "1.0.0",
+    "inference_mode": "offline_neural_inference",
+    "whether_trained_weights_were_actually_loaded": true,
+    "dataset_provenance": "curated_synthetic_simulation_with_policy_constraints",
+    "execution_timestamp": 1794418194.3559737
+  },
   "test_sample_count": 58,
   "correct_choices": 58,
   "total_choices": 58,

@@ -3,7 +3,7 @@ Houses independent output decision heads: Binary (YES/NO), Continuous Scoring,
 Priority Classification, Risk Categorization, Calibrated Confidence, and Abstention Logic.
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,14 +48,22 @@ class DecisionNetwork(nn.Module):
         # Head 6: Temperature parameter for Platt / Temperature scaling calibration
         self.temperature = nn.Parameter(torch.ones(1) * 1.0)
 
-    def forward(self, cognitive_state: torch.Tensor) -> Dict[str, torch.Tensor]:
+    def forward(
+        self,
+        cognitive_state: torch.Tensor,
+        predictive_uncertainty: Optional[torch.Tensor] = None,
+        candidate_uncertainty: Optional[torch.Tensor] = None,
+        policy_rejected: Optional[torch.Tensor] = None,
+    ) -> Dict[str, Any]:
         """Args:
-
             cognitive_state: [batch_size, input_dim]
+            predictive_uncertainty: [batch_size] optional predictive outcome entropy or epistemic variance
+            candidate_uncertainty: [batch_size] optional candidate choice entropy
+            policy_rejected: [batch_size] boolean tensor indicating hard policy violation
 
         Returns:
             Dictionary with logits, calibrated probabilities, continuous score,
-            priority, risk, entropy, and abstention flags.
+            priority, risk, decoupled uncertainties, and individual/combined abstention flags.
         """
         batch_size = cognitive_state.shape[0]
         device = cognitive_state.device
@@ -87,16 +95,47 @@ class DecisionNetwork(nn.Module):
         priority_confidence, priority_predicted_class = torch.max(priority_probs, dim=-1)
         risk_confidence, risk_predicted_class = torch.max(risk_probs, dim=-1)
 
-        # Predictive uncertainty measure: Shannon entropy of binary decision
+        # 1. Decision Uncertainty: Normalized Shannon entropy of calibrated binary decision
+        # H(p) = -sum(p * log(p)) / ln(2), strictly bounded in [0, 1]
         binary_entropy = -torch.sum(
             binary_probs * torch.log(torch.clamp(binary_probs, min=1e-9)), dim=-1
-        ) / 0.693147  # normalized by ln(2) so max entropy is 1.0
+        ) / 0.6931471805599453
 
-        # Head 7: Abstention Mechanism
-        # Model abstains if confidence < abstention_threshold OR entropy > uncertainty_threshold
+        # 2. Decision Confidence Abstention
         low_confidence_mask = binary_confidence < self.config.abstention_threshold
-        high_uncertainty_mask = binary_entropy > self.config.uncertainty_threshold
-        should_abstain = low_confidence_mask | high_uncertainty_mask
+
+        # 3. Decision Entropy Abstention (independent threshold)
+        dec_thresh = getattr(self.config, "decision_uncertainty_threshold", self.config.uncertainty_threshold)
+        high_decision_entropy_mask = binary_entropy > dec_thresh
+
+        # 4. Predictive Uncertainty Abstention (independently calibrated, not combined via arbitrary summation)
+        pred_thresh = getattr(self.config, "predictive_uncertainty_threshold", 0.40)
+        if predictive_uncertainty is not None:
+            high_pred_uncertainty_mask = predictive_uncertainty.to(device) > pred_thresh
+        else:
+            high_pred_uncertainty_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
+
+        # 5. Candidate Uncertainty Abstention (independently evaluated)
+        cand_thresh = getattr(self.config, "candidate_uncertainty_threshold", 0.60)
+        if candidate_uncertainty is not None:
+            high_cand_uncertainty_mask = candidate_uncertainty.to(device) > cand_thresh
+        else:
+            high_cand_uncertainty_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
+
+        # 6. Policy Rejection Abstention
+        if policy_rejected is not None:
+            policy_rejected_mask = policy_rejected.to(device).bool()
+        else:
+            policy_rejected_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
+
+        # Overall Abstention: logical disjunction of explicit, independent safety criteria
+        should_abstain = (
+            low_confidence_mask
+            | high_decision_entropy_mask
+            | high_pred_uncertainty_mask
+            | high_cand_uncertainty_mask
+            | policy_rejected_mask
+        )
 
         return {
             "binary_logits": raw_binary_logits,
@@ -113,6 +152,15 @@ class DecisionNetwork(nn.Module):
             "risk_prediction": risk_predicted_class,
             "risk_confidence": risk_confidence,
             "decision_entropy": binary_entropy,
+            "decision_uncertainty": binary_entropy,
+            "predictive_uncertainty": predictive_uncertainty,
+            "candidate_uncertainty": candidate_uncertainty,
+            "policy_rejected": policy_rejected_mask,
+            "abstain_low_confidence": low_confidence_mask,
+            "abstain_high_decision_entropy": high_decision_entropy_mask,
+            "abstain_predictive_uncertainty": high_pred_uncertainty_mask,
+            "abstain_candidate_uncertainty": high_cand_uncertainty_mask,
+            "abstain_policy_rejected": policy_rejected_mask,
             "abstain": should_abstain,
             "temperature": temp,
         }

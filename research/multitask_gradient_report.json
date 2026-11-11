@@ -1,0 +1,151 @@
+{
+  "report_metadata": {
+    "checkpoint": "experiments/release/cdm-1-general",
+    "device": "cpu",
+    "timestamp": 1794418594.5242221
+  },
+  "head_gradient_norms": {
+    "language_projection": 0.838796,
+    "candidate_text_proj": 0.024038,
+    "structured_encoder": 0.686536,
+    "fusion": 0.632949,
+    "predictive_network": 0.830307,
+    "decision_network": 0.857068,
+    "candidate_scorer": 0.096025
+  },
+  "all_heads_active_gradients": true,
+  "loss_weight_sensitivity": {
+    "equal_weight": {
+      "weights": {
+        "lambda_binary": 1.0,
+        "lambda_choice": 1.0,
+        "lambda_ranking": 1.0,
+        "lambda_score": 1.0,
+        "lambda_priority": 1.0,
+        "lambda_risk": 1.0
+      },
+      "average_loss": 1.6193,
+      "task_losses": {
+        "loss_binary": 0.1898,
+        "loss_priority": 0.2542,
+        "loss_score": 0.0207,
+        "loss_risk_classification": 0.3125,
+        "loss_risk_probability": 0.33,
+        "loss_choice": 0.127,
+        "loss_ranking": 0.0389,
+        "loss_outcome_binary": 0.2619,
+        "loss_outcome_multiclass": 0.4182,
+        "loss_outcome_numeric": 0.0085,
+        "loss_cand_outcome_binary": 0.0065,
+        "loss_cand_risk": 0.3914,
+        "loss_total": 1.6193
+      }
+    },
+    "choice_prioritized": {
+      "weights": {
+        "lambda_binary": 0.5,
+        "lambda_choice": 2.0,
+        "lambda_ranking": 1.5,
+        "lambda_score": 0.2,
+        "lambda_priority": 0.5,
+        "lambda_risk": 0.5
+      },
+      "average_loss": 1.2395,
+      "task_losses": {
+        "loss_binary": 0.1898,
+        "loss_priority": 0.2542,
+        "loss_score": 0.0207,
+        "loss_risk_classification": 0.3125,
+        "loss_risk_probability": 0.33,
+        "loss_choice": 0.127,
+        "loss_ranking": 0.0389,
+        "loss_outcome_binary": 0.2619,
+        "loss_outcome_multiclass": 0.4182,
+        "loss_outcome_numeric": 0.0085,
+        "loss_cand_outcome_binary": 0.0065,
+        "loss_cand_risk": 0.3914,
+        "loss_total": 1.2395
+      }
+    },
+    "decision_prioritized": {
+      "weights": {
+        "lambda_binary": 2.0,
+        "lambda_choice": 0.5,
+        "lambda_ranking": 0.2,
+        "lambda_score": 1.0,
+        "lambda_priority": 1.5,
+        "lambda_risk": 1.5
+      },
+      "average_loss": 2.1292,
+      "task_losses": {
+        "loss_binary": 0.1898,
+        "loss_priority": 0.2542,
+        "loss_score": 0.0207,
+        "loss_risk_classification": 0.3125,
+        "loss_risk_probability": 0.33,
+        "loss_choice": 0.127,
+        "loss_ranking": 0.0389,
+        "loss_outcome_binary": 0.2619,
+        "loss_outcome_multiclass": 0.4182,
+        "loss_outcome_numeric": 0.0085,
+        "loss_cand_outcome_binary": 0.0065,
+        "loss_cand_risk": 0.3914,
+        "loss_total": 2.1292
+      }
+    },
+    "calibrated_production": {
+      "weights": {
+        "lambda_binary": 1.0,
+        "lambda_choice": 1.0,
+        "lambda_ranking": 0.5,
+        "lambda_score": 0.5,
+        "lambda_priority": 0.8,
+        "lambda_risk": 0.8
+      },
+      "average_loss": 1.4236,
+      "task_losses": {
+        "loss_binary": 0.1898,
+        "loss_priority": 0.2542,
+        "loss_score": 0.0207,
+        "loss_risk_classification": 0.3125,
+        "loss_risk_probability": 0.33,
+        "loss_choice": 0.127,
+        "loss_ranking": 0.0389,
+        "loss_outcome_binary": 0.2619,
+        "loss_outcome_multiclass": 0.4182,
+        "loss_outcome_numeric": 0.0085,
+        "loss_cand_outcome_binary": 0.0065,
+        "loss_cand_risk": 0.3914,
+        "loss_total": 1.4236
+      }
+    }
+  },
+  "head_ablation_study": {
+    "full_model": {
+      "disabled_heads": [],
+      "average_val_loss": 1.4236,
+      "choice_accuracy": 0.95
+    },
+    "without_candidate_scorer": {
+      "disabled_heads": [
+        "candidates"
+      ],
+      "average_val_loss": 1.2772,
+      "choice_accuracy": 0.0
+    },
+    "without_predictive_network": {
+      "disabled_heads": [
+        "predictive"
+      ],
+      "average_val_loss": 0.7998,
+      "choice_accuracy": 0.95
+    },
+    "without_decision_network": {
+      "disabled_heads": [
+        "decision"
+      ],
+      "average_val_loss": 0.7701,
+      "choice_accuracy": 0.95
+    }
+  }
+}

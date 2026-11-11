@@ -176,6 +176,20 @@ def main():
 
     if dest_path.exists() and not args.force:
         print(f"[*] Found existing weights file: {dest_path}")
+        # Check if existing weights file is an unhydrated Git LFS pointer
+        if dest_path.stat().st_size < 1024:
+            with open(dest_path, "rb") as f:
+                header = f.read(256)
+            if b"git-lfs" in header or b"oid sha256:" in header:
+                print("[!] Detected Git LFS pointer text file (134 bytes). Attempting git lfs pull...")
+                import subprocess
+                try:
+                    p = subprocess.run(["git", "lfs", "pull"], capture_output=True, text=True, timeout=180)
+                    if p.returncode == 0 and dest_path.stat().st_size > 1024:
+                        print("[+] git lfs pull succeeded in hydrating model weights.")
+                except Exception as e:
+                    print(f"[-] git lfs pull error: {e}")
+
         if verify_weights(dest_path, expected_hash):
             print("[+] Existing weights are valid. Use --force to re-download.")
             sys.exit(0)

@@ -311,6 +311,14 @@ def verify_release_manifest_mode(
                 continue
             raise FileNotFoundError(f"Required release artifact missing: {file_name}")
 
+        # In software_only mode, allow model.safetensors to be either absent or an unhydrated LFS pointer
+        if file_name == "model.safetensors" and mode == "software_only":
+            actual_size = os.path.getsize(file_path)
+            expected_size = meta.get("size_bytes")
+            if actual_size != expected_size:
+                model_absent = True
+                continue
+
         actual_size = os.path.getsize(file_path)
         expected_size = meta.get("size_bytes")
         if expected_size is not None and actual_size != expected_size:
@@ -326,11 +334,16 @@ def verify_release_manifest_mode(
             )
         file_hashes[file_name] = actual_hash
 
-    # In full_model mode, model.safetensors MUST exist
+    # In full_model mode, model.safetensors MUST exist and be the actual trained binary
     weights_path = os.path.join(release_dir, "model.safetensors")
     if mode == "full_model":
         if not os.path.isfile(weights_path):
             raise FileNotFoundError("Full model-release verification failed: model.safetensors is absent.")
+        if os.path.getsize(weights_path) < 1024:
+            raise SecurityVerificationError(
+                f"Full model verification failed: '{weights_path}' is an unhydrated Git LFS pointer ({os.path.getsize(weights_path)} bytes), "
+                "not the genuine trained neural model binary."
+            )
 
         # Tensor architecture and parameter validation using safetensors
         import safetensors.torch

@@ -440,8 +440,32 @@ class CDMModel(nn.Module):
                 "CDM-1 refuses to silently use random uninitialized weights."
             )
 
-        if os.path.getsize(weights_path) == 0:
+        file_size = os.path.getsize(weights_path)
+        if file_size == 0:
             raise ValueError(f"Checkpoint file model.safetensors is empty (0 bytes): {weights_path}")
+
+        if file_size < 1024:
+            with open(weights_path, "rb") as f:
+                header = f.read(256)
+            if b"git-lfs" in header or b"oid sha256:" in header:
+                # Attempt automatic Git LFS hydration if running within a git repository
+                hydrated = False
+                try:
+                    import subprocess
+                    proc = subprocess.run(["git", "lfs", "pull"], capture_output=True, text=True, timeout=120)
+                    if proc.returncode == 0 and os.path.getsize(weights_path) > 1024:
+                        hydrated = True
+                        file_size = os.path.getsize(weights_path)
+                except Exception:
+                    pass
+                if not hydrated:
+                    raise RuntimeError(
+                        f"Checkpoint at '{weights_path}' is an unhydrated Git LFS pointer ({file_size} bytes), "
+                        "not the actual neural model binary.\n"
+                        "To resolve:\n"
+                        "1. If running within a git clone, run: `git lfs pull` to download the 633 MB model weights.\n"
+                        "2. If using release packages, ensure you use 'CDM-1-Complete-With-Weights.zip' which includes the full binary."
+                    )
 
         with open(config_path, "r", encoding="utf-8") as f:
             config_dict = json.load(f)

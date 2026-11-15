@@ -299,7 +299,7 @@ class CognitiveDecisionModel:
                 result_payload["selected_candidate"] = None
                 result_payload["candidate_scores"] = {c: 0.0 for c in candidates}
                 result_payload["heuristic_candidate_scores"] = {c: 0.0 for c in candidates}
-                if task == "choice":
+                if task == "choice" or task != "binary":
                     result_payload["decision"] = "ABSTAIN"
             else:
                 cand_scores = {}
@@ -313,7 +313,8 @@ class CognitiveDecisionModel:
                 result_payload["selected_candidate"] = selected
                 result_payload["candidate_scores"] = cand_scores
                 result_payload["heuristic_candidate_scores"] = cand_scores
-                if task == "choice":
+                if task == "choice" or task != "binary":
+                    result_payload["abstain"] = False
                     result_payload["decision"] = selected
 
         return DecisionResult(result_payload)
@@ -476,14 +477,15 @@ class CognitiveDecisionModel:
                 result_payload["abstention_reason"] = "all_candidates_prohibited"
                 result_payload["selected_candidate"] = None
                 result_payload["candidate_scores"] = {c: 0.0 for c in candidates}
-                if task == "choice":
+                if task == "choice" or task != "binary":
                     result_payload["decision"] = "ABSTAIN"
             else:
                 result_payload["selected_candidate"] = candidates[sel_idx]
                 result_payload["candidate_scores"] = {
                     candidates[i]: round(choice_probs[i], 4) for i in range(len(candidates))
                 }
-                if task == "choice":
+                if task == "choice" or task != "binary":
+                    result_payload["abstain"] = False
                     result_payload["decision"] = candidates[sel_idx]
 
         return DecisionResult(result_payload)

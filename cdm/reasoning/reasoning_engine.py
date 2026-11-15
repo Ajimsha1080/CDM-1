@@ -111,25 +111,34 @@ class ReasoningEngine:
 
             if condition_met and prohibs:
                 for action_restriction in prohibs:
-                    violated_constraints.append(f"Policy Violation: {action_restriction} is forbidden by {rule_id}")
-                    steps.append(
-                        ReasoningStep(
-                            step_index=step_idx,
-                            rule_or_premise=f"Rule {rule_id}: {rule.get('condition_description') or rule.get('description', 'Policy Gate')}",
-                            inputs=[f"{k}={v}" for k, v in condition.items()] if condition else ["domain_policy"],
-                            conclusion=f"Action '{action_restriction}' is strictly PROHIBITED under active policy.",
-                            confidence=1.0,
-                            is_hard_constraint=True,
+                    if action_restriction in candidate_actions:
+                        violated_constraints.append(f"Policy Violation: {action_restriction} is forbidden by {rule_id}")
+                        steps.append(
+                            ReasoningStep(
+                                step_index=step_idx,
+                                rule_or_premise=f"Rule {rule_id}: {rule.get('condition_description') or rule.get('description', 'Policy Gate')}",
+                                inputs=[f"{k}={v}" for k, v in condition.items()] if condition else ["domain_policy"],
+                                conclusion=f"Action '{action_restriction}' is strictly PROHIBITED under active policy.",
+                                confidence=1.0,
+                                is_hard_constraint=True,
+                            )
                         )
-                    )
-                    step_idx += 1
+                        step_idx += 1
+                    else:
+                        satisfied_constraints.append(f"Policy Compliant: {rule_id}")
             else:
                 satisfied_constraints.append(f"Policy Passed: {rule_id}")
 
         # Step 3: Evaluate explicit user constraints
+        restriction_keywords = (
+            "prohibit", "forbid", "no ", "never", "cannot", "can't", "not allowed",
+            "do not", "don't", "disallow", "restricted", "exclude", "prevent"
+        )
         for user_c in user_specified:
+            u_norm = user_c.lower().replace("-", "_")
             for cand in candidate_actions:
-                if cand.lower() in user_c.lower() and ("prohibit" in user_c.lower() or "forbid" in user_c.lower() or "no" in user_c.lower()):
+                c_norm = cand.lower().replace("-", "_")
+                if (cand.lower() in user_c.lower() or c_norm in u_norm) and any(kw in user_c.lower() for kw in restriction_keywords):
                     violated_constraints.append(f"User Constraint Violation: {cand} is restricted by instruction '{user_c}'")
                     steps.append(
                         ReasoningStep(

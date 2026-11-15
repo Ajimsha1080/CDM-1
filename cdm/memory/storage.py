@@ -55,7 +55,9 @@ class SQLiteMemoryStorage(BaseMemoryStorage):
 
     def __init__(self, db_path: str = "experiments/cognitive_memory.db"):
         self.db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        dir_name = os.path.dirname(db_path)
+        if dir_name and db_path != ":memory:":
+            os.makedirs(dir_name, exist_ok=True)
         self._init_db()
 
     def _execute(self, query: str, params: Tuple = ()) -> List[sqlite3.Row]:
@@ -239,3 +241,31 @@ class SQLiteMemoryStorage(BaseMemoryStorage):
             (tenant_id, domain),
         )
         return [json.loads(r["procedure_json"]) for r in rows]
+
+    def list_all_rules(self, tenant_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            "SELECT rule_id, domain, rule_json FROM semantic_rules WHERE tenant_id = ? OR tenant_id = 'default_tenant' LIMIT ?",
+            (tenant_id, limit),
+        )
+        results = []
+        for r in rows:
+            try:
+                data = json.loads(r["rule_json"])
+                results.append({"rule_id": r["rule_id"], "domain": r["domain"], **data})
+            except Exception:
+                pass
+        return results
+
+    def list_all_procedures(self, tenant_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        rows = self._execute(
+            "SELECT procedure_id, domain, procedure_json FROM procedural_memory WHERE tenant_id = ? OR tenant_id = 'default_tenant' LIMIT ?",
+            (tenant_id, limit),
+        )
+        results = []
+        for r in rows:
+            try:
+                data = json.loads(r["procedure_json"])
+                results.append({"procedure_id": r["procedure_id"], "domain": r["domain"], **data})
+            except Exception:
+                pass
+        return results

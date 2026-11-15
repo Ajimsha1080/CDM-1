@@ -25,21 +25,45 @@ class CDMResponse(BaseModel):
 
 
 class CognitiveEngineResponse(BaseModel):
-    execution_id: str
-    decision: Any
-    confidence: float
-    calibrated_confidence: float
-    priority: str
-    risk: float
+    # Core Contract v1.2.0
+    schema_version: str = "v1.2.0"
+    answer: str = ""
+    decision: Any = None
+    reasoning: Dict[str, Any] = Field(default_factory=dict)
+    confidence: float = 0.0
+    risk_assessment: Dict[str, Any] = Field(default_factory=dict)
+    safety_status: str = "verified"
+    abstention_reason: Optional[str] = None
+    required_approval: Dict[str, Any] = Field(default_factory=dict)
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    execution_status: str = "proposed"
+    cognitive_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    latency: Dict[str, Any] = Field(default_factory=dict)
+
+    # Extended & Legacy Fields for Full Backward Compatibility
+    execution_id: str = ""
+    request_id: str = ""
+    proposed_decision: Any = None
+    execution_authorized: bool = False
+    calibrated_confidence: float = 0.0
+    priority: str = "MEDIUM"
+    risk: float = 0.0
     operational_score: Optional[float] = None
     predicted_outcomes: Dict[str, Any] = Field(default_factory=dict)
     selected_plan: Optional[Dict[str, Any]] = None
     reasoning_evidence: Dict[str, Any] = Field(default_factory=dict)
     world_state_summary: Dict[str, Any] = Field(default_factory=dict)
     abstain: bool = False
-    abstention_reason: Optional[str] = None
-    execution_recommendation: str
-    latency_ms: float
+    execution_recommendation: str = ""
+    latency_ms: float = 0.0
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
+    unsupported_claims: List[str] = Field(default_factory=list)
+    retrieved_passages: List[Dict[str, Any]] = Field(default_factory=list)
+    answer_type: str = "general"
+    explanation: str = ""
+    risks_and_uncertainty: str = ""
+    candidate_scores: Dict[str, Optional[float]] = Field(default_factory=dict)
+    candidate_rankings: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class CDMError(Exception):
@@ -201,10 +225,55 @@ class CDM:
                 session_id=session_id,
             )
             plan_dict = res.selected_plan.model_dump() if res.selected_plan else None
+            reasoning_data = {
+                "summary": getattr(res, "explanation", "") or getattr(res.reasoning_evidence, "summary", ""),
+                "deduction_steps": getattr(res.reasoning_evidence, "deduction_steps", []),
+                "candidate_rankings": getattr(res, "candidate_rankings", []),
+                "important_assumptions": getattr(res, "important_assumptions", []),
+            }
+            risk_data = {
+                "assessed_risk": getattr(res, "assessed_risk", res.risk),
+                "risk_origin": getattr(res, "risk_origin", "unspecified"),
+                "priority": res.priority,
+                "uncertainty": getattr(res, "uncertainty", round(1.0 - res.calibrated_confidence, 4)),
+            }
+            evidence_data = {
+                "citations": getattr(res, "citations", []),
+                "retrieved_passages": getattr(res, "retrieved_passages", []),
+                "supporting_evidence": getattr(res, "supporting_evidence", {}),
+                "unsupported_claims": getattr(res, "unsupported_claims", []),
+            }
+            required_approval_data = {
+                "requires_human_approval": (
+                    getattr(res, "approval_requirements", {}).get("requires_approval", False)
+                    or getattr(res, "execution_status", "") == "needs_approval"
+                ),
+                "required_role": getattr(res, "approval_requirements", {}).get("required_role") or "supervisor",
+                "approval_rule": getattr(res, "approval_requirements", {}).get("approval_rule") or "standard_policy",
+                "status": "pending" if getattr(res, "execution_status", "") == "needs_approval" else "none",
+            }
+            latency_data = {
+                "latency_ms": getattr(res, "latency_ms", 0.0),
+                "total_seconds": round(getattr(res, "latency_ms", 0.0) / 1000.0, 4),
+            }
             return CognitiveEngineResponse(
-                execution_id=res.execution_id,
+                schema_version="v1.2.0",
+                answer=getattr(res, "answer", ""),
                 decision=res.decision,
+                reasoning=reasoning_data,
                 confidence=res.confidence,
+                risk_assessment=risk_data,
+                safety_status=getattr(res, "safety_status", "verified"),
+                abstention_reason=res.abstention_reason,
+                required_approval=required_approval_data,
+                evidence=evidence_data,
+                execution_status=getattr(res, "execution_status", "proposed"),
+                cognitive_trace=getattr(res, "cognitive_trace", []),
+                latency=latency_data,
+                execution_id=res.execution_id,
+                request_id=getattr(res, "request_id", ""),
+                proposed_decision=getattr(res, "proposed_decision", res.decision),
+                execution_authorized=getattr(res, "execution_authorized", False),
                 calibrated_confidence=res.calibrated_confidence,
                 priority=res.priority,
                 risk=res.risk,
@@ -214,9 +283,16 @@ class CDM:
                 reasoning_evidence=res.reasoning_evidence.model_dump(),
                 world_state_summary=res.world_state_summary,
                 abstain=res.abstain,
-                abstention_reason=res.abstention_reason,
                 execution_recommendation=res.execution_recommendation,
                 latency_ms=res.latency_ms,
+                citations=getattr(res, "citations", []),
+                unsupported_claims=getattr(res, "unsupported_claims", []),
+                retrieved_passages=getattr(res, "retrieved_passages", []),
+                answer_type=getattr(res, "answer_type", "general"),
+                explanation=getattr(res, "explanation", ""),
+                risks_and_uncertainty=getattr(res, "risks_and_uncertainty", ""),
+                candidate_scores=getattr(res, "candidate_scores", {}) or {},
+                candidate_rankings=getattr(res, "candidate_rankings", []) or [],
             )
 
         # Hosted API execution

@@ -30,6 +30,7 @@ def create_sample_plan(stage="proposed", actions=None):
         target_goal_id="goal_101",
         plan_stage=stage,
         status=stage,
+        is_executable=(stage == "approved"),
         steps=steps,
     )
 

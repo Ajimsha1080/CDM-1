@@ -63,7 +63,6 @@ class PlanDispatcher:
 
         now = current_time if current_time is not None else time.time()
 
-        # 1. Reject proposed, abstained, prohibited, expired, or rejected plans
         current_stage = (plan.plan_stage or "").lower().strip()
         current_status = (getattr(plan, "status", "") or "").lower().strip()
 
@@ -112,6 +111,13 @@ class PlanDispatcher:
                 raise PlanExecutionError(
                     f"Execution Safety Violation: Step {step.step_number} action '{step.action_name}' is explicitly prohibited."
                 )
+
+        # 4. Check is_executable
+        if not getattr(plan, "is_executable", True):
+            raise PlanExecutionError(
+                f"Execution Safety Violation: Plan '{plan.plan_id}' is marked is_executable=False. "
+                "Execution authorization is not granted."
+            )
 
         # 4. Require explicit authorization for sensitive actions
         token = authorization_token or plan.authorization_token

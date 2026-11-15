@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+:root {
+  --background: #FAF9F5;
+  --foreground: #1A1816;
+  --card-bg: #FFFFFF;
+  --card-border: #E8E5DD;
+  --accent-gold: #854D0E;
+  --accent-cream: #F5F3ED;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+}
+
+body {
+  background-color: #FAF9F5;
+  color: #1A1816;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Segoe UI", Roboto, sans-serif;
+  letter-spacing: -0.011em;
+  background-image: 
+    radial-gradient(circle at 10% 0%, rgba(245, 240, 230, 0.7) 0px, transparent 50%),
+    radial-gradient(circle at 90% 10%, rgba(240, 235, 225, 0.5) 0px, transparent 50%),
+    radial-gradient(circle at 50% 100%, rgba(248, 246, 240, 0.6) 0px, transparent 60%);
+  background-attachment: fixed;
+}
+
+/* Custom Luxury Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+/* Luxury White/Cream Cards */
+.luxury-card {
+  background: #FFFFFF;
+  border: 1px solid #E8E5DC;
+  box-shadow: 0 1px 3px rgba(26, 24, 22, 0.02), 0 6px 16px -2px rgba(26, 24, 22, 0.03);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.luxury-card:hover {
+  border-color: #D6D1C4;
+  box-shadow: 0 4px 6px -1px rgba(26, 24, 22, 0.03), 0 12px 28px -4px rgba(26, 24, 22, 0.06);
+}
+
+.luxury-card-elevated {
+  background: #FFFFFF;
+  border: 1px solid #E2DFD4;
+  box-shadow: 0 4px 20px -2px rgba(26, 24, 22, 0.04), 0 1px 3px rgba(26, 24, 22, 0.02);
+}
+
+/* Luxury Primary Button */
+.luxury-btn {
+  background: #1C1917;
+  color: #FAFAF9;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transition: all 0.2s ease;
+}
+
+.luxury-btn:hover {
+  background: #292524;
+  box-shadow: 0 4px 12px rgba(28, 25, 23, 0.15);
+  transform: translateY(-0.5px);
+}
+
+/* Luxury Pill Badges */
+.luxury-pill-green {
+  background: #F0FDF4;
+  color: #166534;
+  border: 1px solid #BBF7D0;
+}
+
+.luxury-pill-amber {
+  background: #FFFBEB;
+  color: #92400E;
+  border: 1px solid #FDE68A;
+}
+
+.luxury-pill-neutral {
+  background: #F5F3ED;
+  color: #44403C;
+  border: 1px solid #E5E2D8;
+}
+
+.luxury-pill-indigo {
+  background: #EEF2FF;
+  color: #3730A3;
+  border: 1px solid #C7D2FE;
+}
+
+.luxury-pill-rose {
+  background: #FFF1F2;
+  color: #9F1239;
+  border: 1px solid #FECDD3;
+}
+
+/* Luxury Input & Textarea Elements */
+.luxury-input {
+  background-color: #FFFFFF;
+  border: 1px solid #E8E5DC;
+  color: #1C1917;
+  transition: all 0.15s ease;
+}
+
+.luxury-input:focus {
+  border-color: #1C1917;
+  outline: none;
+  box-shadow: 0 0 0 1px #1C1917;
+}
+
+/* Fallback aliases for legacy dark classes to maintain luxury aesthetic */
+.glow-card {
+  background: #FFFFFF;
+  border: 1px solid #E8E5DC;
+  box-shadow: 0 1px 3px rgba(26, 24, 22, 0.02), 0 6px 16px -2px rgba(26, 24, 22, 0.03);
+}

@@ -36,11 +36,12 @@ class ContextFrame(BaseModel):
     session_id: str = "default_session"
     tenant_id: str = "default_tenant"
     turn_index: int = 0
-    dialogue_history: List[Dict[str, str]] = Field(default_factory=list)
+    dialogue_history: List[Dict[str, Any]] = Field(default_factory=list)
     temporal_delta_seconds: float = 0.0
     timestamp: float = Field(default_factory=time.time)
     detected_contradictions: List[str] = Field(default_factory=list)
     relevance_scores: Dict[str, float] = Field(default_factory=dict)
+    session_features: Dict[str, Any] = Field(default_factory=dict)
 
 
 class GoalStatus(str, Enum):
@@ -152,6 +153,10 @@ class PlanStep(BaseModel):
     prediction_source: Optional[str] = None
     risk_provenance: Dict[str, Any] = Field(default_factory=dict)
     is_reversible: bool = True
+    execution_eligibility: bool = True
+    approval_required: bool = False
+    required_approver_role: Optional[str] = None
+    constraints: List[str] = Field(default_factory=list)
 
 
 class ExecutedActionStep(BaseModel):
@@ -191,9 +196,10 @@ class Plan(BaseModel):
     is_verified_goal_completion: bool = False
     goal_satisfaction_details: Dict[str, Any] = Field(default_factory=dict)
     alternative_plans: List[Dict[str, Any]] = Field(default_factory=list)
-    is_executable: bool = True
+    is_executable: bool = False
     requires_human_approval: bool = False
     approval_reason: Optional[str] = None
+    required_approver_role: Optional[str] = None
     primary_decision: Optional[str] = None
     contradictory_actions_detected: List[str] = Field(default_factory=list)
 
@@ -218,11 +224,22 @@ class SharedCognitiveState(BaseModel):
 class CognitiveEngineResult(BaseModel):
     """Unified output from the integrated Cognitive AI Engine."""
     execution_id: str = Field(default_factory=lambda: f"exec_{uuid.uuid4().hex[:8]}")
+    request_id: str = Field(default_factory=lambda: f"req_{uuid.uuid4().hex[:8]}")
+    execution_status: str = "proposed"  # 'authorized', 'proposed', 'needs_approval', 'abstained', 'rejected'
+    proposed_decision: Any = None
+    execution_authorized: bool = False
+    abstention_status: str = "none"  # 'none', 'abstained', 'policy_rejection', 'uncertainty', 'missing_evidence'
+    abstention_reason: Optional[str] = None
     decision: Any
     confidence: float
     calibrated_confidence: float
-    priority: str
-    risk: float
+    uncertainty: float = 0.0
+    assessed_risk: float = 0.0
+    is_calibrated: bool = False
+    confidence_origin: str = "unspecified"
+    risk_origin: str = "unspecified"
+    priority: str = "MEDIUM"
+    risk: float = 0.0
     operational_score: Optional[float] = None
     neural_score: Optional[float] = None
     heuristic_score: Optional[float] = None
@@ -230,15 +247,42 @@ class CognitiveEngineResult(BaseModel):
     predicted_outcomes: Dict[str, Any] = Field(default_factory=dict)
     candidate_scores: Dict[str, Optional[float]] = Field(default_factory=dict)
     heuristic_candidate_scores: Dict[str, float] = Field(default_factory=dict)
+    candidate_rankings: List[Dict[str, Any]] = Field(default_factory=list)
+    policy_check: Dict[str, Any] = Field(default_factory=dict)
+    approval_requirements: Dict[str, Any] = Field(default_factory=dict)
+    verification: Dict[str, Any] = Field(default_factory=dict)
+    supporting_evidence: Dict[str, Any] = Field(default_factory=dict)
+    cognitive_trace: List[Dict[str, Any]] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
     selected_plan: Optional[Plan] = None
+    plan: Optional[Plan] = None
     reasoning_evidence: ReasoningTrace
     causal_analysis: Optional[Dict[str, Any]] = None
     world_state_summary: Dict[str, Any] = Field(default_factory=dict)
     abstain: bool = False
-    abstention_reason: Optional[str] = None
     alternatives: List[Dict[str, Any]] = Field(default_factory=list)
-    execution_recommendation: str
+    execution_recommendation: str = ""
     embedding_mode: str = "structured_fallback"  # 'transformer' vs 'structured_fallback'
     latency_ms: float = 0.0
     shared_state: Optional[SharedCognitiveState] = None
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    # Cognitive Answer Synthesis Fields
+    answer: str = ""
+    answer_type: str = "general"
+    explanation: str = ""
+    risks_and_uncertainty: str = ""
+    safety_status: str = "verified"
+    limitations: List[str] = Field(default_factory=list)
+    important_assumptions: List[str] = Field(default_factory=list)
+    recommended_next_steps: List[str] = Field(default_factory=list)
+    retrieved_external_facts: List[Dict[str, Any]] = Field(default_factory=list)
+
+    # Additional Cognitive Reliability & Citation Fields
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
+    unsupported_claims: List[str] = Field(default_factory=list)
+    retrieved_passages: List[Dict[str, Any]] = Field(default_factory=list)
+    intent_task: str = "question"
+    needs_clarification: bool = False
+    clarification_prompt: Optional[str] = None
+    validation_result: Optional[Dict[str, Any]] = None

@@ -30,6 +30,22 @@ class FeedbackEvent(BaseModel):
     verified_target_label: Optional[Union[str, int, Dict[str, Any]]] = None
 
 
+class UserOpinionFeedback(BaseModel):
+    """Subjective user satisfaction ratings and qualitative commentary.
+    Stored strictly separate from verified ground-truth telemetry.
+    Invariant: eligible_for_training is permanently False to prevent automatic model drift.
+    """
+    opinion_id: str = Field(default_factory=lambda: f"op_{uuid.uuid4().hex}")
+    tenant_id: str = "default_tenant"
+    session_id: str = "default_session"
+    decision_id: Optional[str] = None
+    rating: int = Field(..., ge=1, le=5)  # 1-5 star scale
+    user_comment: Optional[str] = None
+    category: str = "general"
+    timestamp: float = Field(default_factory=time.time)
+    eligible_for_training: bool = False
+
+
 class FeedbackCollector:
     """Manages verified outcome collection, discrepancy detection, and approved dataset staging with SQLite persistence."""
 
@@ -37,10 +53,12 @@ class FeedbackCollector:
         self.db_path = db_path
         self._lock = threading.Lock()
         self.events: List[FeedbackEvent] = []
-        if self.db_path:
+        if self.db_path and self.db_path != ":memory:":
             os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
             self._init_db()
             self._load_persisted_events()
+        elif self.db_path == ":memory:":
+            self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
         """Creates an optimized, thread-safe, and multi-process resilient SQLite connection.
@@ -74,6 +92,19 @@ class FeedbackCollector:
                         reviewer_id TEXT
                     )
                 """)
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS user_opinions (
+                        opinion_id TEXT PRIMARY KEY,
+                        tenant_id TEXT NOT NULL,
+                        session_id TEXT NOT NULL,
+                        decision_id TEXT,
+                        rating INTEGER NOT NULL,
+                        user_comment TEXT,
+                        category TEXT NOT NULL,
+                        timestamp REAL NOT NULL,
+                        eligible_for_training INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
                 # Handle existing tables that may lack reviewer_id column
                 cols = [r[1] for r in conn.execute("PRAGMA table_info(feedback_events)").fetchall()]
                 if "reviewer_id" not in cols:
@@ -81,6 +112,7 @@ class FeedbackCollector:
 
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_tenant ON feedback_events (tenant_id)")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback_events (review_status)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_opinion_tenant ON user_opinions (tenant_id)")
         finally:
             conn.close()
 
@@ -332,3 +364,114 @@ class FeedbackCollector:
             if len(approved) >= min_events:
                 return approved
             return None
+
+    def record_user_opinion(
+        self,
+        tenant_id: str,
+        session_id: str,
+        rating: int,
+        user_comment: Optional[str] = None,
+        decision_id: Optional[str] = None,
+        category: str = "general",
+    ) -> UserOpinionFeedback:
+        """Records subjective user ratings/opinions.
+        Persists into segregated 'user_opinions' table.
+        Strictly segregated from verified ground-truth telemetry and permanently excluded from model retraining.
+        """
+        opinion = UserOpinionFeedback(
+            tenant_id=tenant_id,
+            session_id=session_id,
+            decision_id=decision_id,
+            rating=rating,
+            user_comment=user_comment,
+            category=category,
+            eligible_for_training=False,
+        )
+
+        with self._lock:
+            if self.db_path:
+                conn = self._get_connection()
+                try:
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO user_opinions (
+                                opinion_id, tenant_id, session_id, decision_id,
+                                rating, user_comment, category, timestamp, eligible_for_training
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)
+                            """,
+                            (
+                                opinion.opinion_id,
+                                opinion.tenant_id,
+                                opinion.session_id,
+                                opinion.decision_id,
+                                opinion.rating,
+                                opinion.user_comment,
+                                opinion.category,
+                                opinion.timestamp,
+                            ),
+                        )
+                finally:
+                    conn.close()
+
+        return opinion
+
+    def get_user_opinions(self, tenant_id: Optional[str] = None) -> List[UserOpinionFeedback]:
+        """Retrieves recorded subjective user opinions."""
+        opinions: List[UserOpinionFeedback] = []
+        if not self.db_path:
+            return opinions
+
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    if tenant_id:
+                        rows = conn.execute(
+                            "SELECT * FROM user_opinions WHERE tenant_id = ? ORDER BY timestamp DESC",
+                            (tenant_id,),
+                        ).fetchall()
+                    else:
+                        rows = conn.execute(
+                            "SELECT * FROM user_opinions ORDER BY timestamp DESC"
+                        ).fetchall()
+
+                    for r in rows:
+                        opinions.append(
+                            UserOpinionFeedback(
+                                opinion_id=r["opinion_id"],
+                                tenant_id=r["tenant_id"],
+                                session_id=r["session_id"],
+                                decision_id=r["decision_id"],
+                                rating=r["rating"],
+                                user_comment=r["user_comment"],
+                                category=r["category"],
+                                timestamp=r["timestamp"],
+                                eligible_for_training=bool(r["eligible_for_training"]),
+                            )
+                        )
+            finally:
+                conn.close()
+
+        return opinions
+
+    def create_evaluation_dataset(self, tenant_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Compiles evaluation dataset from verified feedback events with discrepancy telemetry."""
+        dataset = []
+        with self._lock:
+            candidates = self.events
+            if tenant_id:
+                candidates = [e for e in candidates if e.tenant_id == tenant_id]
+
+            for ev in candidates:
+                dataset.append({
+                    "event_id": ev.event_id,
+                    "decision_id": ev.decision_id,
+                    "tenant_id": ev.tenant_id,
+                    "predicted_decision": ev.predicted_decision,
+                    "actual_outcome": ev.verified_actual_outcome,
+                    "success": ev.decision_success,
+                    "discrepancy_score": ev.discrepancy_score,
+                    "review_status": ev.review_status,
+                })
+        return dataset

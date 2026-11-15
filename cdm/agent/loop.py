@@ -142,6 +142,32 @@ class AgentStore:
             finally:
                 conn.close()
 
+    def list_runs(self, tenant_id: Optional[str] = None, limit: int = 50) -> List[AgentRunState]:
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.cursor()
+                if tenant_id:
+                    cur.execute(
+                        "SELECT state_json FROM agent_runs WHERE tenant_id = ? ORDER BY updated_at DESC LIMIT ?;",
+                        (tenant_id, limit),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT state_json FROM agent_runs ORDER BY updated_at DESC LIMIT ?;",
+                        (limit,),
+                    )
+                rows = cur.fetchall()
+                results = []
+                for r in rows:
+                    try:
+                        results.append(AgentRunState.model_validate(json.loads(r[0])))
+                    except Exception:
+                        pass
+                return results
+            finally:
+                conn.close()
+
 
 class AgentControlLoop:
     """CDM-1 Four-Layer Agent Control Loop."""
@@ -301,6 +327,8 @@ class AgentControlLoop:
         if run.status != "running":
             return run
 
+        had_active_plan_before_step = bool(run.active_plan is not None)
+
         # 1. Budget checks
         if run.step_count >= run.step_budget:
             run.status = "step_budget_exceeded"
@@ -338,7 +366,9 @@ class AgentControlLoop:
         # =====================================================================
         # Layer 2: Authoritative Unified Cognitive Processing
         # =====================================================================
-        candidate_tools = list(self.tools.keys()) + ["complete_task"]
+        candidate_tools = list(self.tools.keys())
+        if run.step_count > 0:
+            candidate_tools.append("complete_task")
         execute_planning = (run.active_plan is None)
 
         cog_result = self.cognitive_engine.process(
@@ -588,6 +618,9 @@ class AgentControlLoop:
 
         if planned_action_name and planned_action_name != proposed.tool:
             clean_plan_args = {k: v for k, v in plan_step_params.items() if k != "target_goal"}
+            if planned_action_name == "repo_search" and "query" not in clean_plan_args:
+                q_val = proposed.arguments.get("query") or (run.goal if "search" in run.goal.lower() else run.task_description)
+                clean_plan_args["query"] = str(q_val)
             raw_candidates.append({
                 "tool": planned_action_name,
                 "arguments": clean_plan_args,
@@ -599,8 +632,7 @@ class AgentControlLoop:
         if "search" in task_text or "find" in task_text or "grep" in task_text:
             if "repo_search" in self.tools and all(c["tool"] != "repo_search" for c in raw_candidates):
                 query_val = (
-                    proposed.arguments.get("path")
-                    or proposed.arguments.get("query")
+                    proposed.arguments.get("query")
                     or (run.goal if "search" in run.goal.lower() else run.task_description)
                 )
                 raw_candidates.append({
@@ -761,9 +793,9 @@ class AgentControlLoop:
                     if c_name in causal_consequences and isinstance(causal_consequences[c_name], dict):
                         c_risk = max(c_risk, causal_consequences[c_name].get("expected_risk", 0.0))
 
-                    # Plan alignment bonus: prioritize the planned step of validated plan
-                    c_plan_bonus = 0.35 if (planned_action_name and c_name == planned_action_name) else 0.0
-                    c_proposed_bonus = 0.05 if (c_name == proposed.tool) else 0.0
+                    # Plan alignment bonus: prioritize the planned step if the run had an established active plan
+                    c_plan_bonus = 0.35 if (had_active_plan_before_step and planned_action_name and c_name == planned_action_name) else (0.05 if (planned_action_name and c_name == planned_action_name) else 0.0)
+                    c_proposed_bonus = 0.10 if (c_name == proposed.tool) else 0.0
                     composite_score = (c_effective_score * (cog_result.confidence or 0.85)) - (c_risk * 0.4) + c_plan_bonus + c_proposed_bonus
                     ranked_candidates.append((composite_score, cand, c_neural, c_heuristic, c_risk, c_used_neural))
                     alternatives_evaluated.append({

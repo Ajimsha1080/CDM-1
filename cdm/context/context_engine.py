@@ -45,7 +45,10 @@ class ContextEngine:
             dialogue = []
             if history:
                 dialogue = list(history[-1].dialogue_history)
-            dialogue.append({"role": "user", "content": user_message})
+            user_entry: Dict[str, Any] = {"role": "user", "content": user_message}
+            if perception and getattr(perception, "validated_tabular", None):
+                user_entry["features"] = dict(perception.validated_tabular)
+            dialogue.append(user_entry)
             if system_response:
                 dialogue.append({"role": "assistant", "content": system_response})
 
@@ -57,6 +60,12 @@ class ContextEngine:
             for ent in perception.extracted_entities:
                 relevance[ent.name] = ent.confidence
 
+            session_feats = {}
+            if history and hasattr(history[-1], "session_features"):
+                session_feats.update(history[-1].session_features)
+            if perception and getattr(perception, "validated_tabular", None):
+                session_feats.update(perception.validated_tabular)
+
             frame = ContextFrame(
                 session_id=session_id,
                 tenant_id=tenant_id,
@@ -66,6 +75,7 @@ class ContextEngine:
                 timestamp=now,
                 detected_contradictions=contradictions,
                 relevance_scores=relevance,
+                session_features=session_feats,
             )
 
             history.append(frame)

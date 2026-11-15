@@ -76,6 +76,9 @@ Documentation = "https://github.com/cdm-project/cdm-1/tree/main/docs"
 Issues = "https://github.com/cdm-project/cdm-1/issues"
 Changelog = "https://github.com/cdm-project/cdm-1/blob/main/CHANGELOG.md"
 
+[project.scripts]
+cdm = "cdm.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["cdm*", "sdk*", "api*"]

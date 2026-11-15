@@ -6,6 +6,7 @@ Central Decision Core, and Metacognition with strict tenant isolation and no fak
 from typing import Dict, List, Optional, Any, Tuple
 import os
 import time
+import math
 import uuid
 import logging
 import threading
@@ -23,6 +24,7 @@ from cdm.cognitive.state import (
     Plan,
     CognitiveEngineResult,
 )
+from cdm.execution.dispatcher import SENSITIVE_ACTIONS
 from cdm.perception.perception_engine import PerceptionEngine
 from cdm.context.context_engine import ContextEngine
 from cdm.memory.storage import SQLiteMemoryStorage
@@ -37,6 +39,7 @@ from cdm.planning.planning_engine import PlanningEngine
 from cdm.learning.feedback import FeedbackCollector
 from cdm.inference.pipeline import CognitiveDecisionModel, DecisionResult
 from cdm.causal.causal_engine import CausalEngine
+from cdm.synthesis.answer_synthesizer import AnswerSynthesizer, ExternalInformationRetriever, SynthesizedAnswer
 
 
 class CognitiveEngine:
@@ -112,6 +115,10 @@ class CognitiveEngine:
             tokenizer=tok,
             use_neural=True if (lang_enc is not None and tok is not None) else None,
         )
+
+        # 10. Cognitive Answer Synthesis Layer
+        self.external_retriever = ExternalInformationRetriever()
+        self.answer_synthesizer = AnswerSynthesizer(retriever=self.external_retriever)
 
     def get_health_status(self) -> Dict[str, Any]:
         """Returns runtime health and model loading status."""
@@ -281,7 +288,15 @@ class CognitiveEngine:
         session_lock = self._get_session_lock(tenant_id=tenant_id, session_id=session_id)
         with session_lock:
             start_time = time.perf_counter()
-            struct_feats = structured_features or {}
+            errors: List[str] = []
+            cognitive_trace: List[Dict[str, Any]] = []
+
+            struct_feats = dict(structured_features or {})
+            for k, v in list(struct_feats.items()):
+                if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                    errors.append(f"Invalid numerical value in structured_feature '{k}': {v}")
+                    struct_feats[k] = 0.0
+
             candidate_list = candidates or ["auto_resolve", "issue_refund", "escalate_to_tier2"]
             prohibitions = list(prohibited_actions or [])
             user_constraints = list(constraints or [])
@@ -290,13 +305,29 @@ class CognitiveEngine:
             world_model = self._get_or_create_world_model(tenant_id=tenant_id, session_id=session_id)
             working_memory = self._get_or_create_working_memory(tenant_id=tenant_id, session_id=session_id)
 
-            # Step A: Perception Intelligence
+            # Stage 1: Perception Intelligence
+            t_perc_start = time.perf_counter()
             perception: PerceptionResult = self.perception_engine.process(
                 text=text,
                 structured_features=struct_feats,
             )
+            perc_duration = (time.perf_counter() - t_perc_start) * 1000.0
+            cognitive_trace.append({
+                "stage_name": "Perception",
+                "execution_status": "success",
+                "duration_ms": round(perc_duration, 2),
+                "inputs": {"text_length": len(text), "feature_keys": list(struct_feats.keys())},
+                "outputs": {
+                    "extracted_entities_count": len(perception.extracted_entities),
+                    "extracted_entity_types": list({e.entity_type for e in perception.extracted_entities}),
+                    "signals": perception.signals,
+                    "modality_confidence": perception.modality_confidence,
+                },
+                "errors": [],
+            })
 
-            # Step B: Contextual Intelligence (Tenant-isolated)
+            # Stage 2: Contextual Intelligence & Working Memory (Tenant-isolated)
+            t_wm_start = time.perf_counter()
             context: ContextFrame = self.context_engine.update_context(
                 session_id=session_id,
                 tenant_id=tenant_id,
@@ -304,13 +335,71 @@ class CognitiveEngine:
                 user_message=text,
             )
 
-            # Step C: Memory Retrieval (Episodic, Semantic Rules, Procedural Workflows)
+            # Ingest observed facts into tenant-isolated world model
+            world_model.record_observed_fact("text_inquiry", text)
+            for k, v in struct_feats.items():
+                world_model.record_observed_fact(k, v)
+                if isinstance(v, (int, float)):
+                    world_model.set_environment_metric(k, float(v))
+
+            for ent in perception.extracted_entities:
+                world_model.update_entity(
+                    entity_id=ent.entity_id,
+                    entity_type=ent.entity_type,
+                    properties={"name": ent.name, **ent.attributes},
+                    uncertainty=1.0 - ent.confidence,
+                )
+
+            for p in prohibitions:
+                world_model.register_constraint(f"ProhibitedAction: {p}")
+            for c in user_constraints:
+                world_model.register_constraint(f"UserConstraint: {c}")
+
+            world_state: WorldState = world_model.get_state()
+
+            if not working_memory.active_goals:
+                if goals:
+                    for g_idx, g_desc in enumerate(goals, start=1):
+                        working_memory.push_goal(
+                            goal_id=f"goal_{g_idx}",
+                            description=g_desc,
+                            priority=g_idx,
+                        )
+                else:
+                    domain = struct_feats.get("domain", "customer_support")
+                    working_memory.push_goal(
+                        goal_id="primary_goal",
+                        description=f"Resolve request with optimal action under policy compliance for {domain}",
+                        priority=1,
+                    )
+
             domain = struct_feats.get("domain", "customer_support")
+            working_memory.write_scratchpad("session_id", session_id)
+            working_memory.write_scratchpad("tenant_id", tenant_id)
+            working_memory.write_scratchpad("domain", domain)
+            working_state: WorkingMemoryState = working_memory.snapshot()
+
+            wm_duration = (time.perf_counter() - t_wm_start) * 1000.0
+            cognitive_trace.append({
+                "stage_name": "Working Memory & Context",
+                "execution_status": "success",
+                "duration_ms": round(wm_duration, 2),
+                "inputs": {"session_id": session_id, "tenant_id": tenant_id, "turn_index": context.turn_index},
+                "outputs": {
+                    "dialogue_turns": len(context.dialogue_history),
+                    "detected_contradictions": context.detected_contradictions,
+                    "active_goals_count": len(working_state.active_goals),
+                    "scratchpad_keys": list(working_state.scratchpad.keys()),
+                },
+                "errors": [],
+            })
+
+            # Stage 3: Memory Retrieval (Episodic, Semantic Rules, Procedural Workflows)
+            t_mem_start = time.perf_counter()
             rules_objs = self.semantic_memory.query_rules_for_domain(domain=domain, tenant_id=tenant_id)
             semantic_rules = [r.model_dump() for r in rules_objs]
             procedural_workflows = self.procedural_memory.get_workflows_for_domain(domain=domain, tenant_id=tenant_id)
 
-            # Grounded semantic vector embedding for memory retrieval
             query_vector, emb_mode = self.memory_embedder.embed_with_metadata(text=text, structured_features=struct_feats)
             episodic_cases = []
             try:
@@ -325,59 +414,33 @@ class CognitiveEngine:
                 logger.warning(f"Episodic memory search warning for tenant '{tenant_id}': {e}")
                 episodic_cases = []
 
-            # Step D: Update Tenant-Isolated World Model
-            # Ingest observed facts
-            world_model.record_observed_fact("text_inquiry", text)
-            for k, v in struct_feats.items():
-                world_model.record_observed_fact(k, v)
-                if isinstance(v, (int, float)):
-                    world_model.set_environment_metric(k, float(v))
+            mem_duration = (time.perf_counter() - t_mem_start) * 1000.0
+            cognitive_trace.append({
+                "stage_name": "Memory Retrieval",
+                "execution_status": "success",
+                "duration_ms": round(mem_duration, 2),
+                "inputs": {"domain": domain, "tenant_id": tenant_id},
+                "outputs": {
+                    "semantic_rules_retrieved": len(semantic_rules),
+                    "procedural_workflows_retrieved": len(procedural_workflows),
+                    "episodic_cases_retrieved": len(episodic_cases),
+                    "embedding_mode": emb_mode,
+                },
+                "retrieved_memory": {
+                    "rules": [r.get("rule_id", "rule") for r in semantic_rules],
+                    "workflows": [w.get("name", "workflow") for w in procedural_workflows],
+                    "episodic_count": len(episodic_cases),
+                },
+                "errors": [],
+            })
 
-            # Ingest extracted entities
-            for ent in perception.extracted_entities:
-                world_model.update_entity(
-                    entity_id=ent.entity_id,
-                    entity_type=ent.entity_type,
-                    properties={"name": ent.name, **ent.attributes},
-                    uncertainty=1.0 - ent.confidence,
-                )
-
-            # Ingest active constraints
-            for p in prohibitions:
-                world_model.register_constraint(f"ProhibitedAction: {p}")
-            for c in user_constraints:
-                world_model.register_constraint(f"UserConstraint: {c}")
-
-            world_state: WorldState = world_model.get_state()
-
-            # Step E: Working Memory Setup (Tenant-isolated)
-            if not working_memory.active_goals:
-                if goals:
-                    for g_idx, g_desc in enumerate(goals, start=1):
-                        working_memory.push_goal(
-                            goal_id=f"goal_{g_idx}",
-                            description=g_desc,
-                            priority=g_idx,
-                        )
-                else:
-                    working_memory.push_goal(
-                        goal_id="primary_goal",
-                        description=f"Resolve request with optimal action under policy compliance for {domain}",
-                        priority=1,
-                    )
-
-            working_memory.write_scratchpad("session_id", session_id)
-            working_memory.write_scratchpad("tenant_id", tenant_id)
-            working_memory.write_scratchpad("domain", domain)
-            working_state: WorkingMemoryState = working_memory.snapshot()
-
-            # Step E.2: Causal Intelligence
+            # Stage 4: Neural Reasoner & Central Decision Core
+            t_reason_start = time.perf_counter()
             causal_analysis = self.causal_engine.analyze_candidate_consequences(
                 candidate_actions=candidate_list,
                 current_metrics=world_state.environment_metrics,
             )
 
-            # Step F: Reasoning Intelligence
             reasoning_trace: ReasoningTrace = self.reasoning_engine.reason(
                 world_state=world_state,
                 context=context,
@@ -388,18 +451,15 @@ class CognitiveEngine:
                 causal_consequences=causal_analysis,
             )
 
-            # Record inferred state in world model
             for step in reasoning_trace.steps:
                 world_model.record_inferred_state(f"deduction_step_{step.step_index}", step.conclusion)
 
-            # Update prohibitions based on violated hard constraints from reasoning
             effective_prohibitions = list(prohibitions)
             for v in reasoning_trace.violated_constraints:
                 for cand in candidate_list:
                     if cand.lower() in v.lower() and cand not in effective_prohibitions:
                         effective_prohibitions.append(cand)
 
-            # Step G: CDM-1 Central Cognitive Decision Core Execution (P0: STRICT INFERENCE)
             if self.decision_core is None:
                 if self.production_mode:
                     raise RuntimeError(
@@ -411,7 +471,7 @@ class CognitiveEngine:
                     "decision": candidate_list[0] if candidate_list else "abstain",
                     "confidence": 0.5,
                     "calibrated": False,
-                    "score": None,  # Explicitly None: missing neural scores are never labeled with artificial defaults
+                    "score": None,
                     "neural_score": None,
                     "heuristic_score": 0.5,
                     "used_neural_inference": False,
@@ -451,23 +511,40 @@ class CognitiveEngine:
                         "provenance": {"error": str(e), "used_neural_inference": False},
                     })
 
-            decision = cdm_result.decision
-            confidence = cdm_result.confidence
-            calibrated_conf = cdm_result.confidence if cdm_result.calibrated else cdm_result.confidence * 0.9
+            # P1: Numerical validation rejecting NaN and Infinity
+            raw_conf = getattr(cdm_result, "confidence", 0.0)
+            raw_risk = getattr(cdm_result, "risk", 0.05)
+            if raw_risk is None:
+                raw_risk = 0.05
+
+            has_numerical_error = False
+            if isinstance(raw_conf, float) and (math.isnan(raw_conf) or math.isinf(raw_conf)):
+                errors.append(f"Invalid model confidence score: {raw_conf}")
+                confidence = 0.0
+                calibrated_conf = 0.0
+                has_numerical_error = True
+            else:
+                confidence = float(raw_conf)
+                is_calibrated = bool(getattr(cdm_result, "calibrated", False))
+                calibrated_conf = float(raw_conf if is_calibrated else raw_conf * 0.9)
+
+            if isinstance(raw_risk, float) and (math.isnan(raw_risk) or math.isinf(raw_risk)):
+                errors.append(f"Invalid model risk score: {raw_risk}")
+                risk = 1.0
+                has_numerical_error = True
+            else:
+                risk = float(raw_risk)
+
             priority = cdm_result.priority or "MEDIUM"
-            risk = cdm_result.risk or 0.05
             operational_score = cdm_result.score
             predicted_outcomes = {
                 "raw_decision": cdm_result.decision,
                 "candidate_scores": cdm_result.candidate_scores,
                 "predicted_outcome": cdm_result.predicted_outcome,
             }
-            abstain = cdm_result.abstain
-            abstention_reason = cdm_result.abstention_reason
 
-            # Record predicted future state into world model
             world_model.record_predicted_future_state({
-                "predicted_decision": decision,
+                "predicted_decision": cdm_result.decision,
                 "predicted_confidence": confidence,
                 "predicted_risk": risk,
                 "predicted_outcome": cdm_result.predicted_outcome,
@@ -476,28 +553,168 @@ class CognitiveEngine:
             alternatives = [
                 {"action": act, "score": score}
                 for act, score in (cdm_result.candidate_scores or {}).items()
-                if act != decision
+                if act != cdm_result.decision
             ]
 
-            # Compute ranked candidate list from decision model scores
             candidate_ranking: List[Tuple[str, float]] = []
             if cdm_result.candidate_scores:
                 candidate_ranking = sorted(
-                    [(k, float(v)) for k, v in cdm_result.candidate_scores.items() if v is not None],
+                    [
+                        (k, float(v))
+                        for k, v in cdm_result.candidate_scores.items()
+                        if v is not None and not (isinstance(v, float) and (math.isnan(v) or math.isinf(v)))
+                    ],
                     key=lambda x: x[1],
                     reverse=True,
                 )
 
-            # Step H: Metacognitive Safety Check (evaluated before plan generation)
-            if reasoning_trace.contradictions_found and not abstain:
-                if calibrated_conf < 0.75:
-                    abstain = True
-                    abstention_reason = (
-                        f"Metacognitive Abstention: Discovered contradictions ({len(reasoning_trace.contradictions_found)}) "
-                        f"with marginal confidence ({calibrated_conf:.3f})."
-                    )
+            model_mode = "neural" if getattr(cdm_result, "used_neural_inference", False) else "rule_based_fallback"
+            reason_duration = (time.perf_counter() - t_reason_start) * 1000.0
+            cognitive_trace.append({
+                "stage_name": "Neural Reasoner & Decision Core",
+                "execution_status": "warning" if (has_numerical_error or cdm_result.abstain) else "success",
+                "duration_ms": round(reason_duration, 2),
+                "model_mode": model_mode,
+                "availability": "available" if self.decision_core is not None else "uninitialized",
+                "inputs": {"candidates": candidate_list, "prohibitions": effective_prohibitions},
+                "outputs": {
+                    "decision": cdm_result.decision,
+                    "confidence": round(confidence, 4),
+                    "calibrated_confidence": round(calibrated_conf, 4),
+                    "risk": round(risk, 4),
+                    "candidate_scores": cdm_result.candidate_scores,
+                    "violated_constraints": reasoning_trace.violated_constraints,
+                    "contradictions_found": reasoning_trace.contradictions_found,
+                },
+                "errors": [e for e in errors if "confidence" in e or "risk" in e],
+            })
 
-            # Step I: Planning Intelligence (when enabled)
+            # Stage 5: Planning Engine & Safety Verifier
+            t_plan_start = time.perf_counter()
+
+            # 1. Separate Proposed Decision from Execution Authorization
+            proposed_candidate = cdm_result.decision
+            if proposed_candidate in (None, "abstain", "ABSTAIN"):
+                if candidate_ranking:
+                    proposed_candidate = candidate_ranking[0][0]
+                elif candidate_list:
+                    proposed_candidate = candidate_list[0]
+                else:
+                    proposed_candidate = "none"
+
+            proposed_decision = proposed_candidate
+
+            # 2. Evaluate Policy Check independently
+            policy_violated_rules = []
+            if proposed_decision in effective_prohibitions:
+                policy_violated_rules.append(f"ProhibitedAction: {proposed_decision}")
+            for v in reasoning_trace.violated_constraints:
+                # Violation applies if it references the proposed decision, or is a global/user constraint
+                if str(proposed_decision) in v or "prohibitedaction" in v.lower() or "user constraint" in v.lower() or "general" in v.lower():
+                    if v not in policy_violated_rules:
+                        policy_violated_rules.append(v)
+
+            policy_passed = (len(policy_violated_rules) == 0) and (proposed_decision not in effective_prohibitions)
+            policy_check = {
+                "passed": policy_passed,
+                "violated_rules": policy_violated_rules,
+                "checked_rules": [f"ProhibitedAction: {p}" for p in effective_prohibitions] + [f"UserConstraint: {c}" for c in user_constraints],
+                "policy_status": "passed" if policy_passed else "violated",
+            }
+
+            # 3. Categorize Abstention (Policy vs Uncertainty vs Missing Evidence vs Invalid Numerical)
+            abstain = False
+            abstention_status = "none"
+            abstention_reason = None
+
+            if has_numerical_error:
+                abstain = True
+                abstention_status = "invalid_numerical_scores"
+                abstention_reason = "Numerical validation failure: confidence or risk score is NaN or infinity."
+            elif not policy_passed or (proposed_decision in effective_prohibitions):
+                abstain = True
+                abstention_status = "policy_rejection"
+                abstention_reason = (
+                    f"Policy constraint violation: {', '.join(policy_violated_rules)}"
+                    if policy_violated_rules
+                    else f"Action '{proposed_decision}' is prohibited by policy."
+                )
+            elif reasoning_trace.contradictions_found and calibrated_conf < 0.75:
+                abstain = True
+                abstention_status = "uncertainty"
+                abstention_reason = (
+                    f"Metacognitive Abstention: Discovered contradictions ({len(reasoning_trace.contradictions_found)}) "
+                    f"with marginal confidence ({calibrated_conf:.3f} < 0.75)."
+                )
+            elif cdm_result.abstain:
+                abstain = True
+                raw_reason = cdm_result.abstention_reason or "Decision core returned abstention"
+                if "prohibit" in raw_reason.lower() or "policy" in raw_reason.lower():
+                    abstention_status = "policy_rejection"
+                elif "uncertain" in raw_reason.lower() or "confidence" in raw_reason.lower():
+                    abstention_status = "uncertainty"
+                elif "missing" in raw_reason.lower() or "evidence" in raw_reason.lower():
+                    abstention_status = "missing_evidence"
+                else:
+                    abstention_status = "abstained"
+                abstention_reason = raw_reason
+            elif calibrated_conf < 0.35:
+                abstain = True
+                abstention_status = "uncertainty"
+                abstention_reason = (
+                    f"Uncertainty threshold breached: calibrated confidence {calibrated_conf:.3f} < 0.35 "
+                    f"(uncertainty {round(1.0 - calibrated_conf, 4)} > 0.65)."
+                )
+
+            # 4. Human Approval Determination (Never invent a human supervisor)
+            is_sensitive = proposed_decision in SENSITIVE_ACTIONS
+            is_high_risk = (risk > 0.40)
+            requires_approval = bool((is_sensitive or is_high_risk) and not abstain)
+
+            approver_role = None
+            if is_sensitive:
+                if proposed_decision in {"issue_refund", "refund_customer", "refund_transaction"}:
+                    approver_role = "compliance_officer"
+                elif proposed_decision in {"administer_meds", "order_labs"}:
+                    approver_role = "lead_physician"
+                elif proposed_decision in {
+                    "isolate_cluster", "terminate_service", "delete_database", "modify_access_policy", "shell_exec"
+                }:
+                    approver_role = "security_admin"
+                else:
+                    approver_role = "compliance_officer"
+            elif is_high_risk:
+                approver_role = "compliance_officer"
+
+            approval_reason = None
+            if is_sensitive:
+                approval_reason = f"Action '{proposed_decision}' is a sensitive operational action requiring human approval."
+            elif is_high_risk:
+                approval_reason = f"Assessed risk ({risk:.2f}) exceeds autonomous operational threshold (0.40)."
+
+            approval_requirements = {
+                "required": requires_approval,
+                "approver_role": approver_role if requires_approval else None,
+                "approval_status": "pending" if requires_approval else ("not_required" if not abstain else "abstained"),
+                "reason": approval_reason,
+                "configured_supervisor": None,  # Explicitly None: never fabricate a fictitious human supervisor
+            }
+
+            # 5. Execution Authorization and Execution Status
+            if abstain:
+                execution_authorized = False
+                execution_status = "rejected" if abstention_status == "policy_rejection" else "abstained"
+                decision = "ABSTAIN"
+            elif requires_approval:
+                execution_authorized = False
+                execution_status = "needs_approval"
+                decision = proposed_decision
+            else:
+                execution_authorized = True
+                execution_status = "authorized"
+                decision = proposed_decision
+
+            # 6. Planning Engine Execution
             generated_plan: Optional[Plan] = None
             if execute_planning and working_state.active_goals:
                 primary_goal = working_state.active_goals[0]
@@ -509,6 +726,8 @@ class CognitiveEngine:
                 pred_for_planning["model_version"] = getattr(cdm_result, "model_version", "1.0.0")
                 pred_for_planning["prediction_source"] = "trained_model_prediction"
                 pred_for_planning["provenance"] = getattr(cdm_result, "provenance", {})
+
+                plan_decision = proposed_decision if not (abstain and abstention_status == "policy_rejection") else "abstain"
                 generated_plan = self.planning_engine.generate_plan(
                     target_goal=primary_goal,
                     available_actions=candidate_list,
@@ -518,25 +737,120 @@ class CognitiveEngine:
                     predicted_outcome=pred_for_planning,
                     tenant_id=tenant_id,
                     task=task,
-                    selected_decision=decision,
+                    selected_decision=plan_decision,
                     candidate_ranking=candidate_ranking,
                     abstain=abstain,
                     abstention_reason=abstention_reason,
                 )
 
-            if abstain and generated_plan is not None:
-                generated_plan.is_executable = False
-                generated_plan.requires_human_approval = True
-                generated_plan.approval_reason = abstention_reason
+            if generated_plan is not None:
+                generated_plan.primary_decision = proposed_decision
+                generated_plan.is_executable = execution_authorized
+                generated_plan.requires_human_approval = requires_approval
+                generated_plan.required_approver_role = approver_role if requires_approval else None
+                generated_plan.approval_reason = approval_reason or abstention_reason
 
-            # Formulate execution recommendation
-            recommendation = "Execute primary recommended action"
+                if execution_authorized:
+                    generated_plan.plan_stage = "approved"
+                    generated_plan.status = "approved"
+                elif abstention_status == "policy_rejection":
+                    generated_plan.plan_stage = "prohibited"
+                    generated_plan.status = "prohibited"
+                elif abstain:
+                    generated_plan.plan_stage = "abstained"
+                    generated_plan.status = "abstained"
+                elif requires_approval:
+                    generated_plan.plan_stage = "proposed"
+                    generated_plan.status = "proposed"
+
+                for step in generated_plan.steps:
+                    step.execution_eligibility = execution_authorized and (step.action_name not in effective_prohibitions)
+                    step.approval_required = (step.action_name in SENSITIVE_ACTIONS) or (step.risk_estimate > 0.40)
+                    if step.approval_required:
+                        step.required_approver_role = approver_role or "compliance_officer"
+                    step.constraints = list(world_state.active_constraints)
+
+            # 7. Verification: Plan consistency and Safety Invariant Checks
+            plan_consistent = True
+            if generated_plan and generated_plan.steps:
+                step_names = [s.action_name for s in generated_plan.steps]
+                for s_act in step_names:
+                    if s_act in effective_prohibitions:
+                        plan_consistent = False
+                        errors.append(f"Plan step '{s_act}' violates active prohibition.")
+                if execution_authorized and (proposed_decision not in step_names):
+                    plan_consistent = False
+                    errors.append(f"Plan inconsistency: Proposed decision '{proposed_decision}' is not in plan steps {step_names}.")
+
+            verification = {
+                "verified": bool(not abstain and plan_consistent and policy_passed),
+                "verification_status": "passed" if (not abstain and plan_consistent and policy_passed) else ("abstained" if abstain else "failed"),
+                "checks": [
+                    {"check": "policy_compliance", "passed": policy_passed},
+                    {"check": "uncertainty_boundary", "passed": (calibrated_conf >= 0.35)},
+                    {"check": "numerical_validity", "passed": not has_numerical_error},
+                    {"check": "plan_decision_consistency", "passed": plan_consistent},
+                    {"check": "execution_safety_gate", "passed": (not execution_authorized or (execution_authorized and not requires_approval and policy_passed))},
+                ],
+            }
+
+            plan_duration = (time.perf_counter() - t_plan_start) * 1000.0
+            cognitive_trace.append({
+                "stage_name": "Planning Engine & Safety Verifier",
+                "execution_status": "success" if (verification["verified"] or abstain or requires_approval) else "warning",
+                "duration_ms": round(plan_duration, 2),
+                "inputs": {
+                    "target_goal": working_state.active_goals[0].description if working_state.active_goals else None,
+                    "proposed_decision": proposed_decision,
+                    "available_actions": candidate_list,
+                    "prohibitions": effective_prohibitions,
+                },
+                "outputs": {
+                    "plan_generated": generated_plan is not None,
+                    "plan_id": generated_plan.plan_id if generated_plan else None,
+                    "step_count": len(generated_plan.steps) if generated_plan else 0,
+                    "execution_authorized": execution_authorized,
+                    "execution_status": execution_status,
+                    "approval_required": requires_approval,
+                    "required_approver_role": approver_role,
+                    "verification_status": verification["verification_status"],
+                },
+                "errors": [e for e in errors if "Plan" in e or "Safety" in e or "prohibition" in e],
+            })
+
+            # Candidate rankings
+            candidate_rankings = [
+                {
+                    "candidate": cand,
+                    "score": round(float(score), 4) if score is not None else None,
+                    "rank": idx + 1,
+                    "is_prohibited": cand in effective_prohibitions,
+                }
+                for idx, (cand, score) in enumerate(candidate_ranking)
+            ]
+
+            # Supporting evidence
+            supporting_evidence = {
+                "semantic_rules_applied": [r.get("rule_id", "RULE") for r in semantic_rules if isinstance(r, dict)],
+                "procedural_workflows": [w.get("name", "workflow") for w in procedural_workflows if isinstance(w, dict)],
+                "episodic_precedents": len(episodic_cases),
+                "reasoning_steps": len(reasoning_trace.steps),
+                "causal_consequences": len(causal_analysis.get("consequences", {})) if causal_analysis else 0,
+                "detected_contradictions": context.detected_contradictions,
+                "observed_facts_count": len(world_state.observed_facts),
+            }
+
+            # Recommendation formulation
             if abstain:
-                recommendation = f"Escalate to human supervisor for manual intervention: {abstention_reason}"
+                recommendation = f"Abstain: {abstention_reason}"
+            elif requires_approval:
+                recommendation = f"Awaiting human approval ({approver_role}): Proposed action '{proposed_decision}'. {approval_reason}"
             elif generated_plan and generated_plan.steps:
-                recommendation = f"Proceed with plan '{generated_plan.plan_id}' starting with step: {generated_plan.steps[0].action_name}"
+                recommendation = f"Authorized: Proceed with plan '{generated_plan.plan_id}' starting with step: {generated_plan.steps[0].action_name}"
+            else:
+                recommendation = f"Authorized: Execute primary recommended action '{proposed_decision}'"
 
-            # Step J: Shared Cognitive State Synthesis
+            # Stage J: Shared Cognitive State Synthesis
             shared_state = SharedCognitiveState(
                 perception=perception,
                 context=context,
@@ -551,12 +865,125 @@ class CognitiveEngine:
                 causal_analysis=causal_analysis,
             )
 
+            # Stage 6: Cognitive Answer Synthesis Layer
+            t_synth_start = time.perf_counter()
+            external_facts = []
+            need_external = (
+                "external" in text.lower()
+                or "latest status" in text.lower()
+                or "real-time" in text.lower()
+                or "10.0.1.5" in text.lower()
+                or "check live" in text.lower()
+                or "telemetry" in text.lower()
+                or "sla" in text.lower()
+                or "policy" in text.lower()
+            )
+            if need_external:
+                try:
+                    ret_success, ret_facts, ret_err = self.external_retriever.retrieve(query=text, domain=domain)
+                    if ret_success:
+                        external_facts = ret_facts
+                    elif ret_err:
+                        errors.append(f"External retrieval error: {ret_err}")
+                except Exception as ex_err:
+                    errors.append(f"External retrieval exception: {ex_err}")
+
+            conf_origin = (
+                "neural_softmax_calibrated"
+                if (getattr(cdm_result, "used_neural_inference", False) and getattr(cdm_result, "calibrated", False))
+                else (
+                    "neural_softmax_uncalibrated"
+                    if getattr(cdm_result, "used_neural_inference", False)
+                    else "heuristic_fallback"
+                )
+            )
+            r_origin = (
+                "neural_risk_head_prediction"
+                if getattr(cdm_result, "used_neural_inference", False)
+                else "heuristic_risk_assessor"
+            )
+
+            try:
+                synth_output = self.answer_synthesizer.synthesize(
+                    question=text,
+                    task=task,
+                    perception=perception,
+                    context=context,
+                    working_memory=working_state,
+                    world_state=world_state,
+                    semantic_rules=semantic_rules,
+                    procedural_workflows=procedural_workflows,
+                    episodic_cases=episodic_cases,
+                    reasoning_trace=reasoning_trace,
+                    causal_analysis=causal_analysis,
+                    cdm_result=cdm_result,
+                    candidate_rankings=candidate_rankings,
+                    proposed_decision=proposed_decision,
+                    execution_authorized=execution_authorized,
+                    execution_status=execution_status,
+                    abstention_status=abstention_status,
+                    abstention_reason=abstention_reason,
+                    policy_check=policy_check,
+                    approval_requirements=approval_requirements,
+                    verification=verification,
+                    generated_plan=generated_plan,
+                    confidence=confidence,
+                    calibrated_conf=calibrated_conf,
+                    uncertainty=round(1.0 - calibrated_conf, 4),
+                    assessed_risk=risk,
+                    confidence_origin=conf_origin,
+                    risk_origin=r_origin,
+                    retrieved_external_facts=external_facts,
+                    errors=errors,
+                )
+            except Exception as synth_err:
+                logger.error(f"Answer synthesis exception: {synth_err}", exc_info=True)
+                errors.append(f"Answer synthesis exception: {synth_err}")
+                synth_output = self.answer_synthesizer.fallback_synthesize(
+                    decision=decision,
+                    proposed_decision=proposed_decision,
+                    execution_status=execution_status,
+                    execution_authorized=execution_authorized,
+                    abstention_status=abstention_status,
+                    abstention_reason=abstention_reason,
+                    confidence=confidence,
+                    risk=risk,
+                    error_msg=str(synth_err),
+                )
+
+            synth_duration = (time.perf_counter() - t_synth_start) * 1000.0
+            cognitive_trace.append({
+                "stage_name": "Cognitive Answer Synthesis",
+                "execution_status": "success" if not any("synthesis exception" in e for e in errors) else "warning",
+                "duration_ms": round(synth_duration, 2),
+                "inputs": {"question_type": synth_output.answer_type},
+                "outputs": {
+                    "answer_length": len(synth_output.answer),
+                    "answer_type": synth_output.answer_type,
+                    "safety_status": synth_output.safety_status,
+                    "limitations_count": len(synth_output.limitations),
+                },
+                "errors": [e for e in errors if "synthesis" in e.lower()],
+            })
+
             latency_ms = (time.perf_counter() - start_time) * 1000.0
 
             return CognitiveEngineResult(
+                execution_id=f"exec_{uuid.uuid4().hex[:8]}",
+                request_id=f"req_{uuid.uuid4().hex[:8]}",
+                execution_status=execution_status,
+                proposed_decision=proposed_decision,
+                execution_authorized=execution_authorized,
+                abstention_status=abstention_status,
+                abstention_reason=abstention_reason,
                 decision=decision,
                 confidence=round(confidence, 4),
                 calibrated_confidence=round(calibrated_conf, 4),
+                uncertainty=round(1.0 - calibrated_conf, 4),
+                assessed_risk=round(risk, 4),
+                is_calibrated=getattr(cdm_result, "calibrated", False),
+                confidence_origin=conf_origin,
+                risk_origin=r_origin,
                 priority=priority,
                 risk=round(risk, 4),
                 operational_score=operational_score,
@@ -566,7 +993,15 @@ class CognitiveEngine:
                 predicted_outcomes=predicted_outcomes,
                 candidate_scores=cdm_result.candidate_scores or {},
                 heuristic_candidate_scores=getattr(cdm_result, "heuristic_candidate_scores", {}) or {},
+                candidate_rankings=candidate_rankings,
+                policy_check=policy_check,
+                approval_requirements=approval_requirements,
+                verification=verification,
+                supporting_evidence=supporting_evidence,
+                cognitive_trace=cognitive_trace,
+                errors=errors,
                 selected_plan=generated_plan,
+                plan=generated_plan,
                 reasoning_evidence=reasoning_trace,
                 causal_analysis=causal_analysis,
                 world_state_summary={
@@ -576,7 +1011,6 @@ class CognitiveEngine:
                     "state_uncertainty": round(world_state.overall_state_uncertainty, 4),
                 },
                 abstain=abstain,
-                abstention_reason=abstention_reason,
                 alternatives=alternatives,
                 execution_recommendation=recommendation,
                 embedding_mode=emb_mode,
@@ -587,6 +1021,22 @@ class CognitiveEngine:
                     "model_version": getattr(cdm_result, "model_version", "1.0.0"),
                     "provenance": getattr(cdm_result, "provenance", {}),
                 },
+                answer=synth_output.answer,
+                answer_type=synth_output.answer_type,
+                explanation=synth_output.explanation,
+                risks_and_uncertainty=synth_output.risks_and_uncertainty,
+                safety_status=synth_output.safety_status,
+                limitations=synth_output.limitations,
+                important_assumptions=synth_output.important_assumptions,
+                recommended_next_steps=synth_output.recommended_next_steps,
+                retrieved_external_facts=external_facts,
+                citations=synth_output.citations,
+                unsupported_claims=synth_output.unsupported_claims,
+                retrieved_passages=synth_output.retrieved_passages,
+                intent_task=synth_output.intent_task,
+                needs_clarification=synth_output.needs_clarification,
+                clarification_prompt=synth_output.clarification_prompt,
+                validation_result=synth_output.validation_result,
             )
 
     def record_feedback(

@@ -66,3 +66,12 @@ tmp/
 experiments/*.key
 experiments/agent_runs/
 experiments/checkpoints/
+
+# Playground Frontend (Node / Next.js)
+playground/node_modules/
+playground/.next/
+playground/out/
+playground/build/
+*.tsbuildinfo
+next-env.d.ts
+

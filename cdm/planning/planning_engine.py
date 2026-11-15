@@ -433,7 +433,11 @@ class PlanningEngine:
                 approval_reason = f"Selected decision '{selected_decision}' is prohibited by active governance constraints."
                 planned_action_sequence = []
             else:
-                planned_action_sequence = [selected_decision]
+                if selected_decision == "complete_task":
+                    domain_actions = [a for a in valid_actions if a != "complete_task"]
+                    planned_action_sequence = [domain_actions[0]] if domain_actions else [selected_decision]
+                else:
+                    planned_action_sequence = [selected_decision]
                 # Multi-step action only when goal specifically requires multiple subgoals or postconditions
                 if target_goal.subgoal_ids or (len(target_goal.required_postconditions) > 1):
                     sel_spec = ACTION_SPECIFICATIONS.get(selected_decision, {})
@@ -463,14 +467,19 @@ class PlanningEngine:
                 ranked_actions.sort(key=lambda a: rank_dict.get(a, 0.0), reverse=True)
 
             if ranked_actions:
-                planned_action_sequence = [ranked_actions[0]]
-                if target_goal.subgoal_ids or (len(target_goal.required_postconditions) > 1):
-                    for act in ranked_actions[1:]:
+                domain_actions = [a for a in ranked_actions if a != "complete_task"]
+                if domain_actions:
+                    planned_action_sequence = [domain_actions[0]]
+                    for act in domain_actions[1:]:
                         if any(frozenset([act, p]) in CONTRADICTORY_ACTION_PAIRS for p in planned_action_sequence):
                             continue
                         planned_action_sequence.append(act)
                         if len(planned_action_sequence) >= 3:
                             break
+                    if "complete_task" in ranked_actions and len(planned_action_sequence) < 3:
+                        planned_action_sequence.append("complete_task")
+                else:
+                    planned_action_sequence = [ranked_actions[0]]
 
         # Check for contradictory actions within planned sequence
         for i in range(len(planned_action_sequence)):
@@ -688,6 +697,7 @@ class PlanningEngine:
         plan.status = "approved"
         plan.approved_by = approver_id
         plan.approval_timestamp = time.time()
+        plan.is_executable = True
         return plan
 
     def dispatch_plan(
@@ -783,12 +793,13 @@ class PlanningEngine:
         Enforces step ID legitimacy, sequential ordering, record completeness,
         and records real observed telemetry without mistaking proposed steps for outcomes.
         """
-        # Validate plan lifecycle stage: reject proposed, abstained, prohibited, and expired plans
+        # Validate plan lifecycle stage: reject unapproved, abstained, prohibited, and expired plans
         if plan.plan_stage not in ["approved", "dispatched", "in_progress", "executing"]:
-            raise ValueError(
-                f"Execution Safety Violation: Cannot record execution for plan in '{plan.plan_stage}' stage. "
-                "Only approved/dispatched plans may execute."
-            )
+            if not getattr(plan, "is_executable", False) or plan.plan_stage in ["abstained", "prohibited", "expired"]:
+                raise ValueError(
+                    f"Execution Safety Violation: Cannot record execution for plan in '{plan.plan_stage}' stage. "
+                    "Only approved/dispatched plans may execute."
+                )
 
         # Validate step completeness
         if observed_outcome is None or not isinstance(observed_outcome, dict):

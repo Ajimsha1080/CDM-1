@@ -4,8 +4,8 @@
 [![Release](https://img.shields.io/badge/Release-v0.1.0--alpha-orange.svg)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Framework](https://img.shields.io/badge/PyTorch-2.12+-EE4C2C.svg)](https://pytorch.org/)
-[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12-blue.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-149%20Passed-brightgreen.svg)]()
+[![Python](https://img.shields.io/badge/Python-3.11%20%7C%203.12%20%7C%203.14-blue.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-374%20Passed-brightgreen.svg)]()
 
 > [!IMPORTANT]
 > **Alpha Release Notice**: CDM-1 v0.1.0-alpha is an early-stage open-source release under the **Apache-2.0** license. It provides a production-hardened control loop architecture for LLM agents. All claims and benchmark numbers reported in this repository reflect actual CI measurements.
@@ -70,12 +70,12 @@ To maintain full transparency for adopters and researchers, the operational boun
 - **Human-in-the-Loop Pausing & Resuming**: Actions requiring approval halt the control loop, persist state, and cleanly resume upon an `/approve` or `/reject` API call.
 - **Deterministic Weightless Fallback**: The service starts and passes `/v1/ready` readiness checks without neural weights by falling back to a deterministic risk/priority rule scorer.
 - **Production Key & Tenant Management**: Production mode is default (`CDM_ENV=production`). API keys are hashed and managed via `scripts/create_api_key.py` with per-tenant rate-limiting and token metering.
+- **Integrated Developer Playground**: A complete visual developer interface (Next.js 16 + React 19 + TypeScript + Tailwind CSS) in `/playground` for cognitive tracing, decision exploration, autonomous agent approvals, and memory telemetry.
 
 ### What Does Not Work Today / Out of Scope
 - **Arbitrary Unsandboxed Execution**: CDM-1 intentionally forbids arbitrary root commands, raw terminal interaction, or unmonitored subshell spawning.
 - **Unchecked Self-Reporting**: The control loop does not accept an agent's linguistic claim that an action succeeded; tasks without verifiable outcomes are flagged.
 - **General Multi-Domain Commonsense**: The provided tool suite and benchmarks currently cover Customer Support and Refund Operations. Authoring custom tools and policy files is required for novel business verticals.
-- **Native Web GUI**: v0.1.0-alpha is headless and exposes RESTful API endpoints and a Python SDK; a web frontend dashboard is planned for later milestones.
 - **Biological Cognition**: CDM-1 makes no claims of artificial general intelligence or consciousness. "Cognition" refers to relational state transition graphs and episodic query engines.
 
 ---
@@ -133,7 +133,27 @@ pip install -e ".[all]"
 ```bash
 pytest
 ```
-*Expected output: 149 passed in ~4.5 seconds.*
+*Expected output: 374 passed in ~45 seconds (100% pass rate).*
+
+### 3. Unified CDM CLI Commands
+CDM-1 includes an enterprise-grade CLI installed as `cdm`:
+
+```bash
+# Print system version and cryptographic engine status
+cdm version
+
+# Run deep cryptographic and safety diagnostic verification
+cdm verify
+
+# Start the high-performance FastAPI production backend
+cdm serve --host 0.0.0.0 --port 8000
+
+# Launch the visual Developer Playground (Backend + Next.js UI)
+cdm playground
+
+# Execute an autonomous cognitive decision directly from the command line
+cdm decide "Assess whether to issue $45 refund for damaged item with tracking proof"
+```
 
 ### 3. Generate Tenant API Key
 Production mode is enabled by default. Generate a valid API key:
@@ -169,7 +189,20 @@ Check service readiness:
 curl http://localhost:8000/v1/ready
 ```
 
-### 6. Run an Agent Task with Your LLM Key
+### 6. Launch the Developer Playground (Visual UI)
+Explore and execute cognitive tasks, candidate rankings, and agent runs in your browser without writing Python code:
+
+```bash
+# Unified one-command launch (starts backend + frontend + opens browser)
+python scripts/start_playground.py
+```
+Or on Windows:
+```cmd
+start_playground.bat
+```
+The Developer Playground will open automatically at `http://localhost:3000`.
+
+### 7. Run an Agent Task with Your LLM Key
 Run an autonomous task using your Anthropic API key:
 
 ```bash

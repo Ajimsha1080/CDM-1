@@ -16,9 +16,10 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from fastapi import FastAPI, Depends, HTTPException, Security, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.encoders import jsonable_encoder
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 import uvicorn
 
@@ -73,6 +74,24 @@ def _validate_list_bounds(lst: Any, max_items: int = 50, max_str_len: int = 1024
         if isinstance(item, str) and len(item) > max_str_len:
             raise ValueError(f"List string item exceeds {max_str_len} characters")
     return lst
+
+
+def sanitize_trace_payload(data: Any) -> Any:
+    """Recursively masks secrets, tokens, API keys, passwords, and sensitive credentials in traces."""
+    if isinstance(data, dict):
+        sanitized = {}
+        for k, v in data.items():
+            k_lower = str(k).lower()
+            if isinstance(v, (dict, list)):
+                sanitized[k] = sanitize_trace_payload(v)
+            elif any(s in k_lower for s in ("token", "secret", "password", "key", "authorization", "credential")):
+                sanitized[k] = "[REDACTED]"
+            else:
+                sanitized[k] = v
+        return sanitized
+    elif isinstance(data, list):
+        return [sanitize_trace_payload(item) for item in data]
+    return data
 
 
 # Pydantic Schemas with Strict Payload Validation
@@ -186,19 +205,71 @@ class CognitiveProcessRequest(BaseModel):
 
 
 class CognitiveProcessResponse(BaseModel):
+    # Versioned Response Contract (v1.2.0)
+    schema_version: str = "v1.2.0"
+
+    # Core Natural-Language Cognitive Response Fields (Item 3 Specification)
+    answer: str = Field(..., description="Direct natural-language response grounded in verified cognitive results.")
+    decision: Optional[Any] = Field(None, description="The selected candidate decision or null if abstained/informational.")
+    reasoning: Dict[str, Any] = Field(default_factory=dict, description="Structured reasoning summary, deduction steps, rankings, and assumptions.")
+    confidence: float = Field(..., description="Calibrated confidence score (0.0 to 1.0).")
+    risk_assessment: Dict[str, Any] = Field(default_factory=dict, description="Assessed risk score, risk origin, priority, uncertainty, and identified risks.")
+    safety_status: str = Field(..., description="Safety verification status: 'verified', 'needs_approval', 'abstained', 'policy_violation'.")
+    abstention_reason: Optional[str] = Field(None, description="Exact threshold or policy rule causing abstention, or null if not abstained.")
+    required_approval: Dict[str, Any] = Field(default_factory=dict, description="Human approval requirements: role, rule, and status.")
+    evidence: Dict[str, Any] = Field(default_factory=dict, description="Evidence grounding: citations, retrieved passages, observed facts, and unsupported claims.")
+    execution_status: str = Field(..., description="Execution status: 'authorized', 'proposed', 'needs_approval', 'abstained', 'rejected'.")
+    cognitive_trace: List[Dict[str, Any]] = Field(default_factory=list, description="Sanitized stage-level execution trace.")
+    latency: Dict[str, Any] = Field(default_factory=dict, description="Latency metrics: total ms, total seconds, and stage durations.")
+
+    # P1 Contract & Provenance Fields
+    request_id: str = Field(default_factory=lambda: f"req_{uuid.uuid4().hex[:8]}")
+    proposed_decision: Optional[Any] = None
+    execution_authorized: bool = False
+    abstention_status: str = "none"
+    uncertainty: float = 0.0
+    assessed_risk: float = 0.0
+    policy_check: Dict[str, Any] = Field(default_factory=dict)
+    supporting_evidence: Dict[str, Any] = Field(default_factory=dict)
+    candidate_rankings: List[Dict[str, Any]] = Field(default_factory=list)
+    plan: Optional[Dict[str, Any]] = None
+    approval_requirements: Dict[str, Any] = Field(default_factory=dict)
+    verification: Dict[str, Any] = Field(default_factory=dict)
+    errors: List[str] = Field(default_factory=list)
+    is_calibrated: bool = False
+    confidence_origin: str = "unspecified"
+    risk_origin: str = "unspecified"
+
+    # Cognitive Answer Synthesis Fields
+    answer_type: str = "general"
+    explanation: str = ""
+    risks_and_uncertainty: str = ""
+    limitations: List[str] = Field(default_factory=list)
+    important_assumptions: List[str] = Field(default_factory=list)
+    recommended_next_steps: List[str] = Field(default_factory=list)
+    retrieved_external_facts: List[Dict[str, Any]] = Field(default_factory=list)
+    citations: List[Dict[str, Any]] = Field(default_factory=list)
+    unsupported_claims: List[str] = Field(default_factory=list)
+    retrieved_passages: List[Dict[str, Any]] = Field(default_factory=list)
+    intent_task: str = "question"
+    needs_clarification: bool = False
+    clarification_prompt: Optional[str] = None
+    validation_result: Optional[Dict[str, Any]] = None
+
+    # Backward Compatibility Fields
     execution_id: str
-    decision: Any
-    confidence: float
     calibrated_confidence: float
     priority: str
     risk: float
     operational_score: Optional[float] = None
+    candidate_scores: Dict[str, Optional[float]] = Field(default_factory=dict)
+    alternatives: List[Dict[str, Any]] = Field(default_factory=list)
+    used_neural_inference: bool = False
     predicted_outcomes: Dict[str, Any] = Field(default_factory=dict)
     selected_plan: Optional[Dict[str, Any]] = None
     reasoning_evidence: Dict[str, Any] = Field(default_factory=dict)
     world_state_summary: Dict[str, Any] = Field(default_factory=dict)
     abstain: bool = False
-    abstention_reason: Optional[str] = None
     execution_recommendation: str
     embedding_mode: Optional[str] = None
     latency_ms: float
@@ -329,6 +400,20 @@ app = FastAPI(
     description="Commercial REST API for neural decision models, predictive estimation, and calibrated actions.",
     version=__version__,
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "*"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 MAX_REQUEST_BODY_BYTES = 1048576  # 1 MB
@@ -473,6 +558,9 @@ def readiness_check():
             detail=f"Model runtime not ready: {model_load_error or 'Initializing'}",
         )
 
+    is_prod = (os.environ.get("CDM_ENV", "production").lower() in ("production", "prod")) or (
+        os.environ.get("CDM_PRODUCTION_MODE", "").lower() in ("1", "true")
+    )
     if getattr(runtime_model, "is_fallback", False):
         if is_prod:
             raise HTTPException(
@@ -671,20 +759,110 @@ def cognitive_process(
             status_code=200,
         )
 
+        # 1. Structured Reasoning
+        reasoning_data = {
+            "summary": getattr(res, "explanation", "") or "",
+            "deduction_steps": [s.model_dump() for s in getattr(res.reasoning_evidence, "steps", [])] if hasattr(res, "reasoning_evidence") and hasattr(res.reasoning_evidence, "steps") else [],
+            "candidate_rankings": getattr(res, "candidate_rankings", []) or [],
+            "assumptions": getattr(res, "important_assumptions", []) or [],
+        }
+
+        # 2. Structured Risk Assessment
+        risk_data = {
+            "assessed_risk": getattr(res, "assessed_risk", res.risk),
+            "risk_origin": getattr(res, "risk_origin", "unspecified"),
+            "priority": getattr(res, "priority", "MEDIUM"),
+            "uncertainty": getattr(res, "uncertainty", round(1.0 - res.calibrated_confidence, 4)),
+            "identified_risks": getattr(res, "risks_and_uncertainty", "") or "",
+        }
+
+        # 3. Structured Required Approval
+        appr_req = getattr(res, "approval_requirements", {}) or {}
+        req_approval = bool(appr_req.get("requires_human_approval") or appr_req.get("required"))
+        required_approval_data = {
+            "requires_human_approval": req_approval,
+            "required_role": appr_req.get("required_role") or appr_req.get("approver_role"),
+            "approval_rule": appr_req.get("approval_rule") or appr_req.get("rule"),
+            "status": "pending" if req_approval else "none",
+        }
+
+        # 4. Structured Evidence
+        evidence_data = {
+            "supporting_evidence": getattr(res, "supporting_evidence", {}) or {},
+            "citations": getattr(res, "citations", []) or [],
+            "retrieved_passages": getattr(res, "retrieved_passages", []) or [],
+            "unsupported_claims": getattr(res, "unsupported_claims", []) or [],
+            "observed_facts": getattr(res, "world_state_summary", {}).get("observed_facts", {}) if isinstance(getattr(res, "world_state_summary", None), dict) else {},
+        }
+
+        # 5. Structured Latency
+        latency_data = {
+            "latency_ms": getattr(res, "latency_ms", 0.0),
+            "total_seconds": round(getattr(res, "latency_ms", 0.0) / 1000.0, 4),
+            "stage_latencies_ms": {
+                stage.get("stage_name", f"stage_{i}"): stage.get("duration_ms", 0.0)
+                for i, stage in enumerate(getattr(res, "cognitive_trace", []))
+                if isinstance(stage, dict) and "stage_name" in stage
+            },
+        }
+
         return CognitiveProcessResponse(
-            execution_id=res.execution_id,
+            schema_version="v1.2.0",
+            answer=getattr(res, "answer", ""),
             decision=res.decision,
+            reasoning=reasoning_data,
             confidence=res.confidence,
+            risk_assessment=risk_data,
+            safety_status=getattr(res, "safety_status", "verified"),
+            abstention_reason=res.abstention_reason,
+            required_approval=required_approval_data,
+            evidence=evidence_data,
+            execution_status=getattr(res, "execution_status", "proposed"),
+            cognitive_trace=sanitize_trace_payload(getattr(res, "cognitive_trace", [])),
+            latency=latency_data,
+            request_id=getattr(res, "request_id", f"req_{uuid.uuid4().hex[:8]}"),
+            proposed_decision=getattr(res, "proposed_decision", res.decision),
+            execution_authorized=getattr(res, "execution_authorized", False),
+            abstention_status=getattr(res, "abstention_status", "none"),
+            uncertainty=getattr(res, "uncertainty", round(1.0 - res.calibrated_confidence, 4)),
+            assessed_risk=getattr(res, "assessed_risk", res.risk),
+            policy_check=getattr(res, "policy_check", {}),
+            supporting_evidence=getattr(res, "supporting_evidence", {}),
+            candidate_rankings=getattr(res, "candidate_rankings", []),
+            plan=plan_dict,
+            approval_requirements=getattr(res, "approval_requirements", {}),
+            verification=getattr(res, "verification", {}),
+            errors=getattr(res, "errors", []),
+            is_calibrated=getattr(res, "is_calibrated", False),
+            confidence_origin=getattr(res, "confidence_origin", "unspecified"),
+            risk_origin=getattr(res, "risk_origin", "unspecified"),
+            answer_type=getattr(res, "answer_type", "general"),
+            explanation=getattr(res, "explanation", ""),
+            risks_and_uncertainty=getattr(res, "risks_and_uncertainty", ""),
+            limitations=getattr(res, "limitations", []),
+            important_assumptions=getattr(res, "important_assumptions", []),
+            recommended_next_steps=getattr(res, "recommended_next_steps", []),
+            retrieved_external_facts=getattr(res, "retrieved_external_facts", []),
+            citations=getattr(res, "citations", []),
+            unsupported_claims=getattr(res, "unsupported_claims", []),
+            retrieved_passages=getattr(res, "retrieved_passages", []),
+            intent_task=getattr(res, "intent_task", "question"),
+            needs_clarification=getattr(res, "needs_clarification", False),
+            clarification_prompt=getattr(res, "clarification_prompt", None),
+            validation_result=getattr(res, "validation_result", None),
+            execution_id=res.execution_id,
             calibrated_confidence=res.calibrated_confidence,
             priority=res.priority,
             risk=res.risk,
             operational_score=res.operational_score,
+            candidate_scores=getattr(res, "candidate_scores", {}) or {},
+            alternatives=getattr(res, "alternatives", []) or [],
+            used_neural_inference=getattr(res, "used_neural_inference", False),
             predicted_outcomes=res.predicted_outcomes,
             selected_plan=plan_dict,
             reasoning_evidence=res.reasoning_evidence.model_dump(),
             world_state_summary=res.world_state_summary,
             abstain=res.abstain,
-            abstention_reason=res.abstention_reason,
             execution_recommendation=res.execution_recommendation,
             embedding_mode=getattr(res, "embedding_mode", "structured_fallback"),
             latency_ms=res.latency_ms,
@@ -695,6 +873,89 @@ def cognitive_process(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred during cognitive processing.",
         )
+
+
+@app.post("/v1/cognitive/process/stream")
+def cognitive_process_stream(
+    req: CognitiveProcessRequest,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Streams real-time cognitive stage progress, durations, and synthesized answers as SSE."""
+    if runtime_cognitive_engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cognitive Engine runtime not initialized.",
+        )
+
+    def event_generator():
+        yield f"data: {json.dumps({'event': 'stage_start', 'stage': 'Perception', 'timestamp': time.time()})}\n\n"
+        res = runtime_cognitive_engine.process(
+            text=req.text,
+            structured_features=req.structured_features,
+            candidates=req.candidates,
+            prohibited_actions=req.prohibited_actions,
+            task=req.task,
+            goals=req.goals,
+            constraints=req.constraints,
+            session_id=req.session_id,
+            tenant_id=tenant["tenant_id"],
+        )
+        for stage in res.cognitive_trace:
+            yield f"data: {json.dumps({'event': 'stage_complete', 'stage': stage['stage_name'], 'duration_ms': stage.get('duration_ms', 0), 'status': stage.get('execution_status', 'success')})}\n\n"
+
+        final_payload = {
+            "event": "final_result",
+            "request_id": getattr(res, "request_id", ""),
+            "answer": getattr(res, "answer", ""),
+            "answer_type": getattr(res, "answer_type", "general"),
+            "proposed_decision": getattr(res, "proposed_decision", res.decision),
+            "execution_status": getattr(res, "execution_status", "proposed"),
+            "execution_authorized": getattr(res, "execution_authorized", False),
+            "safety_status": getattr(res, "safety_status", "verified"),
+            "confidence": res.confidence,
+            "assessed_risk": getattr(res, "assessed_risk", res.risk),
+            "citations": getattr(res, "citations", []),
+            "retrieved_passages": getattr(res, "retrieved_passages", []),
+        }
+        yield f"data: {json.dumps(final_payload)}\n\n"
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+class UserFeedbackRequest(BaseModel):
+    session_id: str
+    rating: int = Field(..., ge=1, le=5, description="User satisfaction rating (1-5 stars)")
+    decision_id: Optional[str] = None
+    user_comment: Optional[str] = None
+    category: str = "general"
+
+
+@app.post("/v1/cognitive/feedback")
+def submit_user_feedback(
+    feedback: UserFeedbackRequest,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Submits user feedback and stores it in segregated storage permanently excluded from retraining."""
+    if runtime_cognitive_engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cognitive Engine runtime not initialized.",
+        )
+    opinion = runtime_cognitive_engine.feedback_collector.record_user_opinion(
+        tenant_id=tenant["tenant_id"],
+        session_id=feedback.session_id,
+        rating=feedback.rating,
+        user_comment=feedback.user_comment,
+        decision_id=feedback.decision_id,
+        category=feedback.category,
+    )
+    return {
+        "status": "recorded",
+        "opinion_id": opinion.opinion_id,
+        "eligible_for_training": False,
+        "message": "User opinion recorded in segregated store. Excluded from automated model adaptation.",
+    }
 
 
 @app.post("/v1/batch")
@@ -870,6 +1131,137 @@ def reject_agent_run(
         return AgentRunResponse(**updated_run.model_dump())
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/v1/agent/runs", response_model=List[AgentRunResponse])
+def list_agent_runs(
+    limit: int = 50,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Lists recent agent runs for the authenticated tenant."""
+    if runtime_agent_loop is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent control loop runtime not initialized.",
+        )
+    runs = runtime_agent_loop.store.list_runs(tenant_id=tenant["tenant_id"], limit=limit)
+    return [AgentRunResponse(**r.model_dump()) for r in runs]
+
+
+@app.get("/v1/memory/records")
+def get_memory_records(
+    limit: int = 50,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Inspect episodic, semantic (rules), and procedural memory records."""
+    if runtime_cognitive_engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cognitive Engine runtime not initialized.",
+        )
+    storage = runtime_cognitive_engine.storage
+    episodic = storage.list_episodic(tenant_id=tenant["tenant_id"], limit=limit)
+    semantic = storage.list_all_rules(tenant_id=tenant["tenant_id"], limit=limit)
+    procedural = storage.list_all_procedures(tenant_id=tenant["tenant_id"], limit=limit)
+    return {
+        "tenant_id": tenant["tenant_id"],
+        "episodic": [e.model_dump() for e in episodic],
+        "semantic_rules": semantic,
+        "procedural": procedural,
+    }
+
+
+@app.get("/v1/world-state")
+def get_world_state(
+    session_id: str = "default_session",
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Inspects real-time world-state telemetry without fabrication."""
+    if runtime_cognitive_engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cognitive Engine runtime not initialized.",
+        )
+    world_model = runtime_cognitive_engine._get_or_create_world_model(
+        tenant_id=tenant["tenant_id"], session_id=session_id
+    )
+    state = world_model.get_state(session_id=session_id)
+    return {
+        "tenant_id": tenant["tenant_id"],
+        "session_id": session_id,
+        "world_state": state.model_dump(),
+    }
+
+
+@app.get("/v1/diagnostics")
+def get_diagnostics():
+    """Provides system diagnostics, runtime parameters, checkpoint status, and DB presence."""
+    import torch
+    import platform
+
+    is_prod = (os.environ.get("CDM_ENV", "production").lower() in ("production", "prod")) or (
+        os.environ.get("CDM_PRODUCTION_MODE", "").strip().lower() in ("1", "true", "yes")
+    )
+    model_path = os.environ.get("CDM_MODEL_PATH", "experiments/release/cdm-1-general")
+    if not os.path.exists(model_path):
+        model_path = "experiments/checkpoints/cdm-1-general"
+    weights_path = os.path.join(model_path, "model.safetensors")
+    manifest_path = os.path.join(model_path, "release_manifest.json")
+
+    return {
+        "runtime": {
+            "python_version": platform.python_version(),
+            "platform": platform.platform(),
+            "torch_version": torch.__version__,
+            "cuda_available": torch.cuda.is_available(),
+            "device": str(getattr(runtime_model, "device", "cpu")),
+        },
+        "model": {
+            "initialized": runtime_model is not None,
+            "mode": "rule_based_fallback" if getattr(runtime_model, "is_fallback", False) else "neural",
+            "is_fallback": getattr(runtime_model, "is_fallback", False),
+            "parameters": "158M" if not getattr(runtime_model, "is_fallback", False) else "0",
+            "model_path": model_path,
+            "weights_exist": os.path.exists(weights_path),
+            "manifest_exist": os.path.exists(manifest_path),
+            "weights_sha256": VERIFIED_CHECKPOINT_HASH,
+            "load_error": model_load_error,
+        },
+        "databases": {
+            "api_keys": os.path.exists(KEY_DB_PATH),
+            "metering": os.path.exists(METER_DB_PATH),
+            "memory": os.path.exists(MEMORY_DB_PATH),
+            "agent_runs": os.path.exists(AGENT_DB_PATH),
+        },
+        "environment": {
+            "is_production": is_prod,
+            "data_dir": DATA_DIR,
+        },
+    }
+
+
+@app.get("/v1/dev/default-key")
+def get_dev_default_key(request: Request):
+    """Returns a developer key for the local playground on loopback or development."""
+    client_host = getattr(request.client, "host", "") if request.client else ""
+    is_local = client_host in ("127.0.0.1", "localhost", "::1", "testclient")
+    is_prod = (os.environ.get("CDM_ENV", "").lower() in ("production", "prod")) and (
+        os.environ.get("CDM_PRODUCTION_MODE", "").strip().lower() in ("1", "true", "yes")
+    )
+    if is_prod and not is_local:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dev default key endpoint is disabled for external production traffic.",
+        )
+    dev_key = "cdm_dev_playground_key"
+    KEY_MANAGER.register_key(
+        raw_key=dev_key,
+        tenant_id="tenant_dev_default",
+        tier="developer",
+        rate_limit_rpm=600,
+        label="Playground Local Dev Key",
+    )
+    return {"api_key": dev_key, "tenant_id": "tenant_dev_default"}
 
 
 @app.get("/v1/metering")

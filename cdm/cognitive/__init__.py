@@ -17,7 +17,11 @@ from cdm.cognitive.state import (
     Plan,
     CognitiveEngineResult,
 )
-from cdm.cognitive.engine import CognitiveEngine
+def __getattr__(name):
+    if name == "CognitiveEngine":
+        from cdm.cognitive.engine import CognitiveEngine
+        return CognitiveEngine
+    raise AttributeError(f"module {__name__} has no attribute {name}")
 
 __all__ = [
     "CognitiveEngine",

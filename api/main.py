@@ -10,11 +10,11 @@ import time
 import json
 import uuid
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from contextlib import asynccontextmanager
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from fastapi import FastAPI, Depends, HTTPException, Security, Request, status
+from fastapi import FastAPI, Depends, HTTPException, Security, Request, status, UploadFile, File, Form
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.exceptions import RequestValidationError
@@ -48,6 +48,13 @@ AGENT_DB_PATH = os.environ.get("CDM_AGENT_DB", os.path.join(DATA_DIR, "agent_run
 
 KEY_MANAGER = PersistentApiKeyManager(db_path=KEY_DB_PATH)
 USAGE_METER = DurableUsageMeter(db_path=METER_DB_PATH)
+
+from cdm.context.session_manager import SessionManager, ConversationSession
+from cdm.retrieval.document_extractor import TenantDocumentManager, DocumentMetadata
+from cdm.security.approval import ActionApproval, generate_action_approval, verify_action_approval
+
+SESSION_MANAGER = SessionManager(db_path=MEMORY_DB_PATH)
+DOCUMENT_MANAGER = TenantDocumentManager(db_path=MEMORY_DB_PATH)
 
 security = HTTPBearer(auto_error=False)
 
@@ -397,7 +404,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="CDM-1 Cognitive Decision Model API",
-    description="Commercial REST API for neural decision models, predictive estimation, and calibrated actions.",
+    description="""Commercial REST API for neural decision models, predictive estimation, and calibrated actions.
+
+### 🔑 Quick Authorization for Swagger UI
+1. Scroll down to **Development** and run **`GET /v1/dev/default-key`** (or click 'Try it out' -> 'Execute').
+2. Copy the returned `api_key` (e.g. `cdm_dev_...`).
+3. Click the green **Authorize 🔓** button at the top-right of this page.
+4. Paste the key into the **Value** box and click **Authorize**.
+5. All endpoints will now execute with full authorization!
+""",
     version=__version__,
     lifespan=lifespan,
 )
@@ -421,7 +436,7 @@ MAX_REQUEST_BODY_BYTES = 1048576  # 1 MB
 
 @app.middleware("http")
 async def limit_request_body_size(request: Request, call_next):
-    """Enforces global maximum request body size (1 MB)."""
+    """Enforces global maximum request body size (1 MB) for standard and streamed requests."""
     content_length = request.headers.get("content-length")
     if content_length:
         try:
@@ -435,6 +450,25 @@ async def limit_request_body_size(request: Request, call_next):
                 )
         except ValueError:
             pass
+
+    # Enforce streaming byte limits for chunked requests
+    bytes_received = 0
+    original_receive = request._receive
+
+    async def limited_receive():
+        nonlocal bytes_received
+        message = await original_receive()
+        if message.get("type") == "http.request":
+            body = message.get("body", b"")
+            bytes_received += len(body)
+            if bytes_received > MAX_REQUEST_BODY_BYTES:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Streamed payload exceeds maximum allowed size of {MAX_REQUEST_BODY_BYTES} bytes (1 MB).",
+                )
+        return message
+
+    request._receive = limited_receive
     return await call_next(request)
 
 
@@ -614,16 +648,32 @@ def version_info():
 
 @app.get("/v1/models")
 def list_models(tenant: Dict[str, str] = Depends(authenticate_and_rate_limit)):
+    model_entries = [
+        {
+            "id": "cdm-1",
+            "name": "CDM-1 General Operational Decision Model",
+            "object": "model",
+            "created": 1794944000,
+            "owned_by": "cdm-organization",
+            "parameters": "158M",
+            "tasks": ["binary", "choice", "score", "priority", "risk", "predict", "chat"],
+            "status": "active",
+        },
+        {
+            "id": "cdm-1-general",
+            "name": "CDM-1 General Operational Decision Model",
+            "object": "model",
+            "created": 1794944000,
+            "owned_by": "cdm-organization",
+            "parameters": "158M",
+            "tasks": ["binary", "choice", "score", "priority", "risk", "predict", "chat"],
+            "status": "active",
+        },
+    ]
     return {
-        "models": [
-            {
-                "id": "cdm-1-general",
-                "name": "CDM-1 General Operational Decision Model",
-                "parameters": "158M",
-                "tasks": ["binary", "choice", "score", "priority", "risk", "predict"],
-                "status": "active",
-            }
-        ]
+        "object": "list",
+        "data": model_entries,
+        "models": model_entries,
     }
 
 
@@ -737,6 +787,12 @@ def cognitive_process(
             detail="Cognitive Engine runtime not initialized.",
         )
     try:
+        session_obj = SESSION_MANAGER.get_or_create_session(
+            tenant_id=tenant["tenant_id"],
+            session_id=req.session_id,
+        )
+        effective_session_id = session_obj.session_id
+
         res = runtime_cognitive_engine.process(
             text=req.text,
             structured_features=req.structured_features,
@@ -745,8 +801,15 @@ def cognitive_process(
             task=req.task,
             goals=req.goals,
             constraints=req.constraints,
-            session_id=req.session_id,
+            session_id=effective_session_id,
             tenant_id=tenant["tenant_id"],
+        )
+        SESSION_MANAGER.update_session_activity(
+            session_id=effective_session_id,
+            tenant_id=tenant["tenant_id"],
+            turn_increment=1,
+            goals=req.goals,
+            constraints=req.constraints,
         )
         plan_dict = res.selected_plan.model_dump() if res.selected_plan else None
 
@@ -889,6 +952,12 @@ def cognitive_process_stream(
 
     def event_generator():
         yield f"data: {json.dumps({'event': 'stage_start', 'stage': 'Perception', 'timestamp': time.time()})}\n\n"
+        session_obj = SESSION_MANAGER.get_or_create_session(
+            tenant_id=tenant["tenant_id"],
+            session_id=req.session_id,
+        )
+        effective_session_id = session_obj.session_id
+
         res = runtime_cognitive_engine.process(
             text=req.text,
             structured_features=req.structured_features,
@@ -897,14 +966,22 @@ def cognitive_process_stream(
             task=req.task,
             goals=req.goals,
             constraints=req.constraints,
-            session_id=req.session_id,
+            session_id=effective_session_id,
             tenant_id=tenant["tenant_id"],
+        )
+        SESSION_MANAGER.update_session_activity(
+            session_id=effective_session_id,
+            tenant_id=tenant["tenant_id"],
+            turn_increment=1,
+            goals=req.goals,
+            constraints=req.constraints,
         )
         for stage in res.cognitive_trace:
             yield f"data: {json.dumps({'event': 'stage_complete', 'stage': stage['stage_name'], 'duration_ms': stage.get('duration_ms', 0), 'status': stage.get('execution_status', 'success')})}\n\n"
 
         final_payload = {
             "event": "final_result",
+            "session_id": effective_session_id,
             "request_id": getattr(res, "request_id", ""),
             "answer": getattr(res, "answer", ""),
             "answer_type": getattr(res, "answer_type", "general"),
@@ -921,6 +998,212 @@ def cognitive_process_stream(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+# =====================================================================
+# Universal LLM Compatibility Layer (OpenAI, Claude, Gemini Compatible)
+# =====================================================================
+
+class OpenAIChatMessage(BaseModel):
+    role: str = Field(..., description="Role: 'system', 'user', or 'assistant'")
+    content: Any = Field(..., description="Message content string or structured block")
+
+class OpenAIChatCompletionRequest(BaseModel):
+    model: str = Field(default="cdm-1", description="Model identifier (e.g. 'cdm-1', 'cdm-1-general')")
+    messages: List[OpenAIChatMessage] = Field(..., description="Conversation history")
+    temperature: Optional[float] = Field(default=0.7, description="Sampling temperature")
+    max_tokens: Optional[int] = Field(default=1024, description="Maximum tokens")
+    stream: Optional[bool] = Field(default=False, description="Whether to stream response tokens")
+    session_id: Optional[str] = Field(default=None, description="Optional persistent session identifier")
+
+@app.post("/v1/chat/completions")
+async def chat_completions(
+    req: OpenAIChatCompletionRequest,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """OpenAI / Gemini compatible Chat Completions API.
+    Enables drop-in replacement for OpenAI SDK, LangChain, LlamaIndex, Cursor, and any standard LLM client.
+    """
+    if runtime_cognitive_engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cognitive Engine runtime not initialized.",
+        )
+
+    # 1. Extract user message and conversation context
+    user_prompt = ""
+    system_prompt = ""
+    for m in reversed(req.messages):
+        if m.role == "user":
+            if isinstance(m.content, str):
+                user_prompt = m.content
+            elif isinstance(m.content, list):
+                user_prompt = " ".join(item.get("text", "") for item in m.content if isinstance(item, dict))
+            break
+    if not user_prompt:
+        user_prompt = "Hello"
+
+    for m in req.messages[:-1]:
+        if m.role == "system":
+            system_prompt += (m.content if isinstance(m.content, str) else "") + "\n"
+
+    full_text = f"{system_prompt.strip()}\n\n{user_prompt}".strip() if system_prompt.strip() else user_prompt
+
+    # 2. Execute authoritative cognitive processing
+    session_obj = SESSION_MANAGER.get_or_create_session(
+        tenant_id=tenant["tenant_id"],
+        session_id=req.session_id,
+    )
+    res = runtime_cognitive_engine.process(
+        text=full_text,
+        session_id=session_obj.session_id,
+        tenant_id=tenant["tenant_id"],
+    )
+    answer_text = res.answer or res.explanation or "Decision processed successfully."
+    completion_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    created_ts = int(time.time())
+
+    # 3. Handle Streaming (Server-Sent Events)
+    if req.stream:
+        def stream_generator():
+            words = answer_text.split(" ")
+            for i, word in enumerate(words):
+                chunk_str = word + (" " if i < len(words) - 1 else "")
+                chunk_payload = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": req.model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": chunk_str},
+                            "finish_reason": None,
+                        }
+                    ],
+                }
+                yield f"data: {json.dumps(chunk_payload)}\n\n"
+                time.sleep(0.01)
+            stop_payload = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created_ts,
+                "model": req.model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+            yield f"data: {json.dumps(stop_payload)}\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
+    # 4. Standard Non-Streaming JSON Response
+    prompt_tokens = len(user_prompt.split()) * 2
+    comp_tokens = len(answer_text.split()) * 2
+    return {
+        "id": completion_id,
+        "object": "chat.completion",
+        "created": created_ts,
+        "model": req.model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": answer_text,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": comp_tokens,
+            "total_tokens": prompt_tokens + comp_tokens,
+        },
+        "cognitive_metadata": {
+            "decision": getattr(res, "selected_action", None),
+            "confidence": getattr(res, "calibrated_confidence", None),
+            "risk": getattr(res, "assessed_risk", None),
+            "citations": getattr(res, "citations", []),
+        },
+    }
+
+
+class AnthropicMessageItem(BaseModel):
+    role: str
+    content: Any
+
+class AnthropicMessagesRequest(BaseModel):
+    model: str = Field(default="cdm-1", description="Model identifier")
+    messages: List[AnthropicMessageItem] = Field(..., description="Conversation messages")
+    max_tokens: Optional[int] = Field(default=1024, description="Maximum tokens")
+    system: Optional[str] = Field(default=None, description="System prompt instructions")
+    stream: Optional[bool] = Field(default=False, description="Streaming flag")
+
+@app.post("/v1/messages")
+async def anthropic_messages(
+    req: AnthropicMessagesRequest,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Anthropic Claude compatible Messages API.
+    Enables drop-in replacement for Anthropic SDK clients and Claude tools.
+    """
+    if runtime_cognitive_engine is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Cognitive Engine runtime not initialized.",
+        )
+
+    user_prompt = ""
+    for m in reversed(req.messages):
+        if m.role == "user":
+            if isinstance(m.content, str):
+                user_prompt = m.content
+            elif isinstance(m.content, list):
+                user_prompt = " ".join(item.get("text", "") for item in m.content if isinstance(item, dict))
+            break
+    if not user_prompt:
+        user_prompt = "Hello"
+
+    full_text = f"{req.system}\n\n{user_prompt}".strip() if req.system else user_prompt
+
+    res = runtime_cognitive_engine.process(
+        text=full_text,
+        tenant_id=tenant["tenant_id"],
+    )
+    answer_text = res.answer or res.explanation or "Decision processed successfully."
+    msg_id = f"msg_{uuid.uuid4().hex[:16]}"
+    in_tok = len(user_prompt.split()) * 2
+    out_tok = len(answer_text.split()) * 2
+
+    return {
+        "id": msg_id,
+        "type": "message",
+        "role": "assistant",
+        "model": req.model,
+        "content": [
+            {
+                "type": "text",
+                "text": answer_text,
+            }
+        ],
+        "stop_reason": "end_turn",
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": in_tok,
+            "output_tokens": out_tok,
+        },
+        "cognitive_metadata": {
+            "confidence": getattr(res, "calibrated_confidence", None),
+            "risk": getattr(res, "assessed_risk", None),
+            "citations": getattr(res, "citations", []),
+        },
+    }
 
 
 class UserFeedbackRequest(BaseModel):
@@ -1054,12 +1337,71 @@ def get_agent_run(
     return AgentRunResponse(**run.model_dump())
 
 
+class AgentApproveRequest(BaseModel):
+    operator_id: str = Field(default="operator_admin", max_length=128, description="Operator user ID")
+    approval_token: Optional[str] = Field(None, description="Cryptographically verifiable signed action-bound approval token")
+
+
+class ApprovalTokenResponse(BaseModel):
+    run_id: str
+    tenant_id: str
+    action_tool: str
+    operator_id: str
+    approval_token: str
+    expires_at: float
+
+
+@app.post("/v1/agent/runs/{run_id}/approval-token", response_model=ApprovalTokenResponse)
+def create_approval_token(
+    run_id: str,
+    operator_id: str = "operator_admin",
+    ttl_seconds: float = 300.0,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Generates a cryptographically signed expiring action-bound approval token for an operator."""
+    if runtime_agent_loop is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent control loop runtime not initialized.",
+        )
+    run = runtime_agent_loop.store.load_run(run_id)
+    if not run:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent run '{run_id}' not found.",
+        )
+    if run.tenant_id != tenant["tenant_id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access forbidden: cannot operate on another tenant's agent run.",
+        )
+    if run.status != "waiting_for_approval" or not run.pending_action:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Run '{run_id}' is not suspended waiting for approval (current status: {run.status}).",
+        )
+    token_str = runtime_agent_loop.generate_approval_token(
+        run_id=run_id, operator_id=operator_id, ttl_seconds=ttl_seconds
+    )
+    from cdm.security.approval import ActionApproval
+    token_obj = ActionApproval.deserialize(token_str)
+    return ApprovalTokenResponse(
+        run_id=run_id,
+        tenant_id=run.tenant_id,
+        action_tool=run.pending_action.get("tool", ""),
+        operator_id=operator_id,
+        approval_token=token_str,
+        expires_at=token_obj.expires_at,
+    )
+
+
 @app.post("/v1/agent/runs/{run_id}/approve", response_model=AgentRunResponse)
 def approve_agent_run(
     run_id: str,
+    req: AgentApproveRequest = AgentApproveRequest(),
     tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
 ):
-    """Human approval gate: approves suspended high-risk action and resumes the agent loop."""
+    """Human approval gate: approves suspended high-risk action using cryptographically verifiable action-bound validation."""
     if runtime_agent_loop is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1080,7 +1422,11 @@ def approve_agent_run(
         )
 
     try:
-        updated_run = runtime_agent_loop.approve_pending(run_id)
+        updated_run = runtime_agent_loop.approve_pending(
+            run_id=run_id,
+            operator_id=req.operator_id,
+            approval_token=req.approval_token,
+        )
         USAGE_METER.record_request(
             tenant_id=tenant["tenant_id"],
             endpoint="/v1/agent/runs/approve",
@@ -1193,6 +1539,283 @@ def get_world_state(
     }
 
 
+# ==========================================
+# Session Management & Lifecycle (Section 3)
+# ==========================================
+
+class CreateSessionRequest(BaseModel):
+    session_id: Optional[str] = Field(None, max_length=128)
+    user_id: str = Field(default="default_user", max_length=128)
+    title: str = Field(default="New Conversation", max_length=256)
+    goals: Optional[List[str]] = Field(default_factory=list)
+    constraints: Optional[List[str]] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SessionResponse(BaseModel):
+    session_id: str
+    tenant_id: str
+    user_id: str
+    title: str
+    created_at: float
+    updated_at: float
+    turn_count: int
+    active_goals: List[str]
+    active_constraints: List[str]
+    metadata: Dict[str, Any]
+
+
+class SessionDetailResponse(SessionResponse):
+    dialogue_history: List[Dict[str, Any]] = Field(default_factory=list)
+    detected_contradictions: List[str] = Field(default_factory=list)
+    world_state: Optional[Dict[str, Any]] = None
+
+
+@app.post("/v1/sessions", response_model=SessionResponse)
+def create_session(
+    req: CreateSessionRequest = CreateSessionRequest(),
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Creates a unique conversation session enforcing tenant and user isolation."""
+    session = SESSION_MANAGER.create_session(
+        tenant_id=tenant["tenant_id"],
+        user_id=req.user_id,
+        session_id=req.session_id,
+        title=req.title,
+        goals=req.goals,
+        constraints=req.constraints,
+        metadata=req.metadata,
+    )
+    return SessionResponse(**session.model_dump())
+
+
+@app.get("/v1/sessions", response_model=List[SessionResponse])
+def list_sessions(
+    limit: int = 50,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Lists active conversation sessions for the authenticated tenant."""
+    sessions = SESSION_MANAGER.list_sessions(tenant_id=tenant["tenant_id"], limit=limit)
+    return [SessionResponse(**s.model_dump()) for s in sessions]
+
+
+@app.get("/v1/sessions/{session_id}", response_model=SessionDetailResponse)
+def get_session_details(
+    session_id: str,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Retrieves session details, conversation history, and isolated world state."""
+    session = SESSION_MANAGER.get_session(session_id=session_id, tenant_id=tenant["tenant_id"])
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+
+    dialogue_history = []
+    contradictions = []
+    world_state_data = None
+
+    if runtime_cognitive_engine is not None:
+        history_frames = runtime_cognitive_engine.context_engine.get_history(
+            session_id=session_id, tenant_id=tenant["tenant_id"]
+        )
+        if history_frames:
+            latest_frame = history_frames[-1]
+            dialogue_history = getattr(latest_frame, "dialogue_history", [])
+            contradictions = getattr(latest_frame, "detected_contradictions", [])
+
+        world_model = runtime_cognitive_engine._get_or_create_world_model(
+            tenant_id=tenant["tenant_id"], session_id=session_id
+        )
+        state = world_model.get_state(session_id=session_id)
+        world_state_data = state.model_dump()
+
+    return SessionDetailResponse(
+        **session.model_dump(),
+        dialogue_history=dialogue_history,
+        detected_contradictions=contradictions,
+        world_state=world_state_data,
+    )
+
+
+@app.delete("/v1/sessions/{session_id}")
+def delete_session(
+    session_id: str,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Deletes an isolated session and cleans up context history."""
+    deleted = SESSION_MANAGER.delete_session(session_id=session_id, tenant_id=tenant["tenant_id"])
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session '{session_id}' not found.",
+        )
+    if runtime_cognitive_engine is not None:
+        runtime_cognitive_engine.context_engine.clear_session(session_id=session_id, tenant_id=tenant["tenant_id"])
+    return {"deleted": True, "session_id": session_id}
+
+
+# ==========================================
+# Document Intelligence & Lifecycle (Section 5)
+# ==========================================
+
+class DocumentUploadResponse(BaseModel):
+    doc_id: str
+    tenant_id: str
+    filename: str
+    file_type: str
+    file_size_bytes: int
+    title: str
+    source_repository: str
+    version: str
+    uploaded_at: float
+    sha256_hash: str
+    chunk_count: int
+    total_characters: int
+
+
+class DocumentSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=1024)
+    top_k: int = Field(default=3, ge=1, le=20)
+    min_score: float = Field(default=0.05, ge=0.0, le=1.0)
+
+
+class DocumentSearchHit(BaseModel):
+    passage_id: str
+    doc_id: str
+    title: str
+    content: str
+    source_repository: str
+    version: str
+    relevance_score: float
+    retrieval_timestamp: float
+
+
+@app.post("/v1/documents/upload", response_model=DocumentUploadResponse)
+async def upload_document(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    source_repository: str = Form("Enterprise Knowledge Repository"),
+    version: str = Form("1.0.0"),
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Uploads and extracts text from PDF, DOCX, or TXT files, indexing chunks with tenant isolation."""
+    contents = await file.read()
+    if len(contents) > MAX_REQUEST_BODY_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Uploaded document exceeds maximum allowed size of 1 MB.",
+        )
+
+    try:
+        doc_meta, chunks = DOCUMENT_MANAGER.index_uploaded_file(
+            tenant_id=tenant["tenant_id"],
+            filename=file.filename or "uploaded_document.txt",
+            file_bytes=contents,
+            title=title,
+            source_repository=source_repository,
+            version=version,
+        )
+
+        # Index into runtime cognitive engine document retriever if available
+        if runtime_cognitive_engine and hasattr(runtime_cognitive_engine, "answer_synthesizer"):
+            doc_retriever = runtime_cognitive_engine.answer_synthesizer.doc_retriever
+            doc_dict = {
+                "doc_id": doc_meta.doc_id,
+                "title": doc_meta.title,
+                "source_repository": doc_meta.source_repository,
+                "version": doc_meta.version,
+                "chunks": [c.content for c in chunks],
+            }
+            doc_retriever.index_document(doc_dict=doc_dict, tenant_id=tenant["tenant_id"])
+
+        return DocumentUploadResponse(**doc_meta.model_dump())
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+@app.get("/v1/documents", response_model=List[DocumentUploadResponse])
+def list_documents(
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Lists all uploaded enterprise documents for the authenticated tenant."""
+    docs = DOCUMENT_MANAGER.list_documents(tenant_id=tenant["tenant_id"])
+    return [DocumentUploadResponse(**d.model_dump()) for d in docs]
+
+
+@app.get("/v1/documents/{doc_id}")
+def get_document(
+    doc_id: str,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Retrieves document details and chunks for the authenticated tenant."""
+    doc = DOCUMENT_MANAGER.get_document(doc_id=doc_id, tenant_id=tenant["tenant_id"])
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document '{doc_id}' not found.",
+        )
+    return doc
+
+
+@app.delete("/v1/documents/{doc_id}")
+def delete_document(
+    doc_id: str,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Deletes an uploaded document and removes its vector embeddings."""
+    deleted = DOCUMENT_MANAGER.delete_document(doc_id=doc_id, tenant_id=tenant["tenant_id"])
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Document '{doc_id}' not found.",
+        )
+
+    if runtime_cognitive_engine and hasattr(runtime_cognitive_engine, "answer_synthesizer"):
+        runtime_cognitive_engine.answer_synthesizer.doc_retriever.delete_document(
+            doc_id=doc_id, tenant_id=tenant["tenant_id"]
+        )
+
+    return {"deleted": True, "doc_id": doc_id}
+
+
+@app.post("/v1/documents/search", response_model=List[DocumentSearchHit])
+def search_documents(
+    req: DocumentSearchRequest,
+    tenant: Dict[str, str] = Depends(authenticate_and_rate_limit),
+):
+    """Searches indexed documents using hybrid dense-vector + lexical token ranking."""
+    if runtime_cognitive_engine is None or not hasattr(runtime_cognitive_engine, "answer_synthesizer"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Document retrieval engine not initialized.",
+        )
+
+    passages = runtime_cognitive_engine.answer_synthesizer.doc_retriever.retrieve(
+        query=req.query,
+        top_k=req.top_k,
+        min_score=req.min_score,
+        tenant_id=tenant["tenant_id"],
+    )
+
+    results = []
+    for p in passages:
+        results.append(
+            DocumentSearchHit(
+                passage_id=p.passage_id,
+                doc_id=p.doc_id,
+                title=p.title,
+                content=p.content,
+                source_repository=p.source_repository,
+                version=p.version,
+                relevance_score=p.relevance_score,
+                retrieval_timestamp=p.retrieval_timestamp,
+            )
+        )
+    return results
+
+
 @app.get("/v1/diagnostics")
 def get_diagnostics():
     """Provides system diagnostics, runtime parameters, checkpoint status, and DB presence."""
@@ -1242,26 +1865,36 @@ def get_diagnostics():
 
 @app.get("/v1/dev/default-key")
 def get_dev_default_key(request: Request):
-    """Returns a developer key for the local playground on loopback or development."""
-    client_host = getattr(request.client, "host", "") if request.client else ""
-    is_local = client_host in ("127.0.0.1", "localhost", "::1", "testclient")
-    is_prod = (os.environ.get("CDM_ENV", "").lower() in ("production", "prod")) and (
+    """Securely issues an ephemeral developer key for the local playground on loopback only.
+    Strictly disabled in production environments.
+    """
+    is_prod = (os.environ.get("CDM_ENV", "").lower() in ("production", "prod")) or (
         os.environ.get("CDM_PRODUCTION_MODE", "").strip().lower() in ("1", "true", "yes")
     )
-    if is_prod and not is_local:
+    if is_prod:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Dev default key endpoint is disabled for external production traffic.",
+            detail="Development key issuance is strictly disabled in production environments.",
         )
-    dev_key = "cdm_dev_playground_key"
+
+    client_host = getattr(request.client, "host", "") if request.client else ""
+    is_local = client_host in ("127.0.0.1", "localhost", "::1", "testclient")
+    if not is_local:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Development key issuance is strictly restricted to local loopback traffic.",
+        )
+
+    import secrets
+    ephemeral_key = f"cdm_dev_{secrets.token_hex(16)}"
     KEY_MANAGER.register_key(
-        raw_key=dev_key,
+        raw_key=ephemeral_key,
         tenant_id="tenant_dev_default",
         tier="developer",
         rate_limit_rpm=600,
-        label="Playground Local Dev Key",
+        label="Ephemeral Local Dev Key",
     )
-    return {"api_key": dev_key, "tenant_id": "tenant_dev_default"}
+    return {"api_key": ephemeral_key, "tenant_id": "tenant_dev_default"}
 
 
 @app.get("/v1/metering")

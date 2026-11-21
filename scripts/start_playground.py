@@ -90,23 +90,30 @@ def main():
         )
         processes.append(backend_proc)
 
-        # Wait for backend to be ready
-        print("[*] Waiting for backend readiness probe...")
+        # Wait for backend readiness probe (/v1/ready)
+        print("[*] Waiting for backend readiness probe (/v1/ready)...")
         ready = False
+        ready_details = {}
         import urllib.request
-        for _ in range(30):
+        import json
+        for _ in range(45):
             try:
-                with urllib.request.urlopen(f"http://127.0.0.1:{BACKEND_PORT}/v1/health", timeout=2) as resp:
+                with urllib.request.urlopen(f"http://127.0.0.1:{BACKEND_PORT}/v1/ready", timeout=3) as resp:
                     if resp.status == 200:
-                        ready = True
-                        break
+                        data = json.loads(resp.read().decode("utf-8"))
+                        if data.get("status") == "ready":
+                            ready = True
+                            ready_details = data
+                            break
             except Exception:
                 time.sleep(1)
 
         if ready:
-            print(f"[+] CDM-1 REST API is active at http://127.0.0.1:{BACKEND_PORT}")
+            mode = ready_details.get("mode", "verified")
+            params = ready_details.get("parameters", "158M")
+            print(f"[+] CDM-1 REST API is verified and ready at http://127.0.0.1:{BACKEND_PORT} (mode: {mode}, params: {params})")
         else:
-            print("[!] Warning: Backend probe timed out; proceeding to launch frontend...")
+            print("[!] Warning: Backend readiness probe timed out; proceeding to launch frontend...")
 
     # 2. Start Playground Frontend
     if is_port_in_use(FRONTEND_PORT):

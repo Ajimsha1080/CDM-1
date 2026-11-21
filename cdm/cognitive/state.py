@@ -175,6 +175,8 @@ class Plan(BaseModel):
     Distinguishes proposed plans, executed actions, observed outcomes, and verified goal completion.
     """
     plan_id: str = Field(default_factory=lambda: f"plan_{uuid.uuid4().hex[:8]}")
+    tenant_id: str = "default_tenant"
+    session_id: str = "default_session"
     target_goal_id: str
     plan_stage: str = "proposed"  # 'proposed', 'approved', 'abstained', 'prohibited', 'expired', 'dispatched', 'in_progress', 'completed', 'failed', 'rejected'
     status: str = "proposed"

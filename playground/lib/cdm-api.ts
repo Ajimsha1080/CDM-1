@@ -298,6 +298,13 @@ class CDMApiClient {
     return this.baseUrl;
   }
 
+  public clearApiKey() {
+    this.apiKey = null;
+    if (typeof window !== "undefined") {
+      localStorage.removeItem("cdm_api_key");
+    }
+  }
+
   public setApiKey(key: string) {
     this.apiKey = key.trim();
     if (typeof window !== "undefined") {
@@ -312,7 +319,10 @@ class CDMApiClient {
     return this.apiKey;
   }
 
-  public async getOrFetchDevKey(): Promise<string> {
+  public async getOrFetchDevKey(forceRefresh: boolean = false): Promise<string> {
+    if (forceRefresh) {
+      this.clearApiKey();
+    }
     const existing = this.getApiKey();
     if (existing) return existing;
 
@@ -326,15 +336,13 @@ class CDMApiClient {
         }
       }
     } catch {
-      // Fallback
+      // In production or when loopback key endpoint is unreachable, do not invent predictable key
     }
 
-    const defaultDev = "cdm_dev_playground_key";
-    this.setApiKey(defaultDev);
-    return defaultDev;
+    return "";
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  private async request<T>(endpoint: string, options: RequestInit = {}, isRetry: boolean = false): Promise<T> {
     const apiKey = await this.getOrFetchDevKey();
     const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : "/" + endpoint}`;
 
@@ -360,6 +368,15 @@ class CDMApiClient {
       clearTimeout(timeoutId);
 
       if (!response.ok) {
+        // Auto-heal on 401 Unauthorized: stale/revoked API key in localStorage
+        if (response.status === 401 && !isRetry) {
+          this.clearApiKey();
+          const freshKey = await this.getOrFetchDevKey(true);
+          if (freshKey) {
+            return await this.request<T>(endpoint, options, true);
+          }
+        }
+
         let errDetail = `HTTP ${response.status} ${response.statusText}`;
         try {
           const errBody = await response.json();
@@ -453,6 +470,161 @@ class CDMApiClient {
     return this.request<CognitiveProcessResponse>("/v1/cognitive/process", {
       method: "POST",
       body: JSON.stringify(req),
+    });
+  }
+
+  public async processCognitiveStream(
+    req: CognitiveProcessRequest,
+    onEvent: (event: any) => void,
+    onError: (err: any) => void,
+    onDone: () => void
+  ): Promise<void> {
+    const apiKey = await this.getOrFetchDevKey();
+    const url = `${this.baseUrl}/v1/cognitive/process/stream`;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (apiKey) {
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(req),
+      });
+
+      if (!res.ok) {
+        if (res.status === 401) {
+          this.clearApiKey();
+        }
+        const errText = await res.text();
+        throw new Error(`HTTP ${res.status}: ${errText}`);
+      }
+
+      if (!res.body) {
+        throw new Error("No readable stream in response");
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data:")) {
+            const dataStr = trimmed.slice(5).trim();
+            if (dataStr === "[DONE]") {
+              onDone();
+              return;
+            }
+            try {
+              const parsed = JSON.parse(dataStr);
+              onEvent(parsed);
+            } catch {
+              // Ignore non-json data frames
+            }
+          }
+        }
+      }
+      onDone();
+    } catch (err) {
+      onError(err);
+    }
+  }
+
+  // Sessions Lifecycle (Section 3)
+  public async listSessions(limit = 50): Promise<any[]> {
+    return this.request<any[]>(`/v1/sessions?limit=${limit}`);
+  }
+
+  public async createSession(data: { session_id?: string; user_id?: string; title?: string } = {}): Promise<any> {
+    return this.request<any>("/v1/sessions", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  public async getSessionDetails(sessionId: string): Promise<any> {
+    return this.request<any>(`/v1/sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  public async deleteSession(sessionId: string): Promise<any> {
+    return this.request<any>(`/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  // Document Intelligence (Section 5)
+  public async uploadDocument(file: File): Promise<any> {
+    const apiKey = await this.getOrFetchDevKey();
+    const url = `${this.baseUrl}/v1/documents/upload`;
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const headers: Record<string, string> = {};
+    if (apiKey) {
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.clearApiKey();
+        const freshKey = await this.getOrFetchDevKey(true);
+        if (freshKey) {
+          headers["Authorization"] = `Bearer ${freshKey}`;
+          const retryRes = await fetch(url, {
+            method: "POST",
+            headers,
+            body: formData,
+          });
+          if (retryRes.ok) return await retryRes.json();
+        }
+      }
+      let errDetail = `HTTP ${response.status} ${response.statusText}`;
+      try {
+        const body = await response.json();
+        if (body.detail) errDetail = body.detail;
+      } catch {}
+      throw new Error(errDetail);
+    }
+
+    return await response.json();
+  }
+
+  public async listDocuments(): Promise<any[]> {
+    return this.request<any[]>("/v1/documents");
+  }
+
+  public async getDocument(docId: string): Promise<any> {
+    return this.request<any>(`/v1/documents/${encodeURIComponent(docId)}`);
+  }
+
+  public async deleteDocument(docId: string): Promise<any> {
+    return this.request<any>(`/v1/documents/${encodeURIComponent(docId)}`, {
+      method: "DELETE",
+    });
+  }
+
+  public async searchDocuments(query: string, topK = 3): Promise<any[]> {
+    return this.request<any[]>("/v1/documents/search", {
+      method: "POST",
+      body: JSON.stringify({ query, top_k: topK }),
     });
   }
 

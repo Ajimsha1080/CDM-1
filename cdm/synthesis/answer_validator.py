@@ -20,6 +20,7 @@ class AnswerValidationResult(BaseModel):
     approval_requirement_accurate: bool = True
     abstention_communicated: bool = True
     unsupported_claims_detected: bool
+    citations_grounded: bool = True
     violations: List[str] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
 
@@ -35,6 +36,8 @@ class AnswerValidator:
         answer_text: str,
         cognitive_result: CognitiveEngineResult,
         unsupported_claims: Optional[List[str]] = None,
+        citations: Optional[List[Dict[str, Any]]] = None,
+        retrieved_passages: Optional[List[Dict[str, Any]]] = None,
     ) -> AnswerValidationResult:
         """Validates that answer_text does not contradict or fabricate cognitive_result fields."""
         violations: List[str] = []
@@ -126,6 +129,24 @@ class AnswerValidator:
             for unc in unsupported_claims:
                 warnings.append(f"Potentially unsupported claim without direct citation: '{unc[:80]}...'")
 
+        # 8. Citation Grounding Validation
+        citations_grounded = True
+        if citations and retrieved_passages is not None:
+            valid_doc_ids = set()
+            for p in retrieved_passages:
+                if isinstance(p, dict):
+                    if p.get("doc_id"):
+                        valid_doc_ids.add(p["doc_id"])
+                    if p.get("passage_id"):
+                        valid_doc_ids.add(p["passage_id"])
+            for c in citations:
+                c_doc = c.get("document_id") or c.get("doc_id")
+                if c_doc and c_doc not in valid_doc_ids:
+                    citations_grounded = False
+                    violations.append(
+                        f"Fabricated citation detected: citation '{c_doc}' does not match any retrieved passage."
+                    )
+
         is_valid = (
             decision_consistent
             and safety_preserved
@@ -133,6 +154,7 @@ class AnswerValidator:
             and verification_accurate
             and approval_requirement_accurate
             and abstention_communicated
+            and citations_grounded
             and len(violations) == 0
         )
 
@@ -145,6 +167,7 @@ class AnswerValidator:
             approval_requirement_accurate=approval_requirement_accurate,
             abstention_communicated=abstention_communicated,
             unsupported_claims_detected=unsupported_detected,
+            citations_grounded=citations_grounded,
             violations=violations,
             warnings=warnings,
         )

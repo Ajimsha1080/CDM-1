@@ -116,6 +116,12 @@ class ContextEngine:
                 return frames[-1]
             return None
 
+    def get_history(self, session_id: str, tenant_id: str = "default_tenant") -> List[ContextFrame]:
+        """Retrieves the complete sequence of context frames for a tenant's session."""
+        with self._lock:
+            key = (tenant_id, session_id)
+            return list(self.sessions.get(key, []))
+
     def clear_session(self, session_id: str, tenant_id: str = "default_tenant") -> bool:
         """Clears session context for a specific tenant."""
         with self._lock:

@@ -93,6 +93,7 @@ class PersistentApiKeyManager:
     PROHIBITED_DEMO_KEYS = {
         "sk_live_cdm_demo_key",
         "sk_test_developer_key",
+        "cdm_dev_playground_key",
         "demo",
         "test",
         "default",

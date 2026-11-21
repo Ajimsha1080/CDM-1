@@ -17,6 +17,7 @@ class DocumentPassage(BaseModel):
     """Grounded passage retrieved from enterprise knowledge base."""
     passage_id: str
     doc_id: str
+    tenant_id: str = "default_tenant"
     title: str
     content: str
     source_repository: str
@@ -89,8 +90,8 @@ class DocumentKnowledgeRetriever:
         for d in base_docs:
             self.index_document(d)
 
-    def index_document(self, doc_dict: Dict[str, Any]) -> None:
-        """Indexes a document and slices it into searchable grounded passages."""
+    def index_document(self, doc_dict: Dict[str, Any], tenant_id: str = "default_tenant") -> None:
+        """Indexes a document and slices it into searchable grounded passages with tenant isolation."""
         doc_id = doc_dict["doc_id"]
         title = doc_dict.get("title", "Untitled Document")
         repo = doc_dict.get("source_repository", "Enterprise Repository")
@@ -102,12 +103,14 @@ class DocumentKnowledgeRetriever:
             "source_repository": repo,
             "version": version,
             "chunks_count": len(chunks),
+            "tenant_id": tenant_id,
         }
 
         for idx, chunk in enumerate(chunks):
             passage = DocumentPassage(
                 passage_id=f"{doc_id}_p{idx + 1}",
                 doc_id=doc_id,
+                tenant_id=tenant_id,
                 title=title,
                 content=chunk,
                 source_repository=repo,
@@ -122,11 +125,38 @@ class DocumentKnowledgeRetriever:
                     content=chunk,
                     source_repository=repo,
                     version=version,
+                    tenant_id=tenant_id,
                     metadata={"passage_id": passage.passage_id},
                 )
 
-    def retrieve(self, query: str, top_k: int = 3, min_score: float = 0.1) -> List[DocumentPassage]:
-        """Retrieves passages matching the query with verified provenance.
+    def delete_document(self, doc_id: str, tenant_id: Optional[str] = None) -> int:
+        """Deletes a document and its passages from the retriever and vector store."""
+        removed_count = 0
+        new_passages = []
+        for p in self.passages:
+            if p.doc_id == doc_id:
+                if tenant_id and p.tenant_id != tenant_id:
+                    new_passages.append(p)
+                    continue
+                removed_count += 1
+            else:
+                new_passages.append(p)
+        self.passages = new_passages
+        if doc_id in self.documents:
+            if not tenant_id or self.documents[doc_id].get("tenant_id") == tenant_id:
+                del self.documents[doc_id]
+        if self.vector_store is not None:
+            self.vector_store.delete_document(doc_id=doc_id, tenant_id=tenant_id)
+        return removed_count
+
+    def retrieve(
+        self,
+        query: str,
+        top_k: int = 3,
+        min_score: float = 0.1,
+        tenant_id: Optional[str] = None,
+    ) -> List[DocumentPassage]:
+        """Retrieves passages matching the query with verified provenance and tenant isolation.
         Supports hybrid dense-vector + lexical token retrieval when vector store is present.
         Guaranteed zero fabrication: only existing indexed passages can be returned.
         """
@@ -134,8 +164,14 @@ class DocumentKnowledgeRetriever:
         passage_map = {p.passage_id: p for p in self.passages}
         scores_by_id: Dict[str, float] = {}
 
+        # Filter candidate passages by tenant
+        tenant_passages = [
+            p for p in self.passages
+            if not tenant_id or p.tenant_id == tenant_id or p.tenant_id == "default_tenant"
+        ]
+
         # 1. Lexical token overlap scoring
-        for p in self.passages:
+        for p in tenant_passages:
             p_terms = set(re.findall(r"\w+", p.content.lower()))
             overlap = len(q_terms.intersection(p_terms))
             if overlap > 0:
@@ -144,14 +180,16 @@ class DocumentKnowledgeRetriever:
 
         # 2. Dense vector similarity scoring (if vector store enabled)
         if self.vector_store is not None:
-            v_matches = self.vector_store.search(query, top_k=top_k * 2, min_similarity=min_score)
+            v_matches = self.vector_store.search(query, top_k=top_k * 2, min_similarity=min_score, tenant_id=tenant_id)
             for v_score, rec in v_matches:
                 p_id = rec.metadata.get("passage_id") or rec.record_id
                 if p_id in scores_by_id:
                     # Hybrid fusion: 50% lexical + 50% vector similarity
                     scores_by_id[p_id] = round(0.5 * scores_by_id[p_id] + 0.5 * v_score, 4)
                 elif p_id in passage_map and v_score >= min_score:
-                    scores_by_id[p_id] = round(v_score * 0.7, 4)
+                    p = passage_map[p_id]
+                    if not tenant_id or p.tenant_id == tenant_id or p.tenant_id == "default_tenant":
+                        scores_by_id[p_id] = round(v_score * 0.7, 4)
 
         scored_passages: List[Tuple[float, DocumentPassage]] = []
         for p_id, score in scores_by_id.items():
@@ -160,6 +198,7 @@ class DocumentKnowledgeRetriever:
                 matched = DocumentPassage(
                     passage_id=p.passage_id,
                     doc_id=p.doc_id,
+                    tenant_id=p.tenant_id,
                     title=p.title,
                     content=p.content,
                     source_repository=p.source_repository,

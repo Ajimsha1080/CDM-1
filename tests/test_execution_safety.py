@@ -75,17 +75,56 @@ def test_dispatcher_rejects_prohibited_actions():
 
 
 def test_dispatcher_requires_authorization_for_sensitive_actions():
-    """Verify sensitive actions (e.g. refunds) require authorization token or authorized role."""
+    """Verify sensitive actions (e.g. refunds) require cryptographically verifiable action-bound approval."""
+    from cdm.security.approval import generate_action_approval
     dispatcher = PlanDispatcher()
     plan = create_sample_plan(stage="approved", actions=["issue_refund"])
+    plan.tenant_id = "tenant_finance"
 
     # Without token: rejected
-    with pytest.raises(PlanExecutionError, match="requires explicit authorization"):
+    with pytest.raises(PlanExecutionError, match="requires cryptographically verifiable"):
         dispatcher.dispatch_plan(plan, executor_role="standard_agent")
 
-    # With valid authorization token: accepted
-    dispatched = dispatcher.dispatch_plan(plan, authorization_token="AUTH-REFUND-992")
+    # With legacy or arbitrary AUTH-* token: rejected (forgery / malformed)
+    with pytest.raises(PlanExecutionError, match="requires cryptographically verifiable"):
+        dispatcher.dispatch_plan(plan, authorization_token="AUTH-REFUND-992", executor_role="standard_agent")
+
+    # With valid signed action-bound token: accepted
+    valid_token = generate_action_approval(
+        tenant_id="tenant_finance",
+        user_id="compliance_officer_42",
+        plan_id=plan.plan_id,
+        action_name="issue_refund",
+        ttl_seconds=300.0,
+    )
+    dispatched = dispatcher.dispatch_plan(plan, authorization_token=valid_token, executor_role="standard_agent")
     assert dispatched.plan_stage == "dispatched"
+
+    # With expired token: rejected
+    plan_expired = create_sample_plan(stage="approved", actions=["issue_refund"])
+    plan_expired.tenant_id = "tenant_finance"
+    expired_token = generate_action_approval(
+        tenant_id="tenant_finance",
+        user_id="compliance_officer_42",
+        plan_id=plan_expired.plan_id,
+        action_name="issue_refund",
+        ttl_seconds=-10.0,
+    )
+    with pytest.raises(PlanExecutionError, match="Approval token expired"):
+        dispatcher.dispatch_plan(plan_expired, authorization_token=expired_token, executor_role="standard_agent")
+
+    # With mismatched action token: rejected
+    plan_mismatch = create_sample_plan(stage="approved", actions=["issue_refund"])
+    plan_mismatch.tenant_id = "tenant_finance"
+    wrong_action_token = generate_action_approval(
+        tenant_id="tenant_finance",
+        user_id="compliance_officer_42",
+        plan_id=plan_mismatch.plan_id,
+        action_name="different_action",
+        ttl_seconds=300.0,
+    )
+    with pytest.raises(PlanExecutionError, match="Action mismatch"):
+        dispatcher.dispatch_plan(plan_mismatch, authorization_token=wrong_action_token, executor_role="standard_agent")
 
 
 def test_planning_engine_approval_and_dispatch_flow():

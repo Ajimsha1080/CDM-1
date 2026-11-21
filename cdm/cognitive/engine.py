@@ -935,6 +935,7 @@ class CognitiveEngine:
                     risk_origin=r_origin,
                     retrieved_external_facts=external_facts,
                     errors=errors,
+                    tenant_id=tenant_id,
                 )
             except Exception as synth_err:
                 logger.error(f"Answer synthesis exception: {synth_err}", exc_info=True)

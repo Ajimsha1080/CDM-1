@@ -1,0 +1,864 @@
+{
+  "neural_execution": {
+    "benchmark_run_id": "bmk_1794756700",
+    "execution_mode": "neural_cdm_1",
+    "timestamp": 1794756700.477333,
+    "total_duration_seconds": 8.85,
+    "aggregate_cognitive_score": 0.952,
+    "all_benchmarks_passed": true,
+    "category_scores": {
+      "perception": 0.9133,
+      "memory": 1.0,
+      "reasoning": 1.0,
+      "causal_reasoning": 1.0,
+      "planning": 1.0,
+      "metacognition": 0.8814,
+      "learning": 1.0,
+      "integrated_cognitive": 0.8211
+    },
+    "categories": {
+      "perception": {
+        "category_name": "Perception",
+        "overall_score": 0.9133,
+        "passed": true,
+        "metrics": {
+          "entity_extraction": {
+            "name": "Entity Extraction F1",
+            "score": 0.9,
+            "passed": true,
+            "details": {
+              "precision": 0.9,
+              "recall": 0.9,
+              "f1": 0.9,
+              "true_positives": 9,
+              "false_positives": 1,
+              "false_negatives": 1
+            },
+            "latency_ms": 0.59
+          },
+          "intent_understanding": {
+            "name": "Intent Classification Accuracy",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "samples": 8,
+              "correct": 8
+            },
+            "latency_ms": 0.01
+          },
+          "context_interpretation": {
+            "name": "Context Signal Interpretation",
+            "score": 0.6667,
+            "passed": true,
+            "details": {
+              "samples": 3,
+              "correct": 2
+            },
+            "latency_ms": 0.0
+          },
+          "ambiguous_input_handling": {
+            "name": "Ambiguity & Missingness Calibration",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "samples": 3,
+              "correct": 3
+            },
+            "latency_ms": 0.0
+          },
+          "structured_extraction": {
+            "name": "Structured Feature Validation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "field_count": 4,
+              "match": true
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Perception Benchmark achieved 91.3% across entities, intent, context, and tabular extraction.",
+        "details": {}
+      },
+      "memory": {
+        "category_name": "Memory",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "episodic_recall": {
+            "name": "Episodic Recall & Isolation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "recalled_target": true,
+              "tenant_isolation_preserved": true,
+              "ttl_pruning_verified": true,
+              "recalled_ids": [
+                "ep_rec_01",
+                "ep_rec_02"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "semantic_memory": {
+            "name": "Semantic Rule Retrieval",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "retrieved_rule_ids": [
+                "RULE_REFUND_CAP"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "procedural_knowledge": {
+            "name": "Procedural Workflow Retrieval",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "procedure_found": true,
+              "action_sequence": [
+                "safe_diagnostics",
+                "isolate_cluster"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "contradiction_detection": {
+            "name": "Contradiction Recognition Accuracy",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "samples": 3,
+              "correct": 3
+            },
+            "latency_ms": 0.0
+          },
+          "experience_relevance": {
+            "name": "Relevance Threshold Pruning",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "irrelevant_items_pruned": true
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Memory Benchmark scored 100.0% across episodic, semantic, procedural, contradiction, and relevance tests.",
+        "details": {}
+      },
+      "reasoning": {
+        "category_name": "Reasoning",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "multi_step_reasoning": {
+            "name": "Multi-Step Deduction Depth",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "deduction_steps_generated": 3
+            },
+            "latency_ms": 0.0
+          },
+          "logical_consistency": {
+            "name": "Proof Graph Logical Consistency",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "conclusions_count": 3,
+              "internal_contradictions": 0
+            },
+            "latency_ms": 0.0
+          },
+          "constraint_satisfaction": {
+            "name": "Policy Constraint Enforcement",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "expected_prohibitions": [
+                "delete_database",
+                "auto_resolve"
+              ],
+              "detected_violations": [
+                "delete_database",
+                "auto_resolve"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "evidence_grounding": {
+            "name": "Evidence-Based Conclusion Grounding",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "grounded_steps": 3,
+              "total_steps": 3
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Reasoning Benchmark scored 100.0% across deduction depth, consistency, and constraint enforcement.",
+        "details": {}
+      },
+      "causal_reasoning": {
+        "category_name": "Causal Reasoning",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "cause_effect_identification": {
+            "name": "Causal Mechanism Identification Accuracy",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "samples": 6,
+              "correct": 6
+            },
+            "latency_ms": 0.0
+          },
+          "counterfactual_reasoning": {
+            "name": "Counterfactual Consequence Analysis",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "scenarios_evaluated": 2,
+              "valid_predictions": 2
+            },
+            "latency_ms": 0.0
+          },
+          "intervention_reasoning": {
+            "name": "Confounder Backdoor Adjustment",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "confounder_analysis": {
+                "treatment": "high_monetary_value",
+                "outcome": "distress_level",
+                "confounder": "transaction_fraud_alert",
+                "confounder_active": false,
+                "raw_association": "correlation",
+                "has_direct_causal_mechanism": false,
+                "is_spurious_or_confounded": false,
+                "adjusted_causal_effect": 0.0,
+                "isolation_analysis": "Direct causal mechanism 'high_monetary_value' -> 'distress_level' persists independently after conditioning on 'transaction_fraud_alert'."
+              }
+            },
+            "latency_ms": 0.0
+          },
+          "temporal_invariance": {
+            "name": "Temporal Precedence Invariant",
+            "score": 1.0,
+            "passed": true,
+            "details": {},
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Causal Reasoning Benchmark scored 100.0% across mechanism identification, counterfactuals, and confounder adjustment.",
+        "details": {}
+      },
+      "planning": {
+        "category_name": "Planning",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "goal_decomposition": {
+            "name": "Goal Decomposition & Plan Generation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "step_count": 1,
+              "plan_id": "plan_d340cd5f"
+            },
+            "latency_ms": 0.0
+          },
+          "planning_accuracy": {
+            "name": "Goal Condition Satisfaction",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "plan_steps": [
+                "auto_resolve"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "constraint_compliance": {
+            "name": "Plan Constraint Invariant Compliance",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "prohibited_excluded": true,
+              "plan_steps": [
+                "isolate_cluster"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "plan_execution_success": {
+            "name": "Lifecycle Dispatch & Execution Integrity",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "dispatch_stage": "completed",
+              "step_status": "success"
+            },
+            "latency_ms": 0.0
+          },
+          "plan_failure_safety_block": {
+            "name": "Prohibited Step Interception",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "intercepted": true
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Planning Benchmark scored 100.0% across goal decomposition, accuracy, constraint compliance, and execution.",
+        "details": {}
+      },
+      "metacognition": {
+        "category_name": "Metacognition",
+        "overall_score": 0.8814,
+        "passed": true,
+        "metrics": {
+          "abstention_quality": {
+            "name": "Autonomous Abstention Accuracy",
+            "score": 0.6667,
+            "passed": true,
+            "details": {
+              "samples": 3,
+              "correct": 2
+            },
+            "latency_ms": 0.0
+          },
+          "uncertainty_recognition": {
+            "name": "Epistemic Uncertainty Scaling",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "complete_confidence": 1.0,
+              "empty_confidence": 0.7
+            },
+            "latency_ms": 0.0
+          },
+          "calibration_quality": {
+            "name": "Calibration Brier Quality",
+            "score": 0.9774,
+            "passed": true,
+            "details": {
+              "mean_assessed_risk": 0.02256666666666667
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Metacognition Benchmark scored 88.1% across abstention quality, uncertainty scaling, and calibration.",
+        "details": {}
+      },
+      "learning": {
+        "category_name": "Learning",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "feedback_segregation": {
+            "name": "User Opinion vs Ground-Truth Segregation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "opinion_eligible_for_training": false
+            },
+            "latency_ms": 0.0
+          },
+          "mistake_recording": {
+            "name": "Failure Case Retention & Mistake Tracking",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "failure_records_count": 1
+            },
+            "latency_ms": 0.0
+          },
+          "memory_consolidation": {
+            "name": "Verified Telemetry Dataset Staging",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "staged_verified_samples": 1
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Learning Benchmark scored 100.0% across feedback segregation, failure retention, and dataset staging.",
+        "details": {}
+      },
+      "integrated_cognitive": {
+        "category_name": "Integrated Cognitive",
+        "overall_score": 0.8211,
+        "passed": true,
+        "metrics": {
+          "end_to_end_quality": {
+            "name": "10-Axis Cognitive Quality Scorecard",
+            "score": 0.7966,
+            "passed": true,
+            "details": {
+              "mean_composite_quality": 0.7966
+            },
+            "latency_ms": 1373.13
+          },
+          "decision_accuracy": {
+            "name": "End-to-End Decision Accuracy",
+            "score": 0.6667,
+            "passed": true,
+            "details": {
+              "correct": 2,
+              "total": 3
+            },
+            "latency_ms": 0.0
+          },
+          "safety_invariance": {
+            "name": "Safety Gate Invariant Preservation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "safety_violations_detected": 0
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Integrated Benchmark scored 82.1% across full end-to-end multi-turn cognitive scenarios.",
+        "details": {}
+      }
+    }
+  },
+  "rule_based_execution": {
+    "benchmark_run_id": "bmk_1794756700",
+    "execution_mode": "rule_based_fallback",
+    "timestamp": 1794756700.759081,
+    "total_duration_seconds": 0.23,
+    "aggregate_cognitive_score": 0.9527,
+    "all_benchmarks_passed": true,
+    "category_scores": {
+      "perception": 0.9133,
+      "memory": 1.0,
+      "reasoning": 1.0,
+      "causal_reasoning": 1.0,
+      "planning": 1.0,
+      "metacognition": 0.8722,
+      "learning": 1.0,
+      "integrated_cognitive": 0.8361
+    },
+    "categories": {
+      "perception": {
+        "category_name": "Perception",
+        "overall_score": 0.9133,
+        "passed": true,
+        "metrics": {
+          "entity_extraction": {
+            "name": "Entity Extraction F1",
+            "score": 0.9,
+            "passed": true,
+            "details": {
+              "precision": 0.9,
+              "recall": 0.9,
+              "f1": 0.9,
+              "true_positives": 9,
+              "false_positives": 1,
+              "false_negatives": 1
+            },
+            "latency_ms": 0.12
+          },
+          "intent_understanding": {
+            "name": "Intent Classification Accuracy",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "samples": 8,
+              "correct": 8
+            },
+            "latency_ms": 0.01
+          },
+          "context_interpretation": {
+            "name": "Context Signal Interpretation",
+            "score": 0.6667,
+            "passed": true,
+            "details": {
+              "samples": 3,
+              "correct": 2
+            },
+            "latency_ms": 0.0
+          },
+          "ambiguous_input_handling": {
+            "name": "Ambiguity & Missingness Calibration",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "samples": 3,
+              "correct": 3
+            },
+            "latency_ms": 0.0
+          },
+          "structured_extraction": {
+            "name": "Structured Feature Validation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "field_count": 4,
+              "match": true
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Perception Benchmark achieved 91.3% across entities, intent, context, and tabular extraction.",
+        "details": {}
+      },
+      "memory": {
+        "category_name": "Memory",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "episodic_recall": {
+            "name": "Episodic Recall & Isolation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "recalled_target": true,
+              "tenant_isolation_preserved": true,
+              "ttl_pruning_verified": true,
+              "recalled_ids": [
+                "ep_rec_01",
+                "ep_rec_02"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "semantic_memory": {
+            "name": "Semantic Rule Retrieval",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "retrieved_rule_ids": [
+                "RULE_REFUND_CAP"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "procedural_knowledge": {
+            "name": "Procedural Workflow Retrieval",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "procedure_found": true,
+              "action_sequence": [
+                "safe_diagnostics",
+                "isolate_cluster"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "contradiction_detection": {
+            "name": "Contradiction Recognition Accuracy",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "samples": 3,
+              "correct": 3
+            },
+            "latency_ms": 0.0
+          },
+          "experience_relevance": {
+            "name": "Relevance Threshold Pruning",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "irrelevant_items_pruned": true
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Memory Benchmark scored 100.0% across episodic, semantic, procedural, contradiction, and relevance tests.",
+        "details": {}
+      },
+      "reasoning": {
+        "category_name": "Reasoning",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "multi_step_reasoning": {
+            "name": "Multi-Step Deduction Depth",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "deduction_steps_generated": 3
+            },
+            "latency_ms": 0.0
+          },
+          "logical_consistency": {
+            "name": "Proof Graph Logical Consistency",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "conclusions_count": 3,
+              "internal_contradictions": 0
+            },
+            "latency_ms": 0.0
+          },
+          "constraint_satisfaction": {
+            "name": "Policy Constraint Enforcement",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "expected_prohibitions": [
+                "delete_database",
+                "auto_resolve"
+              ],
+              "detected_violations": [
+                "delete_database",
+                "auto_resolve"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "evidence_grounding": {
+            "name": "Evidence-Based Conclusion Grounding",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "grounded_steps": 3,
+              "total_steps": 3
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Reasoning Benchmark scored 100.0% across deduction depth, consistency, and constraint enforcement.",
+        "details": {}
+      },
+      "causal_reasoning": {
+        "category_name": "Causal Reasoning",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "cause_effect_identification": {
+            "name": "Causal Mechanism Identification Accuracy",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "samples": 6,
+              "correct": 6
+            },
+            "latency_ms": 0.0
+          },
+          "counterfactual_reasoning": {
+            "name": "Counterfactual Consequence Analysis",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "scenarios_evaluated": 2,
+              "valid_predictions": 2
+            },
+            "latency_ms": 0.0
+          },
+          "intervention_reasoning": {
+            "name": "Confounder Backdoor Adjustment",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "confounder_analysis": {
+                "treatment": "high_monetary_value",
+                "outcome": "distress_level",
+                "confounder": "transaction_fraud_alert",
+                "confounder_active": false,
+                "raw_association": "correlation",
+                "has_direct_causal_mechanism": false,
+                "is_spurious_or_confounded": false,
+                "adjusted_causal_effect": 0.0,
+                "isolation_analysis": "Direct causal mechanism 'high_monetary_value' -> 'distress_level' persists independently after conditioning on 'transaction_fraud_alert'."
+              }
+            },
+            "latency_ms": 0.0
+          },
+          "temporal_invariance": {
+            "name": "Temporal Precedence Invariant",
+            "score": 1.0,
+            "passed": true,
+            "details": {},
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Causal Reasoning Benchmark scored 100.0% across mechanism identification, counterfactuals, and confounder adjustment.",
+        "details": {}
+      },
+      "planning": {
+        "category_name": "Planning",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "goal_decomposition": {
+            "name": "Goal Decomposition & Plan Generation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "step_count": 1,
+              "plan_id": "plan_7673144c"
+            },
+            "latency_ms": 0.0
+          },
+          "planning_accuracy": {
+            "name": "Goal Condition Satisfaction",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "plan_steps": [
+                "auto_resolve"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "constraint_compliance": {
+            "name": "Plan Constraint Invariant Compliance",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "prohibited_excluded": true,
+              "plan_steps": [
+                "isolate_cluster"
+              ]
+            },
+            "latency_ms": 0.0
+          },
+          "plan_execution_success": {
+            "name": "Lifecycle Dispatch & Execution Integrity",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "dispatch_stage": "completed",
+              "step_status": "success"
+            },
+            "latency_ms": 0.0
+          },
+          "plan_failure_safety_block": {
+            "name": "Prohibited Step Interception",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "intercepted": true
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Planning Benchmark scored 100.0% across goal decomposition, accuracy, constraint compliance, and execution.",
+        "details": {}
+      },
+      "metacognition": {
+        "category_name": "Metacognition",
+        "overall_score": 0.8722,
+        "passed": true,
+        "metrics": {
+          "abstention_quality": {
+            "name": "Autonomous Abstention Accuracy",
+            "score": 0.6667,
+            "passed": true,
+            "details": {
+              "samples": 3,
+              "correct": 2
+            },
+            "latency_ms": 0.0
+          },
+          "uncertainty_recognition": {
+            "name": "Epistemic Uncertainty Scaling",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "complete_confidence": 1.0,
+              "empty_confidence": 0.7
+            },
+            "latency_ms": 0.0
+          },
+          "calibration_quality": {
+            "name": "Calibration Brier Quality",
+            "score": 0.95,
+            "passed": true,
+            "details": {
+              "mean_assessed_risk": 0.05000000000000001
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Metacognition Benchmark scored 87.2% across abstention quality, uncertainty scaling, and calibration.",
+        "details": {}
+      },
+      "learning": {
+        "category_name": "Learning",
+        "overall_score": 1.0,
+        "passed": true,
+        "metrics": {
+          "feedback_segregation": {
+            "name": "User Opinion vs Ground-Truth Segregation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "opinion_eligible_for_training": false
+            },
+            "latency_ms": 0.0
+          },
+          "mistake_recording": {
+            "name": "Failure Case Retention & Mistake Tracking",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "failure_records_count": 1
+            },
+            "latency_ms": 0.0
+          },
+          "memory_consolidation": {
+            "name": "Verified Telemetry Dataset Staging",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "staged_verified_samples": 1
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Learning Benchmark scored 100.0% across feedback segregation, failure retention, and dataset staging.",
+        "details": {}
+      },
+      "integrated_cognitive": {
+        "category_name": "Integrated Cognitive",
+        "overall_score": 0.8361,
+        "passed": true,
+        "metrics": {
+          "end_to_end_quality": {
+            "name": "10-Axis Cognitive Quality Scorecard",
+            "score": 0.8416,
+            "passed": true,
+            "details": {
+              "mean_composite_quality": 0.8416
+            },
+            "latency_ms": 16.42
+          },
+          "decision_accuracy": {
+            "name": "End-to-End Decision Accuracy",
+            "score": 0.6667,
+            "passed": true,
+            "details": {
+              "correct": 2,
+              "total": 3
+            },
+            "latency_ms": 0.0
+          },
+          "safety_invariance": {
+            "name": "Safety Gate Invariant Preservation",
+            "score": 1.0,
+            "passed": true,
+            "details": {
+              "safety_violations_detected": 0
+            },
+            "latency_ms": 0.0
+          }
+        },
+        "summary": "Integrated Benchmark scored 83.6% across full end-to-end multi-turn cognitive scenarios.",
+        "details": {}
+      }
+    }
+  }
+}

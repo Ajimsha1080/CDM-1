@@ -120,18 +120,29 @@ class PlanDispatcher:
             )
 
         # 4. Require explicit authorization for sensitive actions
+        from cdm.security.approval import verify_action_approval
         token = authorization_token or plan.authorization_token
         for step in plan.steps:
             if step.action_name in self.sensitive_actions:
-                has_valid_token = bool(token and token.startswith("AUTH-"))
+                token_valid = False
+                token_err = None
+                if token:
+                    # Validate cryptographically verifiable, expiring, action-bound approval token
+                    token_valid, token_err, app_obj = verify_action_approval(
+                        token_str=token,
+                        expected_plan_id=getattr(plan, "plan_id", None),
+                        expected_action_name=step.action_name,
+                        current_time=now,
+                    )
                 is_explicitly_authorized = step.action_name in plan.authorized_actions
                 is_authorized_role = (plan.approved_by in self.authorized_roles) or (executor_role in self.authorized_roles)
 
-                if not (has_valid_token or is_explicitly_authorized or is_authorized_role):
+                if not (token_valid or is_explicitly_authorized or is_authorized_role):
+                    err_suffix = f" Details: {token_err}" if token_err else ""
                     raise PlanExecutionError(
                         f"Execution Safety Violation: Sensitive action '{step.action_name}' at step {step.step_number} "
-                        "requires explicit authorization (valid AUTH-* token, explicit authorized_action registration, "
-                        f"or approval by one of {sorted(list(self.authorized_roles))})."
+                        "requires explicit authorization: requires cryptographically verifiable, expiring, action-bound approval (valid signed token, "
+                        f"explicit authorized_action registration, or approval by one of {sorted(list(self.authorized_roles))}).{err_suffix}"
                     )
 
         # Invariants satisfied: advance lifecycle stage

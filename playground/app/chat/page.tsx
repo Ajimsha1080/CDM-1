@@ -203,18 +203,98 @@ function CognitiveQAPageContent() {
         session_id: sessionId,
       };
 
-      const res = await cdmApi.processCognitive(payload);
+      // Streaming execution with live cognitive trace updates
+      let finalResultReceived = false;
+      const liveTrace: Array<{ stage_name: string; duration_ms: number; execution_status: string }> = [];
 
-      setTurns((prev) =>
-        prev.map((t) =>
-          t.id === assistantTurnId
-            ? {
-                ...t,
-                loading: false,
-                response: res,
-              }
-            : t
-        )
+      await cdmApi.processCognitiveStream(
+        payload,
+        (evt) => {
+          if (evt.event === "stage_start") {
+            liveTrace.push({ stage_name: evt.stage, duration_ms: 0, execution_status: "running" });
+            setTurns((prev) =>
+              prev.map((t) =>
+                t.id === assistantTurnId
+                  ? {
+                      ...t,
+                      response: {
+                        ...(t.response || ({} as any)),
+                        cognitive_trace: [...liveTrace],
+                      },
+                    }
+                  : t
+              )
+            );
+          } else if (evt.event === "stage_complete") {
+            const idx = liveTrace.findIndex((s) => s.stage_name === evt.stage);
+            if (idx >= 0) {
+              liveTrace[idx] = { stage_name: evt.stage, duration_ms: evt.duration_ms, execution_status: evt.status };
+            } else {
+              liveTrace.push({ stage_name: evt.stage, duration_ms: evt.duration_ms, execution_status: evt.status });
+            }
+            setTurns((prev) =>
+              prev.map((t) =>
+                t.id === assistantTurnId
+                  ? {
+                      ...t,
+                      response: {
+                        ...(t.response || ({} as any)),
+                        cognitive_trace: [...liveTrace],
+                      },
+                    }
+                  : t
+              )
+            );
+          } else if (evt.event === "final_result") {
+            finalResultReceived = true;
+            setTurns((prev) =>
+              prev.map((t) =>
+                t.id === assistantTurnId
+                  ? {
+                      ...t,
+                      loading: false,
+                      response: {
+                        ...evt,
+                        execution_id: evt.request_id || "req_stream",
+                        decision: evt.proposed_decision,
+                        cognitive_trace: [...liveTrace],
+                      },
+                    }
+                  : t
+              )
+            );
+          }
+        },
+        async (streamErr) => {
+          // If SSE streaming fails, fall back cleanly to synchronous API
+          try {
+            const syncRes = await cdmApi.processCognitive(payload);
+            setTurns((prev) =>
+              prev.map((t) =>
+                t.id === assistantTurnId
+                  ? { ...t, loading: false, response: syncRes }
+                  : t
+              )
+            );
+          } catch (syncErr: any) {
+            setTurns((prev) =>
+              prev.map((t) =>
+                t.id === assistantTurnId
+                  ? { ...t, loading: false, error: syncErr.message || "Cognitive execution error." }
+                  : t
+              )
+            );
+          }
+        },
+        () => {
+          if (!finalResultReceived) {
+            setTurns((prev) =>
+              prev.map((t) =>
+                t.id === assistantTurnId ? { ...t, loading: false } : t
+              )
+            );
+          }
+        }
       );
     } catch (err: any) {
       setTurns((prev) =>

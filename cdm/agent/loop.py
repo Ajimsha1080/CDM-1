@@ -1164,8 +1164,30 @@ class AgentControlLoop:
 
         return self.store.load_run(run_id)
 
-    def approve_pending(self, run_id: str, resume_loop: bool = True) -> AgentRunState:
-        """Approves a suspended action, executes it, and optionally resumes the loop."""
+    def generate_approval_token(self, run_id: str, operator_id: str = "operator_admin", ttl_seconds: float = 300.0) -> str:
+        """Generates an expiring action-bound approval token for a suspended run."""
+        from cdm.security.approval import generate_action_approval
+        run = self.store.load_run(run_id)
+        if not run or run.status != "waiting_for_approval" or not run.pending_action:
+            raise ValueError(f"Run {run_id} is not currently suspended waiting for human approval.")
+        action_name = run.pending_action.get("tool", "")
+        return generate_action_approval(
+            tenant_id=run.tenant_id,
+            user_id=operator_id,
+            plan_id=run.run_id,
+            action_name=action_name,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def approve_pending(
+        self,
+        run_id: str,
+        operator_id: str = "operator_admin",
+        approval_token: Optional[str] = None,
+        resume_loop: bool = True,
+    ) -> AgentRunState:
+        """Approves a suspended action with cryptographically verifiable action-bound validation."""
+        from cdm.security.approval import verify_action_approval
         run = self.store.load_run(run_id)
         if not run:
             raise ValueError(f"Run {run_id} not found.")
@@ -1175,6 +1197,19 @@ class AgentControlLoop:
 
         proposed = AgentActionProposal.model_validate(run.pending_action)
         step_num = run.step_count + 1
+
+        # Enforce cryptographically verifiable action-bound approval if provided or configured
+        approver = operator_id
+        if approval_token:
+            valid, err, app_obj = verify_action_approval(
+                token_str=approval_token,
+                expected_tenant_id=run.tenant_id,
+                expected_plan_id=run.run_id,
+                expected_action_name=proposed.tool,
+            )
+            if not valid:
+                raise ValueError(f"Cryptographic approval verification failed: {err}")
+            approver = app_obj.user_id if app_obj else operator_id
 
         # Re-check policy: explicitly prohibited actions cannot be executed even with human approval
         if proposed.tool in run.prohibited_actions:
@@ -1278,6 +1313,7 @@ class AgentControlLoop:
             "tool": proposed.tool,
             "arguments": proposed.arguments,
             "gate_decision": "human_approved",
+            "approved_by": approver,
             "success": exec_res.success,
             "output": exec_res.output,
             "error": exec_res.error,

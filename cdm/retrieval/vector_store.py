@@ -18,6 +18,7 @@ class VectorRecord(BaseModel):
     """Stored vector record with metadata and passage content."""
     record_id: str
     doc_id: str
+    tenant_id: str = "default_tenant"
     title: str
     content: str
     source_repository: str
@@ -67,16 +68,18 @@ class PersistentVectorStore:
         content: str,
         source_repository: str = "Enterprise Repository",
         version: str = "1.0.0",
+        tenant_id: str = "default_tenant",
         metadata: Optional[Dict[str, Any]] = None,
         custom_vector: Optional[List[float]] = None,
     ) -> str:
-        """Indexes a document chunk with dense vector embedding."""
+        """Indexes a document chunk with dense vector embedding and tenant isolation."""
         record_id = f"{doc_id}_v{len(self.records) + 1}"
         vec = custom_vector or self._text_to_vector(f"{title} {content}")
 
         record = VectorRecord(
             record_id=record_id,
             doc_id=doc_id,
+            tenant_id=tenant_id,
             title=title,
             content=content,
             source_repository=source_repository,
@@ -93,12 +96,16 @@ class PersistentVectorStore:
         query: str,
         top_k: int = 3,
         min_similarity: float = 0.05,
+        tenant_id: Optional[str] = None,
     ) -> List[Tuple[float, VectorRecord]]:
-        """Executes cosine similarity search over stored vectors."""
+        """Executes cosine similarity search over stored vectors with tenant isolation."""
         q_vec = self._text_to_vector(query)
         scored: List[Tuple[float, VectorRecord]] = []
 
         for rec in self.records.values():
+            if tenant_id and getattr(rec, "tenant_id", None):
+                if rec.tenant_id != tenant_id and rec.tenant_id != "default_tenant":
+                    continue
             # Dot product of normalized vectors = cosine similarity
             sim = sum(q * r for q, r in zip(q_vec, rec.vector))
             if sim >= min_similarity:
@@ -106,6 +113,18 @@ class PersistentVectorStore:
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return scored[:top_k]
+
+    def delete_document(self, doc_id: str, tenant_id: Optional[str] = None) -> int:
+        """Removes all indexed vector records for a specific document ID."""
+        to_remove = []
+        for r_id, rec in self.records.items():
+            if rec.doc_id == doc_id:
+                if tenant_id and getattr(rec, "tenant_id", None) and rec.tenant_id != tenant_id:
+                    continue
+                to_remove.append(r_id)
+        for r_id in to_remove:
+            del self.records[r_id]
+        return len(to_remove)
 
     def save_to_disk(self, file_path: Optional[str] = None) -> str:
         """Serializes vector store and document records to disk as JSON."""

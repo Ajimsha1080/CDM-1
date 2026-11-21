@@ -4,6 +4,7 @@ from actual pipeline outputs, neural inferences, world states, and safety verifi
 """
 
 from typing import Dict, List, Optional, Any, Tuple
+import os
 import re
 import time
 import logging
@@ -55,9 +56,15 @@ class ExternalInformationRetriever:
     Ensures clear separation of user input, model predictions, stored memory, and retrieved external facts.
     """
 
-    def __init__(self, external_tools: Optional[Dict[str, Any]] = None):
+    def __init__(self, external_tools: Optional[Dict[str, Any]] = None, allow_demo_knowledge: Optional[bool] = None):
         self.external_tools = external_tools or {}
         self.is_available = True
+        if allow_demo_knowledge is None:
+            # Strictly disabled in production; permitted in development / testing environments
+            env = os.environ.get("CDM_ENV", "development").lower()
+            self.allow_demo_knowledge = (env != "production")
+        else:
+            self.allow_demo_knowledge = allow_demo_knowledge
 
     def set_availability(self, available: bool) -> None:
         """Configures live availability status of external retrieval services."""
@@ -71,46 +78,44 @@ class ExternalInformationRetriever:
         if not self.is_available:
             return False, [], "External retrieval service is currently unavailable or disconnected."
 
-        # If external tools are registered (e.g. HttpCallTool, SandboxedShellTool)
         facts: List[Dict[str, Any]] = []
         now = time.time()
 
-        # Check for registered custom tools
+        # Check for registered custom tools (e.g. WebRetrievalTool, retrieval_api)
         if "retrieval_api" in self.external_tools:
             try:
                 tool = self.external_tools["retrieval_api"]
                 tool_res = tool(query=query, domain=domain)
                 if isinstance(tool_res, list):
-                    facts.extend(tool_res)
+                    for item in tool_res:
+                        if isinstance(item, dict):
+                            item.setdefault("retrieval_timestamp", now)
+                            item.setdefault("source", "Infrastructure Telemetry API")
+                            facts.append(item)
                 elif isinstance(tool_res, dict):
+                    tool_res.setdefault("retrieval_timestamp", now)
+                    tool_res.setdefault("source", "Infrastructure Telemetry API")
                     facts.append(tool_res)
                 return True, facts, None
             except Exception as e:
                 logger.error(f"External retrieval tool execution failed: {e}")
                 return False, [], f"Retrieval tool error: {str(e)}"
 
-        # Default simulated verified knowledge base search for configured environments
-        q_lower = query.lower()
-        if "server" in q_lower or "10.0.1.5" in q_lower or "cluster" in q_lower:
-            facts.append({
-                "source": "Infrastructure Telemetry Service (v1.2)",
-                "fact": "Cluster node 10.0.1.5 telemetry indicates memory pressure at 87% with healthy heartbeat.",
-                "timestamp": now,
-                "verified": True,
-                "confidence": 0.99,
-            })
-            return True, facts, None
-        elif "sla policy" in q_lower or "sla" in q_lower:
-            facts.append({
-                "source": "Corporate Governance Repository",
-                "fact": "Tier-1 standard SLA requires incident response within 4.0 hours and resolution target within 24.0 hours.",
-                "timestamp": now,
-                "verified": True,
-                "confidence": 1.0,
-            })
-            return True, facts, None
+        # Strictly distinguish demo knowledge from production retrieval
+        if self.allow_demo_knowledge:
+            q_lower = query.lower()
+            if "server" in q_lower or "10.0.1.5" in q_lower or "cluster" in q_lower:
+                facts.append({
+                    "source": "Infrastructure Telemetry Service (v1.0-demo)",
+                    "fact": "Cluster node 10.0.1.5 telemetry indicates memory pressure at 87% with healthy heartbeat.",
+                    "retrieval_timestamp": now,
+                    "verified": False,
+                    "is_demo": True,
+                    "confidence": 0.85,
+                })
+                return True, facts, None
 
-        # No external data available for general unmapped query
+        # Production mode: zero simulated facts; return empty if unmapped
         return True, [], None
 
 
@@ -222,6 +227,7 @@ class AnswerSynthesizer:
         risk_origin: str,
         retrieved_external_facts: Optional[List[Dict[str, Any]]] = None,
         errors: Optional[List[str]] = None,
+        tenant_id: str = "default_tenant",
     ) -> SynthesizedAnswer:
         """Synthesizes an evidence-grounded natural-language response matching all P0/P1 invariants."""
         err_list = list(errors or [])
@@ -235,8 +241,8 @@ class AnswerSynthesizer:
             task_hint=task,
         )
 
-        # 0b. Document Knowledge Base Retrieval
-        doc_passages = self.doc_retriever.retrieve(query=question, top_k=3)
+        # 0b. Document Knowledge Base Retrieval with tenant isolation
+        doc_passages = self.doc_retriever.retrieve(query=question, top_k=3, tenant_id=tenant_id)
         passages_dicts = [p.model_dump() for p in doc_passages]
 
         # 0c. Contextual Reference Resolution
@@ -487,6 +493,8 @@ class AnswerSynthesizer:
                 reasoning_evidence=reasoning_trace,
             ),
             unsupported_claims=unsupported,
+            citations=citations_list,
+            retrieved_passages=passages_dicts,
         )
 
         return SynthesizedAnswer(
